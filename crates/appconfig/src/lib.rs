@@ -10,5 +10,8 @@
 pub mod atomic;
 pub mod paths;
 
+pub use atomic::write_atomic;
+pub use paths::{AppIdentity, ConfigPaths, Platform};
+
 #[cfg(test)]
 mod test_util;

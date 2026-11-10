@@ -140,10 +140,7 @@ fn project_settings_are_found_by_searching_upward() {
 fn a_directory_named_like_the_project_file_is_not_a_file() {
     let root = TempDir::new("project-dir");
     std::fs::create_dir_all(root.path().join(".testapp/settings.json")).unwrap();
-    assert_eq!(
-        ConfigPaths::project_settings_path(&APP, root.path()),
-        None
-    );
+    assert_eq!(ConfigPaths::project_settings_path(&APP, root.path()), None);
 }
 
 #[test]
