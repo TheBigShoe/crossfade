@@ -71,3 +71,36 @@ fn a_noisy_tone_beats_raw_clearly() {
         frame_len(&e, 0)
     );
 }
+
+fn left_with_copy(copy_of_left: bool) -> Vec<i32> {
+    let left = noise(14, 4096, 21);
+    let small = noise(2, 4096, 22);
+    left.iter()
+        .zip(&small)
+        .flat_map(|(&l, &s)| [l, if copy_of_left { l } else { l + s }])
+        .collect()
+}
+
+#[test]
+fn correlated_channels_are_decorrelated_from_level_one_up() {
+    for copy in [true, false] {
+        let samples = left_with_copy(copy);
+        let independent = frame_len(&round_trip(cfg(2, 16, 0), &samples, 1152), 0);
+        for level in 1..=8 {
+            let e = round_trip(cfg(2, 16, level), &samples, 0);
+            let block = e.block_size;
+            let bytes = frame_len(&e, 0);
+            let per_sample = bytes as f64 / block as f64;
+            // Level 0 pays for the second channel in full; the others do not.
+            let reference = independent as f64 / 1152.0;
+            assert!(
+                per_sample < reference * 0.75,
+                "copy {copy} level {level}: {per_sample} vs {reference}"
+            );
+            assert!(!matches!(
+                assignment(&e, 0),
+                crossfade_flac::frame::ChannelAssignment::Independent(_)
+            ));
+        }
+    }
+}

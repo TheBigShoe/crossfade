@@ -240,3 +240,6 @@ impl Encoder {
         info
     }
 }
+
+#[cfg(test)]
+mod tests;
