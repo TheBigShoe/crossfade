@@ -20,4 +20,4 @@ expression: render(&sections(&tagged_20_bit()))
   Title (tags-0): A Title
   Artist (tags-1): One
   Artist (tags-2): Two
-  Tracknumber (tags-3): 3
+  Track number (tags-3): 3

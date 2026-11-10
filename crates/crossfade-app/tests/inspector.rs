@@ -148,7 +148,7 @@ fn raw_bits_and_tags_each_have_a_row_when_present() {
         ("Title", "A Title"),
         ("Artist", "One"),
         ("Artist", "Two"),
-        ("Tracknumber", "3"),
+        ("Track number", "3"),
     ]
     .map(|(l, v)| (l.to_owned(), v.to_owned()));
     assert_eq!(rows, want);
