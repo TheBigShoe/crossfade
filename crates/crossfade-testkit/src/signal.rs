@@ -1,21 +1,31 @@
 //! Deterministic test signals, bit-identical on every OS.
 
 use crossfade_core::AudioSpec;
+use std::f64::consts::TAU;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Signal {
-    Sine { hz: f64, amplitude: f64 },
+    Sine {
+        hz: f64,
+        amplitude: f64,
+    },
     /// Linear in frequency over the rendered length.
     Sweep {
         from_hz: f64,
         to_hz: f64,
         amplitude: f64,
     },
-    Impulse { at_frame: usize, amplitude: f64 },
+    Impulse {
+        at_frame: usize,
+        amplitude: f64,
+    },
     Silence,
     /// Uniform white noise from a fixed PRNG.
-    Noise { seed: u64, amplitude: f64 },
+    Noise {
+        seed: u64,
+        amplitude: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,12 +46,67 @@ impl fmt::Display for SignalError {
 
 impl std::error::Error for SignalError {}
 
-pub fn render(
-    _signal: &Signal,
-    _spec: &AudioSpec,
-    _frames: usize,
-) -> Result<Vec<f64>, SignalError> {
-    Ok(Vec::new())
+pub fn render(signal: &Signal, spec: &AudioSpec, frames: usize) -> Result<Vec<f64>, SignalError> {
+    let rate = f64::from(spec.sample_rate());
+    let nyquist = rate / 2.0;
+    let check = |hz: f64| {
+        if (0.0..=nyquist).contains(&hz) {
+            Ok(())
+        } else {
+            Err(SignalError::BadFrequency { hz, nyquist })
+        }
+    };
+    let channels = usize::from(spec.layout().channels());
+    let mut mono = Vec::with_capacity(frames);
+    match *signal {
+        Signal::Sine { hz, amplitude } => {
+            check(hz)?;
+            mono.extend((0..frames).map(|n| amplitude * libm::sin(TAU * hz * n as f64 / rate)));
+        }
+        Signal::Sweep {
+            from_hz,
+            to_hz,
+            amplitude,
+        } => {
+            check(from_hz)?;
+            check(to_hz)?;
+            let total = frames as f64 / rate;
+            mono.extend((0..frames).map(|n| {
+                let t = n as f64 / rate;
+                let cycles = from_hz * t + (to_hz - from_hz) * t * t / (2.0 * total);
+                amplitude * libm::sin(TAU * cycles)
+            }));
+        }
+        Signal::Impulse {
+            at_frame,
+            amplitude,
+        } => {
+            mono.extend((0..frames).map(|n| if n == at_frame { amplitude } else { 0.0 }));
+        }
+        Signal::Silence => mono.resize(frames, 0.0),
+        Signal::Noise { seed, amplitude } => {
+            let mut state = seed;
+            mono.extend((0..frames).map(|_| {
+                let unit = (splitmix64(&mut state) >> 11) as f64 / TWO_POW_53;
+                amplitude * (2.0 * unit - 1.0)
+            }));
+        }
+    }
+    Ok(mono
+        .into_iter()
+        .flat_map(|v| std::iter::repeat_n(v, channels))
+        .collect())
+}
+
+const TWO_POW_53: f64 = 9_007_199_254_740_992.0;
+
+// Hand-rolled so a seed means the same samples forever, unlike `rand`.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 #[cfg(test)]
@@ -179,10 +244,11 @@ mod tests {
         let tenth = out.len() / 10;
         let first = crossing_hz(&out[..tenth], rate);
         let last = crossing_hz(&out[out.len() - tenth..], rate);
-        // Averages over the window, so allow the in-window sweep spread.
-        assert!((first - 500.0).abs() / 500.0 < 0.1, "{first}");
-        assert!((last - 4000.0).abs() / 4000.0 < 0.1, "{last}");
-        assert!(last > 6.0 * first);
+        // A tenth of the sweep spans a tenth of the range, so the window's
+        // mean frequency sits 5% of the range inside each end.
+        let (want_first, want_last) = (500.0 + 0.05 * 3500.0, 4000.0 - 0.05 * 3500.0);
+        assert!((first - want_first).abs() / want_first < 0.03, "{first}");
+        assert!((last - want_last).abs() / want_last < 0.03, "{last}");
     }
 
     #[test]
