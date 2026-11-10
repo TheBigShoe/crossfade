@@ -57,7 +57,7 @@ mod tests {
         for icon in [
             IconName::Plus,
             IconName::FolderOpen,
-            IconName::Play,
+            IconName::ArrowRightLeft,
             IconName::Settings,
             IconName::Ellipsis,
             IconName::X,

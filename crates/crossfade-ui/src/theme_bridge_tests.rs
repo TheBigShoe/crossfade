@@ -209,3 +209,29 @@ fn every_bundled_theme_defines_the_keys_the_bridge_reads() {
         }
     }
 }
+
+/// The text the chrome draws, against the window background, in both bundled themes.
+#[gpui_test]
+fn text_colours_read_against_the_background_in_both_bundled_themes(cx: &mut TestAppContext) {
+    cx.update(kit_init);
+    let registry = registry();
+    for name in ["Crossfade Dark", "Crossfade Light"] {
+        let theme = registry.get(name).unwrap();
+        cx.update(|cx| {
+            install(theme, &ui_font(13.0), cx);
+            let kit = cx.theme();
+            for (what, color) in [
+                ("foreground", kit.foreground),
+                ("muted foreground", kit.muted_foreground),
+                ("danger", kit.danger),
+                ("warning", kit.warning),
+            ] {
+                let ratio = contrast_ratio(color, kit.background);
+                assert!(
+                    ratio >= 4.5,
+                    "{name}: {what} on background reads at {ratio:.2}"
+                );
+            }
+        });
+    }
+}

@@ -229,3 +229,91 @@ fn a_directory_of_nothing_still_shows_the_empty_state(cx: &mut TestAppContext) {
     assert!(!has(cx, window, "files-panel"));
     assert_eq!(workspace.read_with(cx, |w, _| w.status_text()), "Ready");
 }
+
+fn size_of(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    id: impl Into<ElementId>,
+) -> Size<Pixels> {
+    let id = id.into();
+    cx.update_window(window, |_, window, _| window.find(id).bounds().size)
+        .expect("the window is open")
+}
+
+#[gpui_test]
+fn file_rows_are_two_lines_with_the_full_width_for_the_name(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let long = rig
+        .dir
+        .write_wav("interview-take-one-with-a-long-name.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&long]);
+    let row = size_of(cx, rig.window, row_id("file-row", 0));
+    assert_eq!(row.height, px(40.));
+    let name = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-name", 0)).bounds()
+        })
+        .unwrap();
+    let summary = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-summary", 0)).bounds()
+        })
+        .unwrap();
+    assert!(
+        summary.origin.y >= name.origin.y + name.size.height,
+        "the summary is the second line"
+    );
+    // The row is 260 wide; icon, padding and the gaps leave the rest to the name.
+    assert!(
+        name.size.width > px(150.),
+        "name width {:?}",
+        name.size.width
+    );
+    assert!(
+        summary.size.width >= name.size.width - px(1.),
+        "the summary has the same room"
+    );
+}
+
+#[gpui_test]
+fn inspector_rows_are_24_px_tall(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&a]);
+    let sections = rig.workspace.read_with(cx, |w, _| w.inspector_sections());
+    let row = &sections[0].rows[0];
+    let id: SharedString = format!("inspector-row-0-{}", row.field).into();
+    assert_eq!(size_of(cx, rig.window, id).height, px(24.));
+}
+
+/// `top` composited over an opaque `under`.
+fn over(top: Hsla, under: Hsla) -> Hsla {
+    let (t, u) = (top.to_rgb(), under.to_rgb());
+    let mix = |t: f32, u: f32| t * top.a + u * (1.0 - top.a);
+    Hsla::from(Rgba {
+        r: mix(t.r, u.r),
+        g: mix(t.g, u.g),
+        b: mix(t.b, u.b),
+        a: 1.0,
+    })
+}
+
+#[gpui_test]
+fn a_selected_row_is_clearly_distinct_from_a_hovered_one_in_both_themes(cx: &mut TestAppContext) {
+    let _rig = open_rig(cx);
+    for dark in [true, false] {
+        cx.update(|cx| crate::config::set_appearance(dark, cx));
+        cx.update(|cx| {
+            let (selected, hover) = crate::files::row_colors(cx.theme());
+            let background = cx.theme().background;
+            let ratio = crate::theme_bridge::contrast_ratio(
+                over(selected, background),
+                over(hover, background),
+            );
+            assert!(
+                ratio > 1.08,
+                "dark={dark}: selected vs hover contrast {ratio}"
+            );
+        });
+    }
+}

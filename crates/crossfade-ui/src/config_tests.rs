@@ -478,7 +478,10 @@ fn the_watcher_reloads_a_saved_settings_file(cx: &mut TestAppContext) {
 }
 
 fn args(list: &[&str]) -> impl Iterator<Item = String> {
-    list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>().into_iter()
+    list.iter()
+        .map(|a| (*a).to_owned())
+        .collect::<Vec<_>>()
+        .into_iter()
 }
 
 #[test]
@@ -496,9 +499,17 @@ fn the_command_line_takes_an_optional_config_dir() {
 
 #[test]
 fn a_bad_command_line_is_an_error_naming_the_usage() {
-    for bad in [&["--config-dir"][..], &["--wat"], &["file.wav"], &["--config-dir", ""]] {
+    for bad in [
+        &["--config-dir"][..],
+        &["--wat"],
+        &["file.wav"],
+        &["--config-dir", ""],
+    ] {
         let error = config::parse_args(args(bad)).expect_err("rejected");
-        assert!(error.contains("usage: crossfade-gui [--config-dir <DIR>]"), "{error}");
+        assert!(
+            error.contains("usage: crossfade-gui [--config-dir <DIR>]"),
+            "{error}"
+        );
         assert!(!error.contains('\n'), "one line: {error}");
     }
 }

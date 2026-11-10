@@ -155,6 +155,21 @@ fn an_existing_output_blocks_confirm_until_replace_is_on(cx: &mut TestAppContext
 }
 
 #[gpui_test]
+fn the_command_line_stays_visible_while_the_sheet_has_a_problem(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    let taken = rig.dir.write("taken.wav", b"already here");
+    open_sheet(cx, &rig);
+    assert!(has(cx, rig.window, "sheet-command"));
+    type_output(cx, &rig, &taken);
+    assert!(has(cx, rig.window, "sheet-problems"));
+    assert!(
+        has(cx, rig.window, "sheet-command"),
+        "only the primary button is disabled"
+    );
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+}
+
+#[gpui_test]
 fn an_output_equal_to_the_input_stays_blocked_even_with_replace_on(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);

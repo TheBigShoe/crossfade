@@ -194,22 +194,63 @@ fn a_second_job_starts_only_after_the_first_ends(cx: &mut TestAppContext) {
 }
 
 #[gpui_test]
-fn waiting_rows_can_be_cancelled_and_removed_but_running_ones_cannot_be_removed(
-    cx: &mut TestAppContext,
-) {
+fn each_row_state_offers_one_way_out_and_running_rows_only_stop(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     enqueue(cx, &rig, "a.wav", "one.wav");
     enqueue(cx, &rig, "a.wav", "two.wav");
+    // Running: stop only. Waiting: remove only.
     assert!(has(cx, rig.window, "queue-cancel-0"));
     assert!(!has(cx, rig.window, "queue-remove-0"));
+    assert!(!has(cx, rig.window, "queue-cancel-1"));
     assert!(has(cx, rig.window, "queue-remove-1"));
 
-    click(cx, rig.window, "queue-cancel-1");
-    draw(cx, rig.window);
-    assert_eq!(state(cx, &rig.workspace, 1), "Cancelled");
     click(cx, rig.window, "queue-remove-1");
     draw(cx, rig.window);
-    assert!(!has(cx, rig.window, "queue-row-1"));
+    assert!(
+        !has(cx, rig.window, "queue-row-1"),
+        "a waiting job is removed outright"
+    );
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue().items().len()),
+        1
+    );
+}
+
+#[gpui_test]
+fn finished_failed_and_cancelled_rows_keep_remove_and_retry_where_it_applies(
+    cx: &mut TestAppContext,
+) {
+    let rig = rig_with_input(cx);
+    for out in ["a1.wav", "a2.wav", "a3.wav"] {
+        enqueue(cx, &rig, "a.wav", out);
+    }
+    send(cx, &rig, 0, RunnerEvent::Finished { frames: 5 });
+    send(
+        cx,
+        &rig,
+        1,
+        RunnerEvent::Failed {
+            message: "no".into(),
+        },
+    );
+    click(cx, rig.window, "queue-cancel-2");
+    send(cx, &rig, 2, RunnerEvent::Cancelled);
+    for n in 0..3 {
+        assert!(
+            has(cx, rig.window, format!("queue-remove-{n}")),
+            "remove {n}"
+        );
+        assert!(
+            !has(cx, rig.window, format!("queue-cancel-{n}")),
+            "cancel {n}"
+        );
+    }
+    assert!(
+        !has(cx, rig.window, "queue-retry-0"),
+        "a finished job needs no retry"
+    );
+    assert!(has(cx, rig.window, "queue-retry-1"));
+    assert!(has(cx, rig.window, "queue-retry-2"));
 }
 
 #[gpui_test]
