@@ -263,6 +263,12 @@ impl MediaSink for Shared {
     }
 }
 
+impl Shared {
+    fn bytes(&self) -> Vec<u8> {
+        self.0.lock().unwrap().get_ref().clone()
+    }
+}
+
 fn stream(format: SampleFormat, channels: u16, rate: u32) -> StreamInfo {
     let layout = match channels {
         1 => ChannelLayout::mono(),
@@ -294,8 +300,7 @@ fn write(s: &StreamInfo, t: &Tags, data: &[u8]) -> Vec<u8> {
     })
     .unwrap();
     m.finish().unwrap();
-    let bytes = sink.0.lock().unwrap().get_ref().clone();
-    bytes
+    sink.bytes()
 }
 
 #[test]
@@ -368,8 +373,7 @@ fn without_mapped_tags_the_output_is_exactly_the_untagged_output() {
             })
             .unwrap();
             m.finish().unwrap();
-            let bytes = sink.0.lock().unwrap().get_ref().clone();
-            bytes
+            sink.bytes()
         };
         assert_eq!(write(&s, &Tags::new(), &data), plain, "{format:?}");
         assert_eq!(
@@ -417,7 +421,6 @@ fn create_muxer_hands_the_tags_to_the_wav_writer() {
     )
     .unwrap();
     m.finish().unwrap();
-    let bytes = sink.0.lock().unwrap().get_ref().clone();
-    let d = open(bytes, true);
+    let d = open(sink.bytes(), true);
     assert_eq!(kv(&d), pairs(&[("TITLE", "via create_muxer")]));
 }

@@ -88,7 +88,7 @@ pub fn open_demuxer(
     Ok((format, demuxer))
 }
 
-/// `tags` are written where the container can hold them; WAV does not yet.
+/// `tags` are written where the container can hold them.
 pub fn create_muxer(
     format: FormatId,
     sink: Box<dyn MediaSink>,
@@ -96,7 +96,7 @@ pub fn create_muxer(
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
     match format {
-        FormatId::Wav => Ok(Box::new(wav::WavMuxer::new(sink, stream)?)),
+        FormatId::Wav => Ok(Box::new(wav::WavMuxer::with_tags(sink, stream, tags)?)),
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => Err(Error::Unsupported {

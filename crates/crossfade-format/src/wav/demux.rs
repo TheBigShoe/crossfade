@@ -1,4 +1,5 @@
 use super::FRAMES_PER_PACKET;
+use super::INFO_CAP;
 use crate::aiff::decode_text;
 use crossfade_core::{
     AudioSpec, Channel, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet,
@@ -12,8 +13,6 @@ const FORMAT_FLOAT: u16 = 3;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 /// Bytes of a `fmt ` chunk that carry fields (the extensible layout).
 const FMT_FIELDS: usize = 40;
-/// A `LIST`/`INFO` chunk is tags, not payload: a larger one is skipped rather than read.
-const INFO_CAP: u64 = 1 << 20;
 
 pub struct WavDemuxer {
     source: Box<dyn MediaSource>,
