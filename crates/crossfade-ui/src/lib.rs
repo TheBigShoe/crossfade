@@ -1,6 +1,9 @@
 //! The Crossfade desktop app. Nothing in the engine depends on this crate.
 #![forbid(unsafe_code)]
 
+pub mod actions;
+pub mod chrome;
+pub mod dialog_footer;
 pub mod icons;
 
 pub mod prelude {
