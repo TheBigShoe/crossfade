@@ -12,30 +12,39 @@ fn pcm_format(codec: CodecId) -> Result<SampleFormat, Error> {
 }
 
 /// Sign-extends three little-endian bytes into an `i32`.
-fn s24_from_le(b: &[u8]) -> i32 {
+fn s24_from_le(b: &[u8; 3]) -> i32 {
     i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8
 }
 
 fn decode_into(data: &[u8], out: &mut Samples) {
-    // Each arm is a tight loop over exact chunks; no per-sample format branch.
+    // Each arm is a tight loop over fixed-size chunks; no per-sample format
+    // branch. Callers guarantee whole samples, so the remainder is empty.
     match out {
         Samples::U8(v) => v.extend_from_slice(data),
         Samples::S16(v) => v.extend(
-            data.chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]])),
+            data.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_le_bytes(*c)),
         ),
-        Samples::S24(v) => v.extend(data.chunks_exact(3).map(s24_from_le)),
+        Samples::S24(v) => v.extend(data.as_chunks::<3>().0.iter().map(s24_from_le)),
         Samples::S32(v) => v.extend(
-            data.chunks_exact(4)
-                .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| i32::from_le_bytes(*c)),
         ),
         Samples::F32(v) => v.extend(
-            data.chunks_exact(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c)),
         ),
         Samples::F64(v) => v.extend(
-            data.chunks_exact(8)
-                .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])),
+            data.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| f64::from_le_bytes(*c)),
         ),
     }
 }
@@ -89,7 +98,7 @@ impl Decoder for PcmDecoder {
             });
         }
         // bytes_per_frame is never zero: channels >= 1 and samples >= 1 byte.
-        if packet.data.len() % self.bytes_per_frame != 0 {
+        if !packet.data.len().is_multiple_of(self.bytes_per_frame) {
             return Err(Error::Malformed {
                 what: format!(
                     "packet of {} bytes is not a whole number of {}-byte frames",
@@ -175,7 +184,7 @@ impl Encoder for PcmEncoder {
             });
         }
         let channels = usize::from(self.channels);
-        if frame.samples.len() % channels != 0 {
+        if !frame.samples.len().is_multiple_of(channels) {
             return Err(Error::Malformed {
                 what: format!(
                     "{} samples is not a whole number of {channels}-channel frames",
