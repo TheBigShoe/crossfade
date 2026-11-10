@@ -1,7 +1,7 @@
 # Crossfade
 
-An FFmpeg-class audio/video tool in pure Rust: one engine, a CLI now, a GPUI
-desktop app later.
+An FFmpeg-class audio/video tool in pure Rust: one engine, a CLI (`crossfade`)
+and a GPUI desktop app (`crossfade-gui`).
 
 ## Rules
 
@@ -19,9 +19,10 @@ desktop app later.
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
-4. **Dependency direction:** core <- format, codec, dsp <- graph <- cli (later
-   ui). `crossfade-testkit` depends only on core and is only a dev-dependency.
-   Nothing points the other way.
+4. **Dependency direction:** core <- format, codec, dsp <- graph <- app <- cli,
+   ui. `appconfig` stands alone and only ui uses it. `crossfade-testkit`
+   depends only on core and is only a dev-dependency. Nothing points the other
+   way. GPUI is imported only through `crossfade_ui::prelude`.
 5. **Self-contained tests.** `cargo test --workspace` needs no network,
    FFmpeg, audio device or display. No wall-clock timing assertions: use the
    `Clock` trait with a manual clock.
@@ -37,7 +38,10 @@ desktop app later.
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
 | `crossfade-graph` | `Job` (plain serialisable data), `Pipeline::step`, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
-| `crossfade-cli` | The `crossfade` binary: `probe`, `convert`; file I/O (`FsIo`) lives here, never in the engine |
+| `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`) |
+| `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert` |
+| `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
+| `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
 
 The purity gate lives in its own crate so its `serde_json` dependency and
@@ -52,6 +56,8 @@ just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
 just fuzz-smoke  # 30 s per target; needs nightly and cargo-fuzz
 just bench     # criterion; not part of the gate
+just run       # the desktop app
+just screenshots [names]  # offscreen PNGs in target/screenshots (macOS only)
 ```
 
 `just ci` must pass before a branch is handed over. Work happens on a task
@@ -61,6 +67,15 @@ branch (`m<N>/<topic>`); the lead reviews and merges it into `main` with
 `fuzz/` is its own workspace (libFuzzer is C++) with its own lockfile. Without
 nightly, a target still runs unsanitised on the pinned toolchain:
 `RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none <target>`.
+
+UI work: views stay thin and render a `crossfade-app` model; test the model
+first, then the view with `#[gpui_test]` (headless, no display). A convert
+built in the GUI must equal `crossfade_cli::request_from_args` for the same
+intent (the parity tests). Review `just screenshots` output before handing over
+UI changes. Tests and screenshots never read or write the real config
+directory. The first GPUI build takes several minutes; a `target/` cloned from
+another checkout (`cp -Rc`) needs `cargo clean -p <each workspace crate>` first
+or stale artifacts are reused.
 
 The purity test calls `cargo metadata`, which may fetch crate manifests for
 other platforms on its very first run.
@@ -77,7 +92,8 @@ Run on every `cargo test`:
 Later milestones:
 
 - 3: conformance against reference vectors
-- 4: UI
+- 4: UI (`#[gpui_test]` runs on every `cargo test`; screenshots are a review
+  aid, not a gate)
 - 5: fuzzing (`cargo-fuzz`)
 - 6: differential against FFmpeg (optional, never a gate for tier 0-2)
 - 7: benchmarks
