@@ -85,7 +85,16 @@ impl RiceSearch {
         if self.known[j] >> k & 1 == 0 {
             self.known[j] |= 1 << k;
             let part = &u[self.bounds[j]..self.bounds[j + 1]];
-            let shifted: u64 = part.iter().map(|&v| u64::from(v >> k)).sum();
+            // The sum of `u >> k` is (sum - sum of the low k bits) / 2^k. The low bits add up
+            // in 32 bits as long as count * 2^k stays below 2^32, which is far cheaper than
+            // widening every shifted value to 64 bits.
+            let shifted: u64 = if k < 20 && part.len() <= 4096 {
+                let mask = (1u32 << k) - 1;
+                let low = part.iter().fold(0u32, |acc, &v| acc.wrapping_add(v & mask));
+                (self.sum[j] - u64::from(low)) >> k
+            } else {
+                part.iter().map(|&v| u64::from(v >> k)).sum()
+            };
             self.cache[slot] = part.len() as u64 * u64::from(k + 1) + shifted;
         }
         self.cache[slot]
