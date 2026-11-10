@@ -3,12 +3,57 @@
 use crossfade_core::Error;
 
 /// A whole number of hertz in `1..=u32::MAX`.
-pub(super) fn decode(_bytes: &[u8; 10]) -> Result<u32, Error> {
-    todo!()
+pub(super) fn decode(bytes: &[u8; 10]) -> Result<u32, Error> {
+    let sign_exp = u16::from_be_bytes([bytes[0], bytes[1]]);
+    let mut m = [0u8; 8];
+    m.copy_from_slice(&bytes[2..]);
+    let mantissa = u64::from_be_bytes(m);
+    let exp = sign_exp & 0x7FFF;
+    let malformed = |what: &str| Error::Malformed {
+        what: format!("sample rate is {what}"),
+    };
+    if exp == 0x7FFF {
+        return Err(malformed("infinite or not a number"));
+    }
+    if mantissa == 0 {
+        return Err(malformed("zero"));
+    }
+    if exp == 0 {
+        return Err(malformed("a denormal"));
+    }
+    if sign_exp & 0x8000 != 0 {
+        return Err(malformed("negative"));
+    }
+    let unsupported = |what: &str| Error::Unsupported {
+        what: format!("sample rate is {what}"),
+    };
+    // value = mantissa * 2^shift, the mantissa being a plain 64-bit integer.
+    let shift = i32::from(exp) - 16383 - 63;
+    let hz = if shift >= 0 {
+        if shift > 32 {
+            return Err(unsupported("above 4294967295 Hz"));
+        }
+        u128::from(mantissa) << shift
+    } else {
+        let down = shift.unsigned_abs();
+        if down >= 64 || mantissa & ((1u64 << down) - 1) != 0 {
+            return Err(unsupported("not a whole number of hertz"));
+        }
+        u128::from(mantissa >> down)
+    };
+    u32::try_from(hz).map_err(|_| unsupported("above 4294967295 Hz"))
 }
 
-pub(super) fn encode(_hz: u32) -> [u8; 10] {
-    todo!()
+pub(super) fn encode(hz: u32) -> [u8; 10] {
+    let mut out = [0u8; 10];
+    if hz == 0 {
+        return out;
+    }
+    let top = 31 - hz.leading_zeros();
+    let exp = 16383 + top as u16;
+    out[..2].copy_from_slice(&exp.to_be_bytes());
+    out[2..].copy_from_slice(&(u64::from(hz) << (63 - top)).to_be_bytes());
+    out
 }
 
 #[cfg(test)]
