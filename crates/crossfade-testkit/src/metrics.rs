@@ -16,24 +16,63 @@ impl fmt::Display for LengthMismatch {
 
 impl std::error::Error for LengthMismatch {}
 
-pub fn bit_exact(_a: &[u8], _b: &[u8]) -> bool {
-    true
+pub fn bit_exact(a: &[u8], b: &[u8]) -> bool {
+    a == b
 }
 
-pub fn first_difference<T: PartialEq>(_a: &[T], _b: &[T]) -> Option<usize> {
-    None
+/// Index of the first differing element, or the shorter length when one
+/// input is a prefix of the other.
+pub fn first_difference<T: PartialEq>(a: &[T], b: &[T]) -> Option<usize> {
+    let common = a.len().min(b.len());
+    match (0..common).find(|&i| a[i] != b[i]) {
+        Some(i) => Some(i),
+        None if a.len() == b.len() => None,
+        None => Some(common),
+    }
 }
 
-pub fn peak_abs_diff(_a: &[f64], _b: &[f64]) -> Result<f64, LengthMismatch> {
-    Ok(0.0)
+fn check_len(a: &[f64], b: &[f64]) -> Result<(), LengthMismatch> {
+    if a.len() == b.len() {
+        Ok(())
+    } else {
+        Err(LengthMismatch {
+            a: a.len(),
+            b: b.len(),
+        })
+    }
 }
 
-pub fn rms_diff(_a: &[f64], _b: &[f64]) -> Result<f64, LengthMismatch> {
-    Ok(0.0)
+pub fn peak_abs_diff(a: &[f64], b: &[f64]) -> Result<f64, LengthMismatch> {
+    check_len(a, b)?;
+    Ok(a.iter().zip(b).fold(0.0, |m, (x, y)| m.max((x - y).abs())))
 }
 
-pub fn snr_db(_reference: &[f64], _test: &[f64]) -> Result<f64, LengthMismatch> {
-    Ok(0.0)
+pub fn rms_diff(a: &[f64], b: &[f64]) -> Result<f64, LengthMismatch> {
+    check_len(a, b)?;
+    if a.is_empty() {
+        return Ok(0.0);
+    }
+    let sum: f64 = a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum();
+    Ok((sum / a.len() as f64).sqrt())
+}
+
+/// `10 * log10(signal power / error power)`. Zero error is `INFINITY`; a
+/// silent reference with any error is `NEG_INFINITY`.
+pub fn snr_db(reference: &[f64], test: &[f64]) -> Result<f64, LengthMismatch> {
+    check_len(reference, test)?;
+    let error: f64 = reference
+        .iter()
+        .zip(test)
+        .map(|(r, t)| (r - t) * (r - t))
+        .sum();
+    if error == 0.0 {
+        return Ok(f64::INFINITY);
+    }
+    let signal: f64 = reference.iter().map(|r| r * r).sum();
+    if signal == 0.0 {
+        return Ok(f64::NEG_INFINITY);
+    }
+    Ok(10.0 * libm::log10(signal / error))
 }
 
 #[cfg(test)]
