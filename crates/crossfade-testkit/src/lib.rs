@@ -4,5 +4,6 @@
 
 pub mod signal;
 
+pub mod clock;
 pub mod metrics;
 pub mod pcm;
