@@ -3,6 +3,11 @@
 //! crate; nothing in the engine depends on it.
 #![forbid(unsafe_code)]
 
+mod cache;
 mod manifest;
+#[cfg(test)]
+mod testutil;
+
+pub use cache::{Cache, Problem};
 
 pub use manifest::{Entry, Expect, Manifest, ManifestError};
