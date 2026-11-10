@@ -5,8 +5,10 @@
 mod job;
 mod pipeline;
 mod probe;
+mod run;
 
 pub use crossfade_core::JobIo;
 pub use job::{AudioSettings, Job, JobInput, JobOutput};
 pub use pipeline::{Pipeline, Plan, Step};
 pub use probe::{ProbeReport, probe};
+pub use run::{CancelToken, Event, run};
