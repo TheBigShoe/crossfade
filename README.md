@@ -11,7 +11,7 @@ video are planned. It has only been run on macOS so far.
 | Format | Read | Write | Notes |
 |---|---|---|---|
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags |
-| FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is limited to 96 kHz and 24-bit for now |
+| FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags |
 | Ogg | FLAC only | no | Vorbis and Opus are recognised and refused by name |
 

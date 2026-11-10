@@ -239,6 +239,11 @@ const ROWS: &[Row] = &[
     },
     Row {
         input: "in.wav",
+        steps: &[Do::Container(Container::Flac), Do::Format("s32")],
+        cli: &["-o", "in-s32.flac", "--sample-format", "s32"],
+    },
+    Row {
+        input: "in.wav",
         steps: &[Do::Container(Container::Flac), Do::Level(Some(0))],
         cli: &["-o", "in.flac", "--compression-level", "0"],
     },
