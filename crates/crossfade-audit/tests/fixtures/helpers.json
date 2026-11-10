@@ -1,0 +1,24 @@
+{
+  "packages": [
+    { "name": "crossfade-core", "id": "path+file:///ws/crates/crossfade-core#0.0.0", "links": null },
+    { "name": "cc", "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.2.0", "links": null },
+    { "name": "nasm-rs", "id": "registry+https://github.com/rust-lang/crates.io-index#nasm-rs@0.3.0", "links": null },
+    { "name": "libfoo-sys", "id": "registry+https://github.com/rust-lang/crates.io-index#libfoo-sys@0.1.0", "links": null }
+  ],
+  "workspace_members": [
+    "path+file:///ws/crates/crossfade-core#0.0.0"
+  ],
+  "resolve": {
+    "nodes": [
+      { "id": "path+file:///ws/crates/crossfade-core#0.0.0", "deps": [
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#cc@1.2.0", "dep_kinds": [{ "kind": "build", "target": null }] },
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#nasm-rs@0.3.0", "dep_kinds": [{ "kind": "dev", "target": null }, { "kind": "build", "target": null }] },
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#libfoo-sys@0.1.0", "dep_kinds": [{ "kind": null, "target": null }] }
+      ] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.2.0", "deps": [] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#nasm-rs@0.3.0", "deps": [] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#libfoo-sys@0.1.0", "deps": [] }
+    ],
+    "root": null
+  }
+}

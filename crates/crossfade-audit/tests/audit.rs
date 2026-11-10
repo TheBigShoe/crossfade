@@ -47,3 +47,20 @@ fn a_root_missing_from_the_workspace_is_reported() {
         }]
     );
 }
+
+#[test]
+fn native_build_helpers_and_sys_crates_are_flagged() {
+    let violations = audit(&fixture("helpers.json"), &["crossfade-core"], &[]);
+    let found: Vec<(&str, &Reason)> = violations
+        .iter()
+        .map(|v| (v.package.as_str(), &v.reason))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            ("cc", &Reason::NativeBuildHelper),
+            ("nasm-rs", &Reason::NativeBuildHelper),
+            ("libfoo-sys", &Reason::SysCrate),
+        ]
+    );
+}
