@@ -30,6 +30,8 @@ mod keymap_tests;
 #[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
+mod quit_tests;
+#[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
 mod sheet_tests;
