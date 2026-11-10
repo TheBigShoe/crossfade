@@ -4,10 +4,12 @@
 #![forbid(unsafe_code)]
 
 mod cache;
+mod fetch;
 mod manifest;
 #[cfg(test)]
 mod testutil;
 
 pub use cache::{Cache, Problem};
+pub use fetch::{fetch, seed, CurlDownloader, Downloader, Event, Failure, Outcome, Summary};
 
 pub use manifest::{Entry, Expect, Manifest, ManifestError};
