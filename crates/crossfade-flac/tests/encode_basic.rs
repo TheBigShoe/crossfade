@@ -114,3 +114,12 @@ fn bad_blocks_are_malformed() {
     enc.encode_block(&[1, 2, 3, 4], &mut out).unwrap(); // short: the last block
     m(enc.encode_block(&[1, 2], &mut out));
 }
+
+#[test]
+fn a_single_block_under_sixteen_samples_keeps_a_parsable_streaminfo() {
+    // STREAMINFO cannot hold a block size below 16 (its own parser refuses it).
+    let config = cfg(8_000, 1, 16, 5);
+    let e = round_trip(config, &noise(16, 10, 3), 0);
+    assert_eq!((e.info.min_block_size, e.info.max_block_size), (4096, 4096));
+    assert!(crossfade_flac::streaminfo::StreamInfoBlock::parse(&e.info.write()).is_ok());
+}
