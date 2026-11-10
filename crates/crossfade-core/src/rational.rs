@@ -207,19 +207,19 @@ mod tests {
 
         #[test]
         fn add_then_sub_restores_the_original(x in rational(), y in rational()) {
-            if let Ok(sum) = x.checked_add(y) {
-                if let Ok(back) = sum.checked_sub(y) {
-                    prop_assert_eq!(back, x);
-                }
+            if let Ok(sum) = x.checked_add(y)
+                && let Ok(back) = sum.checked_sub(y)
+            {
+                prop_assert_eq!(back, x);
             }
         }
 
         #[test]
         fn mul_then_div_restores_the_original(x in rational(), y in rational()) {
-            if let Ok(p) = x.checked_mul(y) {
-                if let Ok(back) = p.checked_div(y) {
-                    prop_assert_eq!(back, x);
-                }
+            if let Ok(p) = x.checked_mul(y)
+                && let Ok(back) = p.checked_div(y)
+            {
+                prop_assert_eq!(back, x);
             }
         }
 
