@@ -17,3 +17,6 @@ workspace = true
 [dev-dependencies]
 crossfade-testkit.workspace = true
 proptest.workspace = true
+# Conformance tier only; dev-dependencies do not count against the engine purity gate.
+crossfade-corpus = { path = "../crossfade-corpus" }
+sha2.workspace = true

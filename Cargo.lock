@@ -1549,8 +1549,10 @@ version = "0.0.0"
 dependencies = [
  "crossfade-codec",
  "crossfade-core",
+ "crossfade-corpus",
  "crossfade-testkit",
  "proptest",
+ "sha2 0.10.9",
 ]
 
 [[package]]
