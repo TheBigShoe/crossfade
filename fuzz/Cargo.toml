@@ -13,6 +13,7 @@ arbitrary = { version = "1", features = ["derive"] }
 crossfade-core = { path = "../crates/crossfade-core" }
 crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
+crossfade-flac = { path = "../crates/crossfade-flac" }
 
 # Not a member of the engine workspace: libFuzzer is C++.
 [workspace]
@@ -79,6 +80,13 @@ bench = false
 [[bin]]
 name = "flac_roundtrip"
 path = "fuzz_targets/flac_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flac_encode"
+path = "fuzz_targets/flac_encode.rs"
 test = false
 doc = false
 bench = false

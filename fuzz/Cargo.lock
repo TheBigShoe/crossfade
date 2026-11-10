@@ -106,6 +106,7 @@ dependencies = [
  "arbitrary",
  "crossfade-codec",
  "crossfade-core",
+ "crossfade-flac",
  "crossfade-format",
  "libfuzzer-sys",
 ]

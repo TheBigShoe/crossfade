@@ -1,4 +1,90 @@
 //! A FLAC encoder (RFC 9639): interleaved samples in, one frame per block out.
+//!
+//! Fixed block size, 4 to 32 bits per sample, 1 to 8 channels, any rate FLAC can name. Every
+//! frame decodes bit-exactly with this crate's [`Decoder`](crate::Decoder), and the final
+//! STREAMINFO carries the MD5 of the audio, so `Decoder::finish` returns `Md5Matched`.
+//!
+//! ```
+//! use crossfade_flac::{Decoder, Encoder, EncoderConfig, Verification};
+//!
+//! let mut encoder = Encoder::new(EncoderConfig::new(44_100, 2, 16))?;
+//! let samples: Vec<i32> = (0..2 * 5000).map(|i| (i % 200) * 50 - 5000).collect();
+//! let mut frames = Vec::new();
+//! let mut ends = Vec::new(); // where each frame ends in `frames`
+//! // One call per block; the last may be short. (`write` and `flush` take any chunk size.)
+//! for block in samples.chunks(encoder.block_size() * 2) {
+//!     encoder.encode_block(block, &mut frames)?;
+//!     ends.push(frames.len());
+//! }
+//! let info = encoder.finish(); // goes in the STREAMINFO block of the file
+//!
+//! let mut decoder = Decoder::new(&info)?;
+//! let mut start = 0;
+//! for end in ends {
+//!     decoder.decode_frame(&frames[start..end])?;
+//!     start = end;
+//! }
+//! assert_eq!(decoder.finish()?, Verification::Md5Matched);
+//! # Ok::<(), crossfade_flac::Error>(())
+//! ```
+//!
+//! # Levels
+//!
+//! `level` runs from 0 (fastest) to 8 (smallest); each row adds to the ones above it. The
+//! sizes track the reference encoder's presets at the same level (see the crate README).
+//!
+//! | level | block | stereo | fixed orders coded | LPC max order | LPC windows (orders coded) | max Rice partition order |
+//! |---|---|---|---|---|---|---|
+//! | 0 | 1152 | independent | all 5 | none | none | 3 |
+//! | 1 | 1152 | adaptive | all 5 | none | none | 3 |
+//! | 2 | 1152 | exhaustive | all 5 | none | none | 3 |
+//! | 3 | 4096 | adaptive | best 2 | 6 | full (1) | 4 |
+//! | 4 | 4096 | adaptive | best 2 | 8 | full (1) | 4 |
+//! | 5 | 4096 | exhaustive | best 2 | 8 | full (2) | 5 |
+//! | 6 | 4096 | exhaustive | best 2 | 8 | full (3) | 6 |
+//! | 7 | 4096 | exhaustive | best 2 | 12 | full (4) | 6 |
+//! | 8 | 4096 | exhaustive | best 2 | 12 | full (3), first and last two thirds (1 each) | 6 |
+//!
+//! Every level also does the following, and every choice between candidates is made on exact
+//! bit counts, never on an estimate:
+//!
+//! - **Constant and verbatim subframes**, and **wasted bits**: low zero bits common to every
+//!   sample of a channel are shifted out and signalled.
+//! - **Fixed predictors** of order 0 to 4. Levels 0 to 2 code all five and keep the cheapest.
+//!   From level 3 a one-pass estimate (the sum of absolute residuals) picks the two best
+//!   orders to code, because linear prediction usually wins anyway.
+//! - **Linear prediction** from level 3: a window (Tukey-like, tapered with a smoothstep
+//!   polynomial), autocorrelation, one Levinson-Durbin run for every order up to the maximum,
+//!   coefficients quantised to 12 bits with the largest shift that fits. The best few orders
+//!   by the reference encoder's size estimate (the count in the table) are coded for real; the
+//!   cheapest wins.
+//! - **Rice coding** with the partition order searched from 0 up to the level's maximum (and
+//!   as far as the block size and predictor order allow). Each partition's parameter is the
+//!   exact optimum; 5-bit parameters are used when a partition wants one above 14 and they
+//!   pay for themselves, and a partition is stored raw (escaped) when that is cheaper.
+//! - **Stereo**: level 0 codes channels independently. *Adaptive* levels rank left/side,
+//!   side/right and mid/side by a cheap estimate and code only the winning pair;
+//!   *exhaustive* levels code left, right, mid and side fully and keep the cheapest pair.
+//!   Either way the pair is compared with plain coding by exact bits before it is emitted.
+//!
+//! # Guarantees
+//!
+//! - **Never worse than raw.** A frame is never larger than one made of independent verbatim
+//!   (or constant) subframes: a verbatim candidate is always in the race, and a decorrelated
+//!   pair that loses to it by exact bits is replaced.
+//! - **The format's limits hold.** A residual must fit 32-bit two's complement and not be the
+//!   most negative value; a predictor or stereo mode that would break that is passed over, down
+//!   to verbatim, which always works. The side channel of a 32-bit stream is 33 bits wide and
+//!   is handled in `i64`.
+//! - **Deterministic.** No threads. Floating point is used only for the window,
+//!   autocorrelation, Levinson-Durbin and quantisation, through operations IEEE 754 defines
+//!   exactly (`+ - * /`, comparisons, conversions): no `sin`, `cos`, `exp`, `ln`, `powf` or
+//!   fused multiply-add, whose results differ between platforms' maths libraries. The same
+//!   input and configuration give the same bytes everywhere.
+//! - **No panics, bounded memory.** One block of working memory, allocated in
+//!   [`Encoder::new`] and reused; steady state allocates nothing but what the caller's `out`
+//!   needs. Arithmetic on sample data is either checked against the limits or wraps where the
+//!   result is known to fit.
 
 mod analyze;
 mod bitsink;
