@@ -228,7 +228,7 @@ impl WavDemuxer {
         let rate = audio.sample_rate();
         let format = audio.format();
         let stream = StreamInfo {
-            frames: frames,
+            frames,
             ..StreamInfo::new(
                 0,
                 CodecId::pcm_for(format),

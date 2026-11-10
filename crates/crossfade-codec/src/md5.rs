@@ -33,8 +33,8 @@ impl Default for Md5 {
 
 fn compress(state: &mut [u32; 4], block: &[u8; 64]) {
     let mut m = [0u32; 16];
-    for (w, c) in m.iter_mut().zip(block.chunks_exact(4)) {
-        *w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+    for (w, c) in m.iter_mut().zip(block.as_chunks::<4>().0) {
+        *w = u32::from_le_bytes(*c);
     }
     let [mut a, mut b, mut c, mut d] = *state;
     for i in 0..64 {
@@ -99,8 +99,8 @@ impl Md5 {
         tail[pad..pad + 8].copy_from_slice(&bits.to_le_bytes());
         self.update(&tail[..pad + 8]);
         let mut out = [0u8; 16];
-        for (o, s) in out.chunks_exact_mut(4).zip(self.state) {
-            o.copy_from_slice(&s.to_le_bytes());
+        for (o, s) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *o = s.to_le_bytes();
         }
         out
     }

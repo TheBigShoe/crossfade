@@ -21,7 +21,7 @@ impl<'a> BitReader<'a> {
     }
 
     pub fn is_aligned(&self) -> bool {
-        self.pos % 8 == 0
+        self.pos.is_multiple_of(8)
     }
 
     fn eof(&self) -> Error {
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn reads_msb_first() {
         let mut r = BitReader::new(&[0b1010_0101, 0xFF]);
-        assert_eq!(r.read_bit().unwrap(), true);
+        assert!(r.read_bit().unwrap());
         assert_eq!(r.read_bits(3).unwrap(), 0b010);
         assert_eq!(r.position_bits(), 4);
         assert_eq!(r.read_bits(8).unwrap(), 0b0101_1111);
@@ -220,7 +220,7 @@ mod tests {
         let mut r = BitReader::new(&[1, 2]);
         r.skip(12).unwrap();
         assert_eq!(r.read_bits(5), Err(Error::UnexpectedEof { offset: 2 }));
-        assert_eq!(r.read_bit().unwrap(), false);
+        assert!(!r.read_bit().unwrap());
         assert_eq!(
             BitReader::new(&[]).read_bit(),
             Err(Error::UnexpectedEof { offset: 0 })

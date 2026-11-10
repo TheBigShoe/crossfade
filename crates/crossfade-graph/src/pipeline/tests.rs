@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::job::AudioSettings;
-use crossfade_core::{ChannelLayout, SampleFormat, Samples, TimeBase};
+use crossfade_core::{ChannelLayout, CodecId, SampleFormat, Samples, TimeBase};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -36,7 +36,6 @@ impl Demuxer for ScriptedDemuxer {
 
 struct RecordingMuxer {
     log: Log,
-    tags: Tags,
 }
 
 impl Muxer for RecordingMuxer {
@@ -45,7 +44,9 @@ impl Muxer for RecordingMuxer {
         Ok(())
     }
     fn set_extradata(&mut self, extradata: &[u8]) -> Result<(), Error> {
-        self.log.borrow_mut().push(format!("extradata:{extradata:?}"));
+        self.log
+            .borrow_mut()
+            .push(format!("extradata:{extradata:?}"));
         Ok(())
     }
     fn finish(&mut self) -> Result<(), Error> {
@@ -66,7 +67,11 @@ impl Decoder for ScriptedDecoder {
         let Some(d) = self.0.take() else {
             return Ok(false);
         };
-        out.samples = Samples::S16(d.chunks(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect());
+        out.samples = Samples::S16(
+            d.chunks(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        );
         Ok(true)
     }
     fn drain(&mut self) {}
@@ -145,10 +150,7 @@ fn build(
     let (log, seen) = (log.clone(), seen_tags.clone());
     Pipeline::build(FormatId::Wav, format, d, s, move |_, tags| {
         *seen.borrow_mut() = Some(tags.clone());
-        Ok(Box::new(RecordingMuxer {
-            log,
-            tags: tags.clone(),
-        }))
+        Ok(Box::new(RecordingMuxer { log }))
     })
 }
 
@@ -275,7 +277,11 @@ fn copy_is_refused_with_other_encoding_settings_or_an_unfit_container() {
         .contains("compression")
     );
     assert_eq!(
-        unsupported(attempt(CodecId::PcmS16Le, FormatId::Aiff, settings(Some("copy")))),
+        unsupported(attempt(
+            CodecId::PcmS16Le,
+            FormatId::Aiff,
+            settings(Some("copy"))
+        )),
         "cannot copy pcm_s16le into aiff"
     );
     assert!(attempt(CodecId::PcmS16Le, FormatId::Wav, settings(Some("copy"))).is_ok());
