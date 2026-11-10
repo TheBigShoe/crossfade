@@ -172,3 +172,6 @@ impl Pipeline {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
