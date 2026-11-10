@@ -142,24 +142,37 @@ pub(super) fn log2(x: f64) -> f64 {
         term *= z2;
         k += 2.0;
     }
-    exp as f64 + 2.0 * sum * 1.442_695_040_888_963_4
+    exp as f64 + 2.0 * sum * std::f64::consts::LOG2_E
+}
+
+/// A quantised predictor: `coefs[j]` multiplies the sample `j + 1` places back.
+pub(super) struct Quantized<'a> {
+    pub(super) coefs: &'a [i32],
+    pub(super) shift: u32,
+    pub(super) precision: u32,
+}
+
+/// Scratch sums for [`residual`], reused from block to block.
+#[derive(Default)]
+pub(super) struct Accumulators {
+    narrow: Vec<i32>,
+    wide: Vec<i64>,
 }
 
 /// Fills `out` with the folded residuals of the quantised predictor over `x`
 /// (`x.len() - coefs.len()` of them). False when a residual would not fit 32 bits.
 ///
 /// The outer loop runs over coefficients and the inner one over samples, which is the shape
-/// that vectorises. `acc32` and `acc64` are scratch.
+/// that vectorises.
 pub(super) fn residual<T: Sample>(
     x: &[T],
-    coefs: &[i32],
-    shift: u32,
+    q: &Quantized,
     bps: u32,
-    precision: u32,
     out: &mut Vec<u32>,
-    acc32: &mut Vec<i32>,
-    acc64: &mut Vec<i64>,
+    acc: &mut Accumulators,
 ) -> bool {
+    let (coefs, shift, precision) = (q.coefs, q.shift, q.precision);
+    let (acc32, acc64) = (&mut acc.narrow, &mut acc.wide);
     let order = coefs.len();
     let m = x.len() - order;
     out.clear();
@@ -215,7 +228,7 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             ((state >> 11) as i64) % (1 << (bits - 1))
         };
-        let (mut acc32, mut acc64) = (Vec::new(), Vec::new());
+        let mut acc = Accumulators::default();
         for (bits, precision) in [(8u32, 7u32), (16, 12), (24, 13), (32, 15), (33, 9)] {
             for order in [1usize, 2, 5, 8, 12, 32] {
                 let x: Vec<i64> = (0..70).map(|_| next(bits)).collect();
@@ -237,12 +250,28 @@ mod tests {
                     let mut out = Vec::new();
                     let ok = if bits == 33 {
                         residual(
-                            &x, &coefs, shift, bits, precision, &mut out, &mut acc32, &mut acc64,
+                            &x,
+                            &Quantized {
+                                coefs: &coefs,
+                                shift,
+                                precision,
+                            },
+                            bits,
+                            &mut out,
+                            &mut acc,
                         )
                     } else {
                         let x32: Vec<i32> = x.iter().map(|&v| v as i32).collect();
                         residual(
-                            &x32, &coefs, shift, bits, precision, &mut out, &mut acc32, &mut acc64,
+                            &x32,
+                            &Quantized {
+                                coefs: &coefs,
+                                shift,
+                                precision,
+                            },
+                            bits,
+                            &mut out,
+                            &mut acc,
                         )
                     };
                     assert_eq!(ok, fits, "bits {bits} order {order} shift {shift}");

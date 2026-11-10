@@ -1,6 +1,7 @@
 //! Chooses how to code one channel of one block: the cheapest subframe, by exact bit count.
 
 use super::fixed;
+use super::lpc::{self, MAX_ORDER};
 use super::rice::{RicePlan, RiceSearch};
 
 /// A sample type the analysis runs on: `i32` for every channel but the side channel of a
@@ -41,6 +42,7 @@ pub(super) enum Kind {
     Constant,
     Verbatim,
     Fixed(u8),
+    Lpc(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +61,12 @@ pub(super) struct Level {
     pub(super) stereo: Stereo,
     /// Largest Rice partition order tried.
     pub(super) rice_order: u32,
+    /// Largest LPC order; 0 means fixed predictors only.
+    pub(super) max_lpc: usize,
+    /// How many LPC orders, best by estimate first, get an exact search.
+    pub(super) lpc_tries: usize,
+    /// Quantised coefficient precision in bits, sign included.
+    pub(super) precision: u32,
 }
 
 impl Level {
@@ -76,6 +84,20 @@ impl Level {
                 5 => 5,
                 _ => 6,
             },
+            max_lpc: match level {
+                0..=2 => 0,
+                3 => 6,
+                4..=6 => 8,
+                _ => 12,
+            },
+            lpc_tries: match level {
+                3 | 4 => 1,
+                5 => 2,
+                6 => 3,
+                _ => 4,
+            },
+            // As the reference encoder: more precision for longer blocks.
+            precision: 12,
         }
     }
 }
@@ -93,6 +115,10 @@ pub(super) struct Plan {
     /// Folded residuals of a predicted subframe.
     pub(super) res: Vec<u32>,
     pub(super) rice: RicePlan,
+    pub(super) precision: u32,
+    pub(super) shift: u32,
+    /// Quantised coefficients, the one for the most recent sample first.
+    pub(super) coefs: [i32; MAX_ORDER],
 }
 
 impl Plan {
@@ -104,6 +130,9 @@ impl Plan {
             bits: 0,
             res: Vec::with_capacity(block),
             rice: RicePlan::new(),
+            precision: 0,
+            shift: 0,
+            coefs: [0; MAX_ORDER],
         }
     }
 }
@@ -122,6 +151,10 @@ pub(super) struct Analyzer {
     /// Samples with the wasted bits shifted out.
     pool32: Vec<i32>,
     pool64: Vec<i64>,
+    window: Vec<f64>,
+    windowed: Vec<f64>,
+    lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
+    acc: lpc::Accumulators,
 }
 
 impl Analyzer {
@@ -133,6 +166,10 @@ impl Analyzer {
             rice: RiceSearch::new(),
             pool32: Vec::with_capacity(level.block),
             pool64: Vec::with_capacity(level.block),
+            window: Vec::with_capacity(level.block),
+            windowed: Vec::with_capacity(level.block),
+            lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
+            acc: lpc::Accumulators::default(),
         }
     }
 
@@ -192,6 +229,103 @@ impl Analyzer {
             if bits < plan.bits {
                 plan.bits = bits;
                 plan.kind = Kind::Fixed(order as u8);
+                std::mem::swap(&mut plan.res, &mut self.cand);
+                std::mem::swap(&mut plan.rice, &mut self.cand_rice);
+            }
+        }
+        if self.level.max_lpc > 0 && n >= 16 {
+            self.search_lpc(x, bps, head, plan);
+        }
+    }
+
+    /// Linear prediction: one Levinson run gives every order; the orders that look best by
+    /// estimate are then coded for real and compared by exact bits.
+    fn search_lpc<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+        let n = x.len();
+        let max_order = self.level.max_lpc.min(n - 1);
+        if self.window.len() != n {
+            lpc::window(n, &mut self.window);
+        }
+        self.windowed.clear();
+        self.windowed.extend(
+            x.iter()
+                .zip(&self.window)
+                .map(|(&v, &w)| v.into() as f64 * w),
+        );
+        let mut autoc = [0.0f64; MAX_ORDER + 1];
+        lpc::autocorrelation(&self.windowed, &mut autoc[..=max_order]);
+        autoc[0] *= 1.0 + 1e-9;
+        let mut err = [0.0f64; MAX_ORDER];
+        let orders = lpc::levinson(&autoc, max_order, &mut self.lp, &mut err);
+        if orders == 0 {
+            return;
+        }
+        let precision = self.level.precision;
+        // Estimated bits per order, as the reference encoder does: the error energy gives the
+        // residual size, each coefficient costs its precision, each warm-up sample the depth.
+        let scale = 0.5 / n as f64;
+        let mut est = [(f64::MAX, 0usize); MAX_ORDER];
+        for k in 0..orders {
+            let e = err[k] * scale;
+            let per = if e > 0.0 {
+                (0.5 * lpc::log2(e)).max(0.0)
+            } else {
+                0.0
+            };
+            let order = k + 1;
+            est[k] = (
+                per * (n - order) as f64 + (order as u64 * u64::from(precision + bps)) as f64,
+                order,
+            );
+        }
+        let tries = self.level.lpc_tries.min(orders);
+        for t in 0..tries {
+            // Selection of the next best estimate; ties go to the lower order.
+            let mut at = t;
+            for i in t + 1..orders {
+                if est[i].0 < est[at].0 {
+                    at = i;
+                }
+            }
+            est.swap(t, at);
+            let order = est[t].1;
+            let mut q = [0i32; MAX_ORDER];
+            let Some(shift) =
+                lpc::quantize(&self.lp[order - 1][..order], precision, &mut q[..order])
+            else {
+                continue;
+            };
+            if !lpc::residual(
+                x,
+                &lpc::Quantized {
+                    coefs: &q[..order],
+                    shift,
+                    precision,
+                },
+                bps,
+                &mut self.cand,
+                &mut self.acc,
+            ) {
+                continue;
+            }
+            self.rice.plan(
+                &self.cand,
+                n,
+                order,
+                self.level.rice_order,
+                &mut self.cand_rice,
+            );
+            let bits = head
+                + order as u64 * u64::from(bps)
+                + 9
+                + order as u64 * u64::from(precision)
+                + self.cand_rice.bits;
+            if bits < plan.bits {
+                plan.bits = bits;
+                plan.kind = Kind::Lpc(order as u8);
+                plan.precision = precision;
+                plan.shift = shift;
+                plan.coefs = q;
                 std::mem::swap(&mut plan.res, &mut self.cand);
                 std::mem::swap(&mut plan.rice, &mut self.cand_rice);
             }

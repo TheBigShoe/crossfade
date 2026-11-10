@@ -9,6 +9,7 @@ pub(super) fn write_subframe<T: Sample>(sink: &mut BitSink, plan: &Plan, x: &[T]
         Kind::Constant => 0,
         Kind::Verbatim => 1,
         Kind::Fixed(order) => 8 + u64::from(order),
+        Kind::Lpc(order) => 31 + u64::from(order),
     };
     sink.put(kind, 7);
     sink.put(u64::from(plan.wasted > 0), 1);
@@ -25,6 +26,16 @@ pub(super) fn write_subframe<T: Sample>(sink: &mut BitSink, plan: &Plan, x: &[T]
         Kind::Fixed(order) => {
             let order = usize::from(order);
             x[..order].iter().for_each(|&v| put(sink, v));
+            rice::write(sink, &plan.rice, &plan.res, x.len(), order);
+        }
+        Kind::Lpc(order) => {
+            let order = usize::from(order);
+            x[..order].iter().for_each(|&v| put(sink, v));
+            sink.put(u64::from(plan.precision - 1), 4);
+            sink.put(u64::from(plan.shift), 5);
+            for &c in &plan.coefs[..order] {
+                sink.put_signed(i64::from(c), plan.precision);
+            }
             rice::write(sink, &plan.rice, &plan.res, x.len(), order);
         }
     }
