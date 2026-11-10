@@ -5,6 +5,7 @@ use crate::fsio::FsIo;
 use crate::queue::{JobId, Runner, RunnerEvent};
 use crossfade_core::{Error, Limits};
 use crossfade_graph::{CancelToken, Event, run};
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -38,6 +39,36 @@ impl Throttle {
 
 type Notify = Arc<dyn Fn(JobId, RunnerEvent) + Send + Sync>;
 
+/// Reports a failure if the worker unwinds before saying how the job ended;
+/// otherwise a panic would leave the job running forever in the queue.
+struct EndGuard<'a> {
+    id: JobId,
+    ended: Cell<bool>,
+    notify: &'a (dyn Fn(JobId, RunnerEvent) + Send + Sync),
+}
+
+impl EndGuard<'_> {
+    fn send(&self, event: RunnerEvent) {
+        if matches!(
+            event,
+            RunnerEvent::Finished { .. } | RunnerEvent::Failed { .. } | RunnerEvent::Cancelled
+        ) {
+            self.ended.set(true);
+        }
+        (self.notify)(self.id, event);
+    }
+}
+
+impl Drop for EndGuard<'_> {
+    fn drop(&mut self) {
+        if !self.ended.get() {
+            self.send(RunnerEvent::Failed {
+                message: "the converter stopped unexpectedly".into(),
+            });
+        }
+    }
+}
+
 /// `notify` is called on the worker thread; a UI forwards it to its own.
 pub struct ThreadRunner {
     limits: Limits,
@@ -70,7 +101,12 @@ fn work(
     cancel: &CancelToken,
     notify: &(dyn Fn(JobId, RunnerEvent) + Send + Sync),
 ) {
-    let send = |event| notify(id, event);
+    let guard = EndGuard {
+        id,
+        ended: Cell::new(false),
+        notify,
+    };
+    let send = |event| guard.send(event);
     // Same refusal as the CLI, without its `--force` hint.
     if let ([_], [output]) = (
         request.job.inputs.as_slice(),
