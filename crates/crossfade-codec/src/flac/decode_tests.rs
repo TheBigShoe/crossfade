@@ -333,7 +333,7 @@ fn linear_predictors_of_many_orders_restore_the_signal() {
         let coefs: Vec<i64> = (0..order)
             .map(|j| {
                 let max = (1i64 << (precision - 1)) - 1;
-                ((j as i64 * 37 + 11) % (2 * max + 1)) - max
+                ((i64::from(j) * 37 + 11) % (2 * max + 1)) - max
             })
             .collect();
         let f = mono_frame(&x, 16, |w| sub_lpc(w, &coefs, precision, shift, &x, 16));

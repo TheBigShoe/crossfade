@@ -54,10 +54,8 @@ fn flac_is_routed_to_stubs_that_say_so() {
         audio.clone(),
         TimeBase::new(1, 8000).unwrap(),
     );
-    assert_eq!(
-        unsupported_what(decoder_for(&info)),
-        "flac decoding is not built yet"
-    );
+    // Routed to the FLAC decoder, which finds no STREAMINFO in the empty extradata.
+    assert!(matches!(decoder_for(&info), Err(Error::Malformed { .. })));
     let opts = EncodeOptions {
         compression_level: Some(5),
     };
