@@ -80,7 +80,15 @@ pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec
         .resolve
         .iter()
         .flat_map(|r| &r.nodes)
-        .map(|n| (n.id.as_str(), n.deps.iter().map(|d| d.pkg.as_str()).collect()))
+        .map(|n| {
+            let deps = n
+                .deps
+                .iter()
+                .filter(|d| d.dep_kinds.iter().any(|k| k.kind.as_deref() != Some("dev")))
+                .map(|d| d.pkg.as_str())
+                .collect();
+            (n.id.as_str(), deps)
+        })
         .collect();
 
     let mut seen = HashSet::new();
