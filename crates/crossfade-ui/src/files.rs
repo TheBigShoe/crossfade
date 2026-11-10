@@ -411,6 +411,12 @@ impl Workspace {
                                     .id("inspector-path-dir")
                                     .test_support()
                                     .min_w_0()
+                                    // Shrinks far faster than the name, so the directory
+                                    // is spent before the name loses a letter.
+                                    .map(|mut dir| {
+                                        dir.style().flex_shrink = Some(1000.);
+                                        dir
+                                    })
                                     .truncate()
                                     .child(SharedString::from(dir)),
                             )
@@ -418,7 +424,8 @@ impl Workspace {
                                 div()
                                     .id("inspector-path-name")
                                     .test_support()
-                                    .flex_none()
+                                    .min_w_0()
+                                    .truncate()
                                     .child(SharedString::from(name.to_owned())),
                             ),
                     ),
