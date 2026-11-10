@@ -7,3 +7,7 @@ pub fn decoder(_stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
         what: "flac decoding is not built yet".into(),
     })
 }
+
+#[cfg(test)]
+#[path = "decode_tests.rs"]
+mod tests;
