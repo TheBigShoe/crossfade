@@ -34,3 +34,16 @@ fn links_package_reachable_from_engine_crate_is_flagged() {
 fn offenders_behind_dev_dependencies_or_non_engine_crates_are_not_flagged() {
     assert_eq!(audit(&fixture("unreachable.json"), &["crossfade-core"], &[]), vec![]);
 }
+
+#[test]
+fn a_root_missing_from_the_workspace_is_reported() {
+    let violations = audit(&fixture("clean.json"), &["crossfade-typo"], &[]);
+    assert_eq!(
+        violations,
+        vec![Violation {
+            package: "crossfade-typo".into(),
+            reason: Reason::NotInWorkspace,
+            path: vec![],
+        }]
+    );
+}
