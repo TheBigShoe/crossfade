@@ -142,7 +142,13 @@ pub fn signal(kind: u8, bits: u8, count: usize, channels: usize, seed: u64) -> V
         }
         // Extremes alternating from sample to sample, and between channels.
         4 => (0..count)
-            .map(|i| if (i / channels + i).is_multiple_of(2) { lo } else { hi })
+            .map(|i| {
+                if (i / channels + i).is_multiple_of(2) {
+                    lo
+                } else {
+                    hi
+                }
+            })
             .collect(),
         5 => vec![0; count],
         // The low bits of every sample are zero.
