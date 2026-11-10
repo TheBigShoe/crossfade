@@ -265,8 +265,29 @@ pub(crate) fn open_sheet(cx: &mut TestAppContext, rig: &Rig) {
     draw(cx, rig.window);
 }
 
-pub(crate) const PRESET_LABELS: [&str; 4] =
-    ["Same as source", "16-bit (CD)", "24-bit", "32-bit float"];
+pub(crate) const PRESET_LABELS: [&str; 8] = [
+    "Same as source",
+    "16-bit (CD)",
+    "24-bit",
+    "32-bit float",
+    "FLAC",
+    "FLAC 16-bit",
+    "FLAC 24-bit",
+    "AIFF",
+];
+pub(crate) const CONTAINER_LABELS: [&str; 3] = ["WAV", "FLAC", "AIFF"];
+pub(crate) const LEVEL_LABELS: [&str; 10] = [
+    "Default",
+    "0 \u{b7} Fastest",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8 \u{b7} Smallest",
+];
 pub(crate) const FORMAT_LABELS: [&str; 7] = [
     "Same as source",
     "8-bit unsigned",
@@ -277,8 +298,7 @@ pub(crate) const FORMAT_LABELS: [&str; 7] = [
     "64-bit float",
 ];
 
-/// Pick item `ix` of the select called `id` with the keyboard, as a user can: the select
-/// shows its popup rows lazily, so arrow keys are the dependable way in.
+/// Pick item `ix` of `labels` in the select called `id`.
 pub(crate) fn pick(
     cx: &mut TestAppContext,
     rig: &Rig,
@@ -286,14 +306,21 @@ pub(crate) fn pick(
     labels: &[&str],
     ix: usize,
 ) {
-    let shown = rig.workspace.read_with(cx, |w, cx| {
+    pick_label(cx, rig, id, labels[ix]);
+}
+
+/// Pick the item called `label` of the select `id` with the keyboard, as a user can: the
+/// select shows its popup rows lazily, so arrow keys are the dependable way in.
+pub(crate) fn pick_label(cx: &mut TestAppContext, rig: &Rig, id: &'static str, label: &str) {
+    let (items, shown) = rig.workspace.read_with(cx, |w, cx| {
         let dialog = w.convert_dialog().expect("the sheet is open").read(cx);
-        match id {
-            "sheet-preset" => dialog.preset_label(cx),
-            _ => Some(dialog.format_label(cx)),
-        }
+        (dialog.select_labels(id, cx), dialog.shown_label(id, cx))
     });
-    let at = shown.and_then(|text| labels.iter().position(|l| *l == text));
+    let ix = items
+        .iter()
+        .position(|l| l == label)
+        .unwrap_or_else(|| panic!("{id} has no item {label:?}: {items:?}"));
+    let at = shown.and_then(|text| items.iter().position(|l| *l == text));
     cx.update_window(rig.window, |_, window, cx| {
         window.within(id).click("input", cx);
         match at {

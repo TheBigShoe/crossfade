@@ -3,9 +3,11 @@
 use crossfade_app::inputs::InputState;
 use crossfade_app::inspector;
 
+use crate::fixtures;
 use crate::prelude::*;
 use crate::test_support::{add_paths, click, disabled, draw, has, open_rig, open_test_window};
 use crate::workspace::Workspace;
+use crossfade_core::SampleFormat;
 
 fn row_id(prefix: &str, n: usize) -> SharedString {
     format!("{prefix}-{n}").into()
@@ -48,7 +50,7 @@ fn the_inspector_shows_what_the_model_returns_for_the_selected_file(cx: &mut Tes
     assert_eq!(shown, expected);
     for (s, section) in expected.iter().enumerate() {
         for row in &section.rows {
-            let id: SharedString = format!("inspector-row-{s}-{}", row.field).into();
+            let id: SharedString = format!("inspector-row-{s}-{}", row.id).into();
             assert!(has(cx, rig.window, id.clone()), "missing {id}");
         }
     }
@@ -87,7 +89,10 @@ fn a_good_file_summary_is_one_muted_line(cx: &mut TestAppContext) {
     let a = rig.dir.write_wav("a.wav", 48_000, 2, 48_000 * 62 + 12_000);
     add_paths(cx, &rig, &[&a]);
     let summary = rig.workspace.read_with(cx, |w, _| w.file_summary(0));
-    assert_eq!(summary, "48 kHz \u{b7} stereo \u{b7} s16 \u{b7} 1:02.250");
+    assert_eq!(
+        summary,
+        "WAV \u{b7} 48 kHz \u{b7} stereo \u{b7} 16-bit \u{b7} 1:02.250"
+    );
 }
 
 #[gpui_test]
@@ -330,5 +335,114 @@ fn a_selected_row_is_clearly_distinct_from_a_hovered_one_in_both_themes(cx: &mut
                 "dark={dark}: selected vs hover colour distance {distance}"
             );
         });
+    }
+}
+
+fn rig_with_file(cx: &mut TestAppContext, name: &str, bytes: &[u8]) -> crate::test_support::Rig {
+    let rig = open_rig(cx);
+    let input = rig.dir.write(name, bytes);
+    add_paths(cx, &rig, &[&input]);
+    rig
+}
+
+#[gpui_test]
+fn a_tagged_flac_lists_each_tag_as_its_own_row_with_friendly_values(cx: &mut TestAppContext) {
+    let flac = fixtures::tagged(
+        &fixtures::flac(44_100, 2, SampleFormat::S16, 4_410),
+        &[("TITLE", "Room tone"), ("ARTIST", "One"), ("ARTIST", "Two")],
+    );
+    let rig = rig_with_file(cx, "tone.flac", &flac);
+    let summary = rig.workspace.read_with(cx, |w, _| w.file_summary(0));
+    assert_eq!(
+        summary,
+        "FLAC \u{b7} 44.1 kHz \u{b7} stereo \u{b7} 16-bit \u{b7} 0:00.100"
+    );
+    for n in 0..3 {
+        let id: SharedString = format!("inspector-row-2-tags-{n}").into();
+        assert!(has(cx, rig.window, id.clone()), "missing {id}");
+    }
+    assert!(!has(cx, rig.window, "inspector-row-2-tags-3"));
+    let sections = rig.workspace.read_with(cx, |w, _| w.inspector_sections());
+    assert_eq!(sections[2].title, "Tags");
+    let values: Vec<_> = sections[2]
+        .rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.value.as_str()))
+        .collect();
+    assert_eq!(
+        values,
+        [("Title", "Room tone"), ("Artist", "One"), ("Artist", "Two")]
+    );
+    let codec = &sections[1].rows[2];
+    assert_eq!((codec.value.as_str(), codec.raw.as_str()), ("FLAC", "flac"));
+    assert_eq!(sections[1].rows[3].value, "16-bit");
+}
+
+#[gpui_test]
+fn a_20_bit_file_shows_its_bit_depth_row(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S24, 480);
+    let flac = fixtures::labelled_20_bit(&fixtures::convert(
+        &wav,
+        "x.flac",
+        crossfade_graph::AudioSettings::default(),
+    ));
+    let rig = rig_with_file(cx, "master.flac", &flac);
+    assert!(has(cx, rig.window, "inspector-row-1-bits_per_raw_sample"));
+    let summary = rig.workspace.read_with(cx, |w, _| w.file_summary(0));
+    assert!(summary.contains("20-bit"), "{summary}");
+}
+
+#[gpui_test]
+fn every_readable_container_opens_like_a_wav_whatever_its_extension(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
+    let aiff = fixtures::convert(&wav, "x.aiff", crossfade_graph::AudioSettings::default());
+    let flac = fixtures::convert(&wav, "x.flac", crossfade_graph::AudioSettings::default());
+    let rig = open_rig(cx);
+    let mut paths = Vec::new();
+    for (name, bytes) in [
+        ("a.flac", &flac),
+        ("b.aiff", &aiff),
+        ("c.aif", &aiff),
+        ("d.aifc", &aiff),
+        ("e.wav", &wav),
+    ] {
+        paths.push(rig.dir.write(name, bytes));
+    }
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    add_paths(cx, &rig, &refs);
+    let summaries: Vec<String> = (0..5)
+        .map(|n| rig.workspace.read_with(cx, |w, _| w.file_summary(n)))
+        .collect();
+    for (summary, kind) in summaries
+        .iter()
+        .zip(["FLAC", "AIFF", "AIFF", "AIFF", "WAV"])
+    {
+        assert!(
+            summary.starts_with(&format!("{kind} \u{b7} 48 kHz")),
+            "{summary}"
+        );
+    }
+    assert!(
+        rig.workspace
+            .read_with(cx, |w, _| w.inspector_error().is_none())
+    );
+}
+
+#[gpui_test]
+fn an_ogg_file_holding_vorbis_shows_the_refusal_in_plain_words(cx: &mut TestAppContext) {
+    for name in ["voice.ogg", "voice.oga"] {
+        let rig = rig_with_file(cx, name, &fixtures::ogg_vorbis());
+        assert!(has(cx, rig.window, "inspector-error"));
+        let error = rig
+            .workspace
+            .read_with(cx, |w, _| w.inspector_error().map(str::to_owned));
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "This Ogg file holds Vorbis audio, which Crossfade cannot open yet. \
+                 Only FLAC inside Ogg can be opened."
+            )
+        );
+        assert!(!rig.workspace.read_with(cx, |w, _| w.can_convert()));
     }
 }
