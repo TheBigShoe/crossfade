@@ -22,12 +22,51 @@ impl fmt::Display for PcmError {
 
 impl std::error::Error for PcmError {}
 
-pub fn encode_le(_samples: &[f64], _format: SampleFormat) -> Vec<u8> {
-    Vec::new()
+pub fn encode_le(samples: &[f64], format: SampleFormat) -> Vec<u8> {
+    let size = format.bytes_per_sample();
+    let mut out = Vec::with_capacity(samples.len() * size);
+    for &x in samples {
+        match format {
+            SampleFormat::F32 => out.extend_from_slice(&(x as f32).to_le_bytes()),
+            SampleFormat::F64 => out.extend_from_slice(&x.to_le_bytes()),
+            SampleFormat::U8 => out.push((quantise(x, 8) + 128) as u8),
+            _ => out.extend_from_slice(&quantise(x, format.bits()).to_le_bytes()[..size]),
+        }
+    }
+    out
 }
 
-pub fn decode_le(_bytes: &[u8], _format: SampleFormat) -> Result<Vec<f64>, PcmError> {
-    Ok(Vec::new())
+pub fn decode_le(bytes: &[u8], format: SampleFormat) -> Result<Vec<f64>, PcmError> {
+    let size = format.bytes_per_sample();
+    if bytes.len() % size != 0 {
+        return Err(PcmError::PartialSample {
+            len: bytes.len(),
+            sample_size: size,
+        });
+    }
+    Ok(bytes
+        .chunks_exact(size)
+        .map(|c| match format {
+            SampleFormat::F32 => f64::from(f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+            SampleFormat::F64 => f64::from_le_bytes(c.try_into().expect("8 bytes")),
+            SampleFormat::U8 => f64::from(i16::from(c[0]) - 128) / 128.0,
+            _ => {
+                // Sign-extend by placing the bytes at the top of an i64.
+                let mut raw = [0u8; 8];
+                raw[8 - size..].copy_from_slice(c);
+                let v = i64::from_le_bytes(raw) >> (64 - format.bits());
+                v as f64 / (1u64 << (format.bits() - 1)) as f64
+            }
+        })
+        .collect())
+}
+
+/// Scale to a signed integer of `bits`, rounding half away from zero and
+/// clamping to range.
+fn quantise(x: f64, bits: usize) -> i64 {
+    let scale = (1u64 << (bits - 1)) as f64;
+    let max = scale - 1.0;
+    (x * scale).round().clamp(-scale, max) as i64
 }
 
 #[cfg(test)]
