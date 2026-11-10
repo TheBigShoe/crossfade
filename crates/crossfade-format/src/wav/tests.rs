@@ -639,8 +639,10 @@ mod writer {
         }
     }
 
+    type Chunk = ([u8; 4], Vec<u8>);
+
     /// Independent parse: (chunk id, body) pairs plus the RIFF size field.
-    fn parse(bytes: &[u8]) -> (u32, Vec<([u8; 4], Vec<u8>)>) {
+    fn parse(bytes: &[u8]) -> (u32, Vec<Chunk>) {
         assert_eq!(&bytes[..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WAVE");
         let riff_size = u32_le(&bytes[4..8]);
@@ -678,7 +680,7 @@ mod writer {
     fn plain_header_for_small_integer_stereo() {
         let s = info(44100, SampleFormat::S16, ChannelLayout::stereo());
         let pcm = payload(40);
-        let bytes = write(&s, &[pcm.clone()]);
+        let bytes = write(&s, std::slice::from_ref(&pcm));
         let (riff_size, chunks) = parse(&bytes);
         assert_eq!(chunks.len(), 2);
         let (id, fmt) = &chunks[0];
