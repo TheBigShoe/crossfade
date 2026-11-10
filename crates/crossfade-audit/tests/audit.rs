@@ -32,7 +32,10 @@ fn links_package_reachable_from_engine_crate_is_flagged() {
 
 #[test]
 fn offenders_behind_dev_dependencies_or_non_engine_crates_are_not_flagged() {
-    assert_eq!(audit(&fixture("unreachable.json"), &["crossfade-core"], &[]), vec![]);
+    assert_eq!(
+        audit(&fixture("unreachable.json"), &["crossfade-core"], &[]),
+        vec![]
+    );
 }
 
 #[test]
