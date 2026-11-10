@@ -7,3 +7,7 @@ pub fn open(_source: Box<dyn MediaSource>, _limits: &Limits) -> Result<Box<dyn D
         what: "reading flac is not built yet".into(),
     })
 }
+
+#[cfg(test)]
+#[path = "demux_tests.rs"]
+mod tests;
