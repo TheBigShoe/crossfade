@@ -402,10 +402,25 @@ impl Workspace {
                     // The directory gives way first, so the file name always shows.
                     .child(
                         h_flex()
+                            .id("inspector-path")
+                            .test_support()
                             .text_size(LABEL_SIZE)
                             .text_color(theme.muted_foreground)
-                            .child(div().min_w_0().truncate().child(SharedString::from(dir)))
-                            .child(div().flex_none().child(SharedString::from(name.to_owned()))),
+                            .child(
+                                div()
+                                    .id("inspector-path-dir")
+                                    .test_support()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(SharedString::from(dir)),
+                            )
+                            .child(
+                                div()
+                                    .id("inspector-path-name")
+                                    .test_support()
+                                    .flex_none()
+                                    .child(SharedString::from(name.to_owned())),
+                            ),
                     ),
             )
             .child(body)

@@ -498,3 +498,42 @@ fn a_file_with_several_streams_shows_index_and_type_for_each(cx: &mut TestAppCon
         );
     }
 }
+
+fn bounds_of(cx: &mut TestAppContext, window: AnyWindowHandle, id: &'static str) -> Bounds<Pixels> {
+    cx.update_window(window, |_, window, _| window.find(id).bounds())
+        .expect("the window is open")
+}
+
+#[gpui_test]
+fn a_file_name_wider_than_the_inspector_truncates_instead_of_being_clipped(
+    cx: &mut TestAppContext,
+) {
+    let rig = open_rig(cx);
+    let name = format!("{}.wav", "a-very-long-take-name-".repeat(9));
+    let long = rig.dir.write_wav(&name, 48_000, 2, 480);
+    add_paths(cx, &rig, &[&long]);
+    // The narrowest window the app allows.
+    VisualTestContext::from_window(rig.window, cx).simulate_resize(size(px(640.), px(400.)));
+    draw(cx, rig.window);
+    let panel = bounds_of(cx, rig.window, "inspector");
+    let line = bounds_of(cx, rig.window, "inspector-path");
+    let dir = bounds_of(cx, rig.window, "inspector-path-dir");
+    let file = bounds_of(cx, rig.window, "inspector-path-name");
+    assert!(line.right() <= panel.right(), "{line:?} vs {panel:?}");
+    assert!(file.right() <= panel.right(), "{file:?} vs {panel:?}");
+    assert!(file.size.width > px(100.), "the name keeps room: {file:?}");
+    // The directory gave way first, completely.
+    assert!(dir.size.width < px(1.), "{dir:?}");
+}
+
+#[gpui_test]
+fn a_short_name_leaves_the_directory_what_the_name_does_not_need(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let short = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&short]);
+    let panel = bounds_of(cx, rig.window, "inspector");
+    let dir = bounds_of(cx, rig.window, "inspector-path-dir");
+    let file = bounds_of(cx, rig.window, "inspector-path-name");
+    assert!(file.right() <= panel.right());
+    assert!(dir.size.width > px(40.), "{dir:?}");
+}
