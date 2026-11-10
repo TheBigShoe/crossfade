@@ -21,7 +21,7 @@ icon_assets!(pub AppIcons, [
     Plus,
     RotateCcw,
     Settings,
-    Square,
+    CircleStop,
     TriangleAlert,
     X,
 ]);
@@ -69,7 +69,7 @@ mod tests {
             IconName::Check,
             IconName::TriangleAlert,
             IconName::FileMusic,
-            IconName::Square,
+            IconName::CircleStop,
             IconName::BrushCleaning,
         ] {
             let path = icon.path();

@@ -243,7 +243,7 @@ impl Workspace {
                         row.child(
                             icon_button(
                                 SharedString::from(format!("queue-cancel-{n}")),
-                                IconName::Square,
+                                IconName::CircleStop,
                                 "Cancel",
                                 cx,
                             )

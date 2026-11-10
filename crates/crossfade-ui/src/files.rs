@@ -177,9 +177,15 @@ impl Workspace {
                 let failed = matches!(entry.state, InputState::Failed(_));
                 let is_selected = selected == Some(id);
                 let group: SharedString = format!("file-group-{n}").into();
+                let row_bg = if is_selected {
+                    theme.accent
+                } else {
+                    theme.background
+                };
                 h_flex()
                     .id(SharedString::from(format!("file-row-{n}")))
                     .test_support()
+                    .relative()
                     .group(group.clone())
                     .flex_none()
                     .h(ROW_HEIGHT)
@@ -228,6 +234,12 @@ impl Workspace {
                             "Remove",
                             cx,
                         )
+                        // Over the summary's tail rather than beside it, so the row's text
+                        // keeps the room.
+                        .absolute()
+                        .top(px(2.))
+                        .right_1()
+                        .bg(row_bg)
                         .invisible()
                         .group_hover(group, |style| style.visible())
                         .on_click(cx.listener(move |this, _, _, cx| {

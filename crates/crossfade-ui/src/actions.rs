@@ -31,5 +31,9 @@ pub fn bind_default_keys(cx: &mut App) {
         KeyBinding::new("ctrl-q", Quit, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("ctrl-,", OpenSettings, None),
+        KeyBinding::new("cmd-enter", Convert, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new("ctrl-enter", Convert, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new("cmd-j", ToggleQueue, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new("ctrl-j", ToggleQueue, Some(WORKSPACE_CONTEXT)),
     ]);
 }

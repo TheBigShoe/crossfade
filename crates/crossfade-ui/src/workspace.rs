@@ -426,7 +426,12 @@ fn set_menus(cx: &mut App) {
         },
         Menu {
             name: "File".into(),
-            items: vec![MenuItem::action("Add Files\u{2026}", OpenFiles)],
+            items: vec![
+                MenuItem::action("Add Files\u{2026}", OpenFiles),
+                MenuItem::action("Convert\u{2026}", Convert),
+                MenuItem::separator(),
+                MenuItem::action("Show or Hide Queue", ToggleQueue),
+            ],
             disabled: false,
         },
     ]);
