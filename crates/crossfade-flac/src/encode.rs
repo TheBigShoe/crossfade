@@ -3,6 +3,7 @@
 mod analyze;
 mod bitsink;
 mod fixed;
+mod lpc;
 mod rice;
 mod write;
 
