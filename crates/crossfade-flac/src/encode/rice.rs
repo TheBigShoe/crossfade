@@ -32,7 +32,6 @@ impl RicePlan {
     }
 }
 
-const UNKNOWN: u64 = u64::MAX;
 /// Largest parameter of each method (the next code is the escape).
 const KMAX4: u32 = 14;
 const KMAX5: u32 = 30;
@@ -42,11 +41,13 @@ const KS: usize = 32;
 /// Scratch for the search, reused from block to block.
 pub(super) struct RiceSearch {
     /// `[partition * KS + k]`: exact bits of the partition's values at parameter `k`, the
-    /// parameter field excluded; `UNKNOWN` until computed. Each cost is a pass over the
+    /// parameter field excluded; Each cost is a pass over the
     /// partition, so only the few parameters near the optimum are ever computed: the cost is
     /// convex in `k` (each `u >> k` is), which also bounds a merged partition's optimum
     /// between its parts' optima.
     cache: Vec<u64>,
+    /// Bit `k` set: `cache[j * KS + k]` holds a value computed for this block.
+    known: [u32; MAX_PARTS],
     bounds: [usize; MAX_PARTS + 1],
     sum: [u64; MAX_PARTS],
     max: [u32; MAX_PARTS],
@@ -68,7 +69,8 @@ fn raw_width(max_folded: u32) -> u32 {
 impl RiceSearch {
     pub(super) fn new() -> Self {
         Self {
-            cache: vec![UNKNOWN; MAX_PARTS * KS],
+            cache: vec![0; MAX_PARTS * KS],
+            known: [0; MAX_PARTS],
             bounds: [0; MAX_PARTS + 1],
             sum: [0; MAX_PARTS],
             max: [0; MAX_PARTS],
@@ -80,7 +82,8 @@ impl RiceSearch {
 
     fn cost(&mut self, u: &[u32], j: usize, k: u32) -> u64 {
         let slot = j * KS + k as usize;
-        if self.cache[slot] == UNKNOWN {
+        if self.known[j] >> k & 1 == 0 {
+            self.known[j] |= 1 << k;
             let part = &u[self.bounds[j]..self.bounds[j + 1]];
             let shifted: u64 = part.iter().map(|&v| u64::from(v >> k)).sum();
             self.cache[slot] = part.len() as u64 * u64::from(k + 1) + shifted;
@@ -119,7 +122,7 @@ impl RiceSearch {
             self.sum[j] = part.iter().map(|&v| u64::from(v)).sum();
             self.max[j] = part.iter().copied().max().unwrap_or(0);
         }
-        self.cache[..parts * KS].fill(UNKNOWN);
+        self.known[..parts].fill(0);
 
         self.search(u, top, false, out);
         // 5-bit parameters only pay when some partition wants a parameter above 14; by

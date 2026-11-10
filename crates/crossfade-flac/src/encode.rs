@@ -2,12 +2,12 @@
 
 mod analyze;
 mod bitsink;
+mod crc16;
 mod fixed;
 mod lpc;
 mod rice;
 mod write;
 
-use crate::crc::crc16;
 use crate::error::{Error, Result};
 use crate::frame::{self, ChannelAssignment, FrameHeader};
 use crate::md5::Md5;
@@ -159,9 +159,27 @@ impl Encoder {
             return Err(unsupported("stream is longer than FLAC can number"));
         }
 
-        for (c, plane) in self.planes.iter_mut().enumerate() {
-            plane.clear();
-            plane.extend(interleaved[c..].iter().step_by(channels).copied());
+        for plane in &mut self.planes {
+            plane.resize(n, 0);
+        }
+        match self.planes.as_mut_slice() {
+            [mono] => mono.copy_from_slice(interleaved),
+            [left, right] => {
+                for ((l, r), f) in left
+                    .iter_mut()
+                    .zip(right)
+                    .zip(interleaved.as_chunks::<2>().0)
+                {
+                    (*l, *r) = (f[0], f[1]);
+                }
+            }
+            planes => {
+                for (i, frame) in interleaved.chunks_exact(channels).enumerate() {
+                    for (plane, &v) in planes.iter_mut().zip(frame) {
+                        plane[i] = v;
+                    }
+                }
+            }
         }
         self.hash(interleaved);
 
@@ -350,7 +368,7 @@ impl Encoder {
             }
         }
         sink.finish();
-        let crc = crc16(&out[start..]);
+        let crc = crc16::crc16(&out[start..]);
         out.extend_from_slice(&crc.to_be_bytes());
     }
 

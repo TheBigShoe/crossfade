@@ -18,42 +18,46 @@ pub(super) fn residual<T: Sample>(x: &[T], order: usize, bps: u32, out: &mut Vec
     out.clear();
     out.resize(n - order, 0);
     if bps <= NARROW_BITS {
-        let g = |i: usize| x[i].low32();
+        // Zipped shifted slices keep the loops free of bounds checks, so they vectorise.
+        let o = out.iter_mut();
         match order {
-            0 => out
-                .iter_mut()
+            0 => o.zip(x).for_each(|(o, &v)| *o = fold(v.low32())),
+            1 => o.zip(&x[1..]).zip(x).for_each(|((o, &a), &b)| {
+                *o = fold(a.low32().wrapping_sub(b.low32()));
+            }),
+            2 => o
+                .zip(&x[2..])
+                .zip(&x[1..])
                 .zip(x)
-                .for_each(|(o, &v)| *o = fold(v.low32())),
-            1 => {
-                for (i, o) in out.iter_mut().enumerate() {
-                    *o = fold(g(i + 1).wrapping_sub(g(i)));
-                }
-            }
-            2 => {
-                for (i, o) in out.iter_mut().enumerate() {
-                    let p = g(i + 1).wrapping_mul(2).wrapping_sub(g(i));
-                    *o = fold(g(i + 2).wrapping_sub(p));
-                }
-            }
-            3 => {
-                for (i, o) in out.iter_mut().enumerate() {
-                    let p = g(i + 2)
+                .for_each(|(((o, &a), &b), &c)| {
+                    let p = b.low32().wrapping_mul(2).wrapping_sub(c.low32());
+                    *o = fold(a.low32().wrapping_sub(p));
+                }),
+            3 => o.zip(&x[3..]).zip(&x[2..]).zip(&x[1..]).zip(x).for_each(
+                |((((o, &a), &b), &c), &d)| {
+                    let p = b
+                        .low32()
                         .wrapping_mul(3)
-                        .wrapping_sub(g(i + 1).wrapping_mul(3))
-                        .wrapping_add(g(i));
-                    *o = fold(g(i + 3).wrapping_sub(p));
-                }
-            }
-            _ => {
-                for (i, o) in out.iter_mut().enumerate() {
-                    let p = g(i + 3)
+                        .wrapping_sub(c.low32().wrapping_mul(3))
+                        .wrapping_add(d.low32());
+                    *o = fold(a.low32().wrapping_sub(p));
+                },
+            ),
+            _ => o
+                .zip(&x[4..])
+                .zip(&x[3..])
+                .zip(&x[2..])
+                .zip(&x[1..])
+                .zip(x)
+                .for_each(|(((((o, &a), &b), &c), &d), &e)| {
+                    let p = b
+                        .low32()
                         .wrapping_mul(4)
-                        .wrapping_sub(g(i + 2).wrapping_mul(6))
-                        .wrapping_add(g(i + 1).wrapping_mul(4))
-                        .wrapping_sub(g(i));
-                    *o = fold(g(i + 4).wrapping_sub(p));
-                }
-            }
+                        .wrapping_sub(c.low32().wrapping_mul(6))
+                        .wrapping_add(d.low32().wrapping_mul(4))
+                        .wrapping_sub(e.low32());
+                    *o = fold(a.low32().wrapping_sub(p));
+                }),
         }
         return true;
     }

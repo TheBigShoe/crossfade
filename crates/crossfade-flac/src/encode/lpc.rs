@@ -25,7 +25,7 @@ pub(super) fn window(n: usize, out: &mut Vec<f64>) {
     }
 }
 
-/// `out[lag]` for lag 0 to `out.len() - 1`. Four partial sums per lag, combined in a fixed
+/// `out[lag]` for lag 0 to `out.len() - 1`. Eight partial sums per lag, combined in a fixed
 /// order, so the compiler can use vector units without changing the result.
 pub(super) fn autocorrelation(data: &[f64], out: &mut [f64]) {
     for (lag, o) in out.iter_mut().enumerate() {
@@ -34,11 +34,11 @@ pub(super) fn autocorrelation(data: &[f64], out: &mut [f64]) {
             continue;
         }
         let (a, b) = (&data[..data.len() - lag], &data[lag..]);
-        let mut acc = [0.0f64; 4];
-        let (ac, ar) = a.as_chunks::<4>();
-        let (bc, br) = b.as_chunks::<4>();
+        let mut acc = [0.0f64; 8];
+        let (ac, ar) = a.as_chunks::<8>();
+        let (bc, br) = b.as_chunks::<8>();
         for (x, y) in ac.iter().zip(bc) {
-            for k in 0..4 {
+            for k in 0..8 {
                 acc[k] += x[k] * y[k];
             }
         }
@@ -46,7 +46,9 @@ pub(super) fn autocorrelation(data: &[f64], out: &mut [f64]) {
         for (x, y) in ar.iter().zip(br) {
             tail += x * y;
         }
-        *o = ((acc[0] + acc[1]) + (acc[2] + acc[3])) + tail;
+        let low = (acc[0] + acc[1]) + (acc[2] + acc[3]);
+        let high = (acc[4] + acc[5]) + (acc[6] + acc[7]);
+        *o = (low + high) + tail;
     }
 }
 
@@ -176,26 +178,30 @@ pub(super) fn residual<T: Sample>(
     let order = coefs.len();
     let m = x.len() - order;
     out.clear();
-    out.resize(m, 0);
     // Largest possible sum: order * 2^(precision-1) * 2^(bps-1) stays below 2^31.
     let narrow = bps + precision + (usize::BITS - (order - 1).leading_zeros()) <= 32;
     if narrow {
         acc32.clear();
-        acc32.resize(m, 0);
-        for (j, &c) in coefs.iter().enumerate() {
+        let first = &x[order - 1..order - 1 + m];
+        acc32.extend(first.iter().map(|&v| v.low32().wrapping_mul(coefs[0])));
+        for (j, &c) in coefs.iter().enumerate().skip(1) {
             let src = &x[order - 1 - j..order - 1 - j + m];
             for (a, &v) in acc32.iter_mut().zip(src) {
                 *a = a.wrapping_add(v.low32().wrapping_mul(c));
             }
         }
-        for ((o, &a), &v) in out.iter_mut().zip(acc32.iter()).zip(&x[order..]) {
-            *o = fold(v.low32().wrapping_sub(a >> shift));
-        }
+        out.extend(
+            acc32
+                .iter()
+                .zip(&x[order..])
+                .map(|(&a, &v)| fold(v.low32().wrapping_sub(a >> shift))),
+        );
         return true;
     }
     acc64.clear();
-    acc64.resize(m, 0);
-    for (j, &c) in coefs.iter().enumerate() {
+    let c0 = i64::from(coefs[0]);
+    acc64.extend(x[order - 1..order - 1 + m].iter().map(|&v| v.into() * c0));
+    for (j, &c) in coefs.iter().enumerate().skip(1) {
         let src = &x[order - 1 - j..order - 1 - j + m];
         let c = i64::from(c);
         for (a, &v) in acc64.iter_mut().zip(src) {
@@ -203,11 +209,11 @@ pub(super) fn residual<T: Sample>(
         }
     }
     let mut bad = false;
-    for ((o, &a), &v) in out.iter_mut().zip(acc64.iter()).zip(&x[order..]) {
+    out.extend(acc64.iter().zip(&x[order..]).map(|(&a, &v)| {
         let e = v.into() - (a >> shift);
         bad |= e <= i64::from(i32::MIN) || e > i64::from(i32::MAX);
-        *o = fold(e as i32);
-    }
+        fold(e as i32)
+    }));
     !bad
 }
 
