@@ -1,0 +1,11 @@
+---
+source: crates/crossfade-cli/tests/cli.rs
+expression: shown
+---
+An FFmpeg-class audio/video tool in pure Rust
+
+Usage: crossfade
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
