@@ -9,7 +9,7 @@ pub const ROW_HEIGHT: Pixels = px(28.);
 /// The height of an inspector row.
 pub const INSPECTOR_ROW: Pixels = px(24.);
 /// The height of a two-line row of the files list.
-pub const FILE_ROW_HEIGHT: Pixels = px(40.);
+pub const FILE_ROW_HEIGHT: Pixels = px(46.);
 /// The first line of a files row: the name, with the remove button at its end.
 pub const FILE_NAME_LINE: Pixels = px(24.);
 /// The size of the inspector's title; everything else is content size or `LABEL_SIZE`.
