@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn load_reports_a_missing_file() {
-        let e = Manifest::load(std::path::Path::new("/nonexistent/corpus.toml"));
+        let e = Manifest::load(Path::new("/nonexistent/corpus.toml"));
         assert!(
             e.unwrap_err()
                 .to_string()

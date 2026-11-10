@@ -205,7 +205,7 @@ mod tests {
         }
     }
 
-    fn manifest(entries: &[&crate::Entry]) -> Manifest {
+    fn manifest(entries: &[&Entry]) -> Manifest {
         let mut text = String::new();
         for e in entries {
             text += &format!(
@@ -217,7 +217,7 @@ mod tests {
         Manifest::parse(&text).unwrap()
     }
 
-    fn fake(items: &[(&crate::Entry, Result<&[u8], &str>)]) -> Fake {
+    fn fake(items: &[(&Entry, Result<&[u8], &str>)]) -> Fake {
         Fake {
             bodies: items
                 .iter()
