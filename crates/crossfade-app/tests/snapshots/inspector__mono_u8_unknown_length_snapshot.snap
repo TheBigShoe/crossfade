@@ -3,13 +3,13 @@ source: crates/crossfade-app/tests/inspector.rs
 expression: render(&sections(&mono_u8_unknown_length()))
 ---
 [File]
-  Format (format): wav
+  Format (format): WAV
   Size (size_bytes): unknown
 [Stream 0]
   Index (index): 0
   Type (type): audio
-  Codec (codec): pcm_u8
-  Sample format (sample_format): u8
+  Codec (codec): PCM (8-bit unsigned)
+  Sample format (sample_format): 8-bit
   Sample rate (sample_rate): 8 kHz
   Channels (channels): 1
   Layout (layout): mono

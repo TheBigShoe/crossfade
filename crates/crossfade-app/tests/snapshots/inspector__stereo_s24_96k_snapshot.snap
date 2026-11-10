@@ -3,13 +3,13 @@ source: crates/crossfade-app/tests/inspector.rs
 expression: render(&sections(&stereo_s24_96k()))
 ---
 [File]
-  Format (format): wav
+  Format (format): WAV
   Size (size_bytes): 36.0 MB
 [Stream 0]
   Index (index): 0
   Type (type): audio
-  Codec (codec): pcm_s24le
-  Sample format (sample_format): s24
+  Codec (codec): PCM (24-bit little-endian)
+  Sample format (sample_format): 24-bit
   Sample rate (sample_rate): 96 kHz
   Channels (channels): 2
   Layout (layout): stereo
