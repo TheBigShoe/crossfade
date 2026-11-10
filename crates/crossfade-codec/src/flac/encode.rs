@@ -98,7 +98,23 @@ impl Level {
         }
     }
 
-    fn config(&self, exact_order_selection: bool) -> Result<Verified<config::Encoder>, Error> {
+    /// flacenc never turns verbatim coding off, so with everything else off it is all that is left.
+    fn verbatim_config() -> Result<Verified<config::Encoder>, Error> {
+        use flacenc::error::Verify;
+        let mut c = config::Encoder::default();
+        c.multithread = false;
+        c.stereo_coding.use_leftside = false;
+        c.stereo_coding.use_rightside = false;
+        c.stereo_coding.use_midside = false;
+        c.subframe_coding.use_constant = false;
+        c.subframe_coding.use_fixed = false;
+        c.subframe_coding.use_lpc = false;
+        c.into_verified().map_err(|(_, e)| Error::Malformed {
+            what: format!("flac encoder settings: {e}"),
+        })
+    }
+
+    fn config(&self) -> Result<Verified<config::Encoder>, Error> {
         use flacenc::error::Verify;
         let mut c = config::Encoder::default();
         c.block_size = self.block;
@@ -112,7 +128,7 @@ impl Level {
             c.subframe_coding.qlpc.lpc_order = self.lpc_order;
             c.subframe_coding.qlpc.quant_precision = self.precision;
         }
-        if exact_order_selection {
+        if self.exact_order_selection {
             c.subframe_coding.fixed.order_sel = config::OrderSel::BitCount;
         }
         c.into_verified().map_err(|(_, e)| Error::Malformed {
@@ -142,7 +158,7 @@ struct FlacEncoder {
     bits: u8,
     block: usize,
     config: Verified<config::Encoder>,
-    /// The level's settings without exact order selection, for a block `config` mis-codes.
+    /// Verbatim subframes only: always valid, for a block `config` mis-codes.
     fallback: Verified<config::Encoder>,
     /// flacenc's own header record; it only has to agree with the frames it is asked to code.
     stream_info: flacenc::component::StreamInfo,
@@ -203,8 +219,8 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         format: spec.format(),
         bits,
         block: level.block,
-        config: level.config(level.exact_order_selection)?,
-        fallback: level.config(false)?,
+        config: level.config()?,
+        fallback: Level::verbatim_config()?,
         stream_info,
         framebuf,
         buf: Vec::with_capacity(level.block * usize::from(channels)),
@@ -289,8 +305,8 @@ impl FlacEncoder {
         let limit = 16 + 2 + channels * (1 + (frames * (usize::from(self.bits) + 1)).div_ceil(8));
         let mut data = code(&self.config)?;
         if data.len() > limit {
-            // flacenc's exact fixed-order selection can pick a Rice parameter it cannot write
-            // when residuals are near full scale, giving a valid but enormous frame.
+            // flacenc picks a subframe by an estimated size and, with residuals near full scale,
+            // can write a Rice parameter above 14 as if it fitted: valid but enormous.
             data = code(&self.fallback)?;
         }
         if data.len() > limit {
