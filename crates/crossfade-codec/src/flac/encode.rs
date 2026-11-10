@@ -98,7 +98,7 @@ impl Level {
         }
     }
 
-    fn config(&self) -> Result<Verified<config::Encoder>, Error> {
+    fn config(&self, exact_order_selection: bool) -> Result<Verified<config::Encoder>, Error> {
         use flacenc::error::Verify;
         let mut c = config::Encoder::default();
         c.block_size = self.block;
@@ -112,7 +112,7 @@ impl Level {
             c.subframe_coding.qlpc.lpc_order = self.lpc_order;
             c.subframe_coding.qlpc.quant_precision = self.precision;
         }
-        if self.exact_order_selection {
+        if exact_order_selection {
             c.subframe_coding.fixed.order_sel = config::OrderSel::BitCount;
         }
         c.into_verified().map_err(|(_, e)| Error::Malformed {
@@ -142,6 +142,8 @@ struct FlacEncoder {
     bits: u8,
     block: usize,
     config: Verified<config::Encoder>,
+    /// The level's settings without exact order selection, for a block `config` mis-codes.
+    fallback: Verified<config::Encoder>,
     /// flacenc's own header record; it only has to agree with the frames it is asked to code.
     stream_info: flacenc::component::StreamInfo,
     framebuf: FrameBuf,
@@ -201,7 +203,8 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         format: spec.format(),
         bits,
         block: level.block,
-        config: level.config()?,
+        config: level.config(level.exact_order_selection)?,
+        fallback: level.config(false)?,
         stream_info,
         framebuf,
         buf: Vec::with_capacity(level.block * usize::from(channels)),
@@ -268,18 +271,36 @@ impl FlacEncoder {
             .fill_interleaved(&self.buf)
             .map_err(|e| malformed("flac encoder input", e))?;
         self.buf.clear();
-        let frame = flacenc::encode_fixed_size_frame(
-            &self.config,
-            &self.framebuf,
-            self.next_frame,
-            &self.stream_info,
-        )
-        .map_err(|e| malformed("flac encoder", e))?;
-        let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
-        frame
-            .write(&mut sink)
-            .map_err(|e| malformed("flac frame", e))?;
-        let data = sink.into_inner();
+        let code = |config: &Verified<config::Encoder>| -> Result<Vec<u8>, Error> {
+            let frame = flacenc::encode_fixed_size_frame(
+                config,
+                &self.framebuf,
+                self.next_frame,
+                &self.stream_info,
+            )
+            .map_err(|e| malformed("flac encoder", e))?;
+            let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
+            frame
+                .write(&mut sink)
+                .map_err(|e| malformed("flac frame", e))?;
+            Ok(sink.into_inner())
+        };
+        // Raw samples (one more bit on a side channel) plus the headers bound any sane frame.
+        let limit = 16 + 2 + channels * (1 + (frames * (usize::from(self.bits) + 1)).div_ceil(8));
+        let mut data = code(&self.config)?;
+        if data.len() > limit {
+            // flacenc's exact fixed-order selection can pick a Rice parameter it cannot write
+            // when residuals are near full scale, giving a valid but enormous frame.
+            data = code(&self.fallback)?;
+        }
+        if data.len() > limit {
+            return Err(Error::Malformed {
+                what: format!(
+                    "flac encoder: a {frames}-sample frame came out {} bytes",
+                    data.len()
+                ),
+            });
+        }
         let size = u32::try_from(data.len()).map_err(|_| Error::Overflow)?;
         self.min_frame_size = self.min_frame_size.min(size);
         self.max_frame_size = self.max_frame_size.max(size);

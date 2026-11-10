@@ -297,7 +297,7 @@ fn our_bytes_equal_flacenc_s_own_stream_for_the_same_settings() {
         let samples = signal(usize::from(channels), 4096 * 2 + 777, depth as u32, 3);
         let ours = encode(&spec, Some(5), &samples, 5000);
 
-        let config = LEVELS[5].config().unwrap();
+        let config = LEVELS[5].config(LEVELS[5].exact_order_selection).unwrap();
         let source = MemSource::from_samples(&samples, usize::from(channels), depth, 44100);
         let mut stream = flacenc::encode_with_fixed_block_size(&config, source, 4096).unwrap();
         // The short tail lowers flacenc's minimum block size; the encoder pins both to 4096.
