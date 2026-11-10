@@ -14,7 +14,7 @@ use crate::prelude::*;
 use crate::workspace::Workspace;
 
 /// The files list's width.
-pub(crate) const FILES_WIDTH: Pixels = px(260.);
+pub(crate) const FILES_WIDTH: Pixels = px(300.);
 /// The label column of the inspector.
 const LABEL_COLUMN: Pixels = px(120.);
 

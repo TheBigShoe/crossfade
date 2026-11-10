@@ -283,7 +283,7 @@ fn file_rows_are_two_lines_with_the_full_width_for_the_name(cx: &mut TestAppCont
         summary.origin.y >= name.origin.y + name.size.height,
         "the summary is the second line"
     );
-    // The row is 260 wide; icon, padding and the gaps leave the rest to the name.
+    // The row is 300 wide; icon, padding and the gaps leave the rest to the name.
     assert!(
         name.size.width > px(150.),
         "name width {:?}",

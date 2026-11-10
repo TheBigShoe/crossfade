@@ -460,17 +460,14 @@ impl Render for ConvertDialog {
                 )
             })
             .when_some(hint, |sheet, hint| {
+                // Under the selects it explains, across the full width so it stays one line.
                 sheet.child(
-                    self.row(
-                        "",
-                        div()
-                            .id("sheet-hint")
-                            .test_support()
-                            .text_size(LABEL_SIZE + px(1.))
-                            .text_color(muted)
-                            .child(SharedString::from(hint)),
-                        cx,
-                    ),
+                    div()
+                        .id("sheet-hint")
+                        .test_support()
+                        .text_size(LABEL_SIZE + px(1.))
+                        .text_color(muted)
+                        .child(SharedString::from(hint)),
                 )
             })
             .child(

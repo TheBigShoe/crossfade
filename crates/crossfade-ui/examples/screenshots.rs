@@ -21,11 +21,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossfade_app::queue::RunnerEvent;
+use crossfade_core::SampleFormat;
 use crossfade_ui::config::{self, Config, ConfigPiece};
 use crossfade_ui::prelude::gpui_test::TestWindowExt;
 use crossfade_ui::prelude::*;
 use crossfade_ui::scripted::Script;
 use crossfade_ui::{Workspace, init};
+
+// The tests' fixture writers, so a picture shows what a real conversion produces.
+#[path = "../src/fixtures.rs"]
+mod fixtures;
 
 const WINDOW: (f32, f32) = (1180., 760.);
 const NARROW: (f32, f32) = (900., 600.);
@@ -143,6 +148,85 @@ const SCENES: &[Scene] = &[
             stage.set_theme(ThemeMode::Dark);
             stage.add(&[("interview-take-1.wav", 48_000, 2)]);
             stage.break_settings();
+        },
+    },
+    Scene {
+        file: "11-flac-inspector-tags-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            let tone = fixtures::flac(44_100, 2, SampleFormat::S16, 44_100 * 3);
+            let master = fixtures::flac(48_000, 2, SampleFormat::S24, 48_000 * 3);
+            let tagged = fixtures::labelled_20_bit(&fixtures::tagged(
+                &master,
+                &[
+                    ("TITLE", "Night Ferry"),
+                    ("ARTIST", "Mara Voss"),
+                    ("ARTIST", "The Harbour Set"),
+                    ("ALBUM", "Low Tide"),
+                    ("DATE", "2025"),
+                    ("TRACKNUMBER", "4"),
+                ],
+            ));
+            stage.add_bytes(&[
+                ("room-tone.flac", tone),
+                ("night-ferry-master.flac", tagged),
+            ]);
+        },
+    },
+    Scene {
+        file: "12-convert-sheet-flac-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.convert();
+            stage.choose("sheet-container", 1);
+        },
+    },
+    Scene {
+        file: "13-convert-sheet-flac-hint-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            let float = fixtures::wav(48_000, 2, SampleFormat::F32, 48_000 * 3);
+            stage.add_bytes(&[("mix-bus-float.wav", float)]);
+            stage.convert();
+            stage.choose("sheet-container", 1);
+        },
+    },
+    Scene {
+        file: "14-convert-sheet-copy-light.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Light);
+            let tone = fixtures::flac(44_100, 2, SampleFormat::S16, 44_100 * 3);
+            stage.add_bytes(&[("room-tone.flac", tone)]);
+            stage.convert();
+            stage.choose("sheet-container", 1);
+            stage.click("sheet-copy");
+        },
+    },
+    Scene {
+        file: "15-convert-sheet-unsupported-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            let wide = fixtures::wav(192_000, 2, SampleFormat::S24, 192_000 * 2);
+            stage.add_bytes(&[("hi-res-capture.wav", wide)]);
+            stage.convert();
+            stage.choose("sheet-container", 1);
+        },
+    },
+    Scene {
+        file: "16-convert-sheet-flac-hint-narrow-dark.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            let float = fixtures::wav(48_000, 2, SampleFormat::F32, 48_000 * 3);
+            stage.add_bytes(&[("mix-bus-float.wav", float)]);
+            stage.convert();
+            stage.choose("sheet-container", 1);
         },
     },
     Scene {
@@ -311,6 +395,15 @@ impl Stage {
         self.add_raw(&names);
     }
 
+    fn add_bytes(&mut self, files: &[(&str, Vec<u8>)]) {
+        let mut names = Vec::new();
+        for (name, bytes) in files {
+            self.write_bytes(name, bytes);
+            names.push(name.as_ref());
+        }
+        self.add_raw(&names);
+    }
+
     fn add_raw(&mut self, names: &[&str]) {
         let paths: Vec<PathBuf> = names
             .iter()
@@ -374,6 +467,24 @@ impl Stage {
                 window.hover("status-text", cx);
             })
             .expect("the window is open");
+        self.cx.run_until_parked();
+    }
+
+    /// Pick an item of a select in the open sheet by keyboard: `downs` arrow presses from
+    /// whatever it shows, then Enter.
+    fn choose(&mut self, id: &'static str, downs: usize) {
+        self.draw().expect("draw");
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                window.within(id).click("input", cx);
+                for _ in 0..downs {
+                    window.press("down", cx);
+                }
+                window.press("enter", cx);
+            })
+            .expect("the window is open");
+        self.cx.run_until_parked();
+        self.cx.advance_clock(FRAME);
         self.cx.run_until_parked();
     }
 
