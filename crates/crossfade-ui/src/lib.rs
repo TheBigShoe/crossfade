@@ -22,6 +22,8 @@ mod config_tests;
 #[cfg(test)]
 mod files_tests;
 #[cfg(test)]
+mod fixtures;
+#[cfg(test)]
 mod gate;
 #[cfg(test)]
 mod keymap_tests;

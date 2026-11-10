@@ -152,7 +152,7 @@ impl ConvertDialog {
     }
 
     /// The warnings under the fields.
-    pub fn problem_messages(&self, _: &App) -> Vec<&'static str> {
+    pub fn problem_messages(&self, _: &App) -> Vec<String> {
         self.sheet
             .problems(&*self.exists)
             .into_iter()
@@ -341,7 +341,11 @@ impl Render for ConvertDialog {
                         .bg(warning.opacity(0.12))
                         .text_color(warning)
                         .text_size(LABEL_SIZE + px(1.))
-                        .children(problems.iter().map(|m| div().child(*m))),
+                        .children(
+                            problems
+                                .iter()
+                                .map(|m| div().child(SharedString::from(m.clone()))),
+                        ),
                 )
             })
             .when_some(command, |sheet, command| {
