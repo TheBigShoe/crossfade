@@ -122,8 +122,10 @@ fn the_first_fuzz_crash_round_trips() {
     let per = 2 * usize::from(channels);
     let frames = body.len() / per;
     let samples: Vec<i16> = body[..frames * per]
-        .chunks_exact(2)
-        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| i16::from_le_bytes(*c))
         .collect();
     assert_eq!(data[0] % 4, 1, "the crash was a 16-bit input");
     assert_eq!(
