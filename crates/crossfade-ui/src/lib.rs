@@ -15,6 +15,8 @@ mod files_tests;
 #[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
+mod sheet_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod workspace_tests;
