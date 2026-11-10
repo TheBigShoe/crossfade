@@ -346,25 +346,22 @@ struct Flac {
     tags: Tags,
     /// Everything after the last metadata block: the frames.
     audio: Vec<u8>,
-    /// Type and body of every metadata block, in order.
-    blocks: Vec<(u8, Vec<u8>)>,
 }
 
 fn parse_flac(bytes: &[u8]) -> Flac {
     assert_eq!(&bytes[..4], b"fLaC");
     let mut pos = 4;
-    let (mut streaminfo, mut tags, mut blocks) = (Vec::new(), Tags::new(), Vec::new());
+    let (mut streaminfo, mut tags) = (Vec::new(), Tags::new());
     loop {
         let head = bytes[pos];
         let len = u32::from_be_bytes([0, bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
         let body = bytes[pos + 4..pos + 4 + len].to_vec();
         pos += 4 + len;
         match head & 0x7F {
-            0 => streaminfo = body.clone(),
+            0 => streaminfo = body,
             4 => tags = parse_vorbis_comment(&body),
             _ => {}
         }
-        blocks.push((head & 0x7F, body));
         if head & 0x80 != 0 {
             break;
         }
@@ -373,7 +370,6 @@ fn parse_flac(bytes: &[u8]) -> Flac {
         streaminfo,
         tags,
         audio: bytes[pos..].to_vec(),
-        blocks,
     }
 }
 
@@ -943,4 +939,273 @@ fn ogg_flac_tags_reach_the_flac_output() {
         d.ok(&args);
         assert_eq!(parse_flac(&d.read("out.flac")).tags, want, "{extra:?}");
     }
+}
+
+// ---- refusals ------------------------------------------------------------------------------
+
+/// CRC-32 of an Ogg page: polynomial 0x04C11DB7, initial value 0, no reflection.
+fn ogg_crc(data: &[u8]) -> u32 {
+    data.iter().fold(0u32, |mut crc, &b| {
+        crc ^= u32::from(b) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
+        }
+        crc
+    })
+}
+
+/// A one-page Ogg stream whose first packet is a Vorbis identification header.
+fn ogg_vorbis() -> Vec<u8> {
+    let mut packet = b"\x01vorbis".to_vec();
+    packet.extend_from_slice(&0u32.to_le_bytes()); // version
+    packet.push(2); // channels
+    packet.extend_from_slice(&44_100u32.to_le_bytes());
+    packet.extend_from_slice(&[0; 12]);
+    packet.extend_from_slice(&[0xB8, 1]);
+    let mut page = b"OggS\0\x02".to_vec();
+    page.extend_from_slice(&0i64.to_le_bytes());
+    page.extend_from_slice(&7u32.to_le_bytes()); // serial
+    page.extend_from_slice(&0u32.to_le_bytes()); // sequence
+    page.extend_from_slice(&0u32.to_le_bytes()); // checksum, patched below
+    page.push(1);
+    page.push(u8::try_from(packet.len()).unwrap());
+    page.extend_from_slice(&packet);
+    let crc = ogg_crc(&page);
+    page[22..26].copy_from_slice(&crc.to_le_bytes());
+    page
+}
+
+fn tonal_wav(rate: u32, channels: u16, format: SampleFormat) -> Vec<u8> {
+    wav(rate, channels, format, &tonal(rate, channels, format, 2000))
+}
+
+#[test]
+fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
+    let d = Dir::new("refusals");
+    d.write("s16.wav", &tonal_wav(48_000, 2, SampleFormat::S16));
+    d.write("f32.wav", &tonal_wav(48_000, 2, SampleFormat::F32));
+    d.write("s32.wav", &tonal_wav(48_000, 2, SampleFormat::S32));
+    d.write("hi.wav", &tonal_wav(192_000, 2, SampleFormat::S16));
+    d.write("in.flac", &fixture("flac/stereo-16bit.flac"));
+
+    let cases: [(&[&str], &str); 11] = [
+        (
+            &["convert", "f32.wav", "-o", "o.flac"],
+            "flac cannot store floating-point samples",
+        ),
+        (
+            &["convert", "s32.wav", "-o", "o.flac"],
+            "flac encoding of 32-bit samples is not supported yet",
+        ),
+        (
+            &["convert", "hi.wav", "-o", "o.flac"],
+            "flac encoding supports sample rates up to 96000 Hz, got 192000",
+        ),
+        (
+            &["convert", "s16.wav", "-o", "o.aiff", "--codec", "copy"],
+            "cannot copy pcm_s16le into aiff",
+        ),
+        (
+            &["convert", "s16.wav", "-o", "o.wav", "--codec", "flac"],
+            "codec flac cannot be written into wav",
+        ),
+        (
+            &[
+                "convert",
+                "s16.wav",
+                "-o",
+                "o.wav",
+                "--compression-level",
+                "5",
+            ],
+            "--compression-level applies to flac only",
+        ),
+        (
+            &[
+                "convert",
+                "s16.wav",
+                "-o",
+                "o.wav",
+                "--codec",
+                "copy",
+                "--sample-format",
+                "s24",
+            ],
+            "--codec copy cannot change the sample format",
+        ),
+        (
+            &["convert", "s16.wav", "-o", "o.ogg"],
+            ".ogg can be read but not written yet",
+        ),
+        (
+            &["convert", "in.flac", "-o", "o.oga"],
+            ".ogg can be read but not written yet",
+        ),
+        (
+            &["convert", "s16.wav", "-o", "o.mp3"],
+            ".wav, .flac, .aiff/.aif/.aifc",
+        ),
+        (
+            &[
+                "convert",
+                "in.flac",
+                "-o",
+                "o.flac",
+                "--codec",
+                "copy",
+                "--compression-level",
+                "3",
+            ],
+            "--codec copy cannot take a compression level",
+        ),
+    ];
+    for (args, cause) in cases {
+        d.refused(args, cause);
+    }
+}
+
+#[test]
+fn an_ogg_vorbis_input_is_identified_and_refused() {
+    let d = Dir::new("vorbis");
+    d.write("in.ogg", &ogg_vorbis());
+    d.refused(
+        &["convert", "in.ogg", "-o", "out.wav"],
+        "ogg stream holds vorbis",
+    );
+    d.refused(&["probe", "in.ogg"], "ogg stream holds vorbis");
+}
+
+#[test]
+fn a_truncated_flac_says_where_it_ended_and_leaves_nothing() {
+    let d = Dir::new("truncated-flac");
+    let source = fixture("flac/stereo-16bit.flac");
+    // Past the metadata, half way through the frames.
+    let cut = source.len() * 3 / 5;
+    d.write("cut.flac", &source[..cut]);
+    for out in ["out.wav", "out.flac", "out.aiff"] {
+        let err = d.refused(
+            &["convert", "cut.flac", "-o", out],
+            "unexpected end of input",
+        );
+        assert_eq!(
+            err,
+            format!("crossfade: unexpected end of input at byte {cut}")
+        );
+    }
+}
+
+#[test]
+fn a_flac_whose_audio_fails_its_md5_is_refused_and_leaves_nothing() {
+    let d = Dir::new("md5");
+    let mut bytes = fixture("flac/stereo-16bit.flac");
+    // STREAMINFO's body starts at byte 8; its MD5 is the last 16 of 34 bytes.
+    bytes[8 + 18] ^= 0xFF;
+    d.write("bad.flac", &bytes);
+    for out in ["out.wav", "out.flac"] {
+        d.refused(
+            &["convert", "bad.flac", "-o", out],
+            "does not match the MD5",
+        );
+    }
+}
+
+// ---- jobs ----------------------------------------------------------------------------------
+
+#[test]
+fn emit_job_shows_the_new_fields_only_when_they_are_set() {
+    let d = Dir::new("emit-job");
+    let plain = d.ok(&["convert", "a.wav", "-o", "b.flac", "--emit-job"]);
+    assert!(
+        !plain.contains("codec") && !plain.contains("compression_level"),
+        "{plain}"
+    );
+    let level_only = d.ok(&[
+        "convert",
+        "a.wav",
+        "-o",
+        "b.flac",
+        "--compression-level",
+        "0",
+        "--emit-job",
+    ]);
+    assert!(level_only.contains("\"compression_level\": 0") && !level_only.contains("codec"));
+
+    let full = d.ok(&[
+        "convert",
+        "a.wav",
+        "-o",
+        "b.flac",
+        "--sample-format",
+        "s24",
+        "--codec",
+        "flac",
+        "--compression-level",
+        "5",
+        "--emit-job",
+    ]);
+    insta::assert_snapshot!(full, @r#"
+    {
+      "version": 1,
+      "inputs": [
+        {
+          "path": "a.wav"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "b.flac",
+          "audio": {
+            "sample_format": "s24",
+            "codec": "flac",
+            "compression_level": 5
+          }
+        }
+      ]
+    }
+    "#);
+    assert_eq!(
+        d.listing(),
+        Vec::<String>::new(),
+        "--emit-job writes nothing"
+    );
+}
+
+#[test]
+fn a_job_file_from_milestone_1_still_loads_and_runs() {
+    use crossfade_core::Limits;
+    use crossfade_graph::{CancelToken, Job, run};
+
+    let d = Dir::new("m1-job");
+    let data = tonal(48_000, 2, SampleFormat::S16, 1000);
+    d.write("sine.wav", &wav(48_000, 2, SampleFormat::S16, &data));
+    // Exactly what milestone 1's `--emit-job` printed: no codec, no compression level.
+    let json = r#"{
+      "version": 1,
+      "inputs": [ { "path": "IN" } ],
+      "outputs": [ { "path": "OUT", "audio": { "sample_format": "s24" } } ]
+    }"#
+    .replace("IN", &d.path("sine.wav").to_string_lossy())
+    .replace("OUT", &d.path("out.wav").to_string_lossy());
+    let job = Job::from_json(&json).unwrap();
+    assert_eq!(job.outputs[0].audio.codec, None);
+    assert_eq!(job.outputs[0].audio.compression_level, None);
+
+    let mut io = crossfade_app::FsIo::new();
+    run(
+        &job,
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
+    let out = d.read("out.wav");
+    assert_eq!(wav_format(&out), (2, 48_000, 24));
+    // s16 into s24 is a shift left by eight.
+    let want: Vec<u8> = data.chunks(2).flat_map(|s| [0, s[0], s[1]]).collect();
+    assert!(data_chunk(&out) == want);
 }
