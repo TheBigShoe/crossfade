@@ -1,6 +1,6 @@
-use crossfade_codec::{decoder_for, encoder_for};
+use crossfade_codec::{EncodeOptions, decoder_for, encoder_for};
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, CodecId, Packet, SampleFormat, StreamInfo, TimeBase,
+    AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Packet, SampleFormat, StreamInfo, TimeBase,
 };
 
 #[test]
@@ -17,7 +17,7 @@ fn boxed_codecs_round_trip_for_every_pcm_codec() {
         let codec = CodecId::pcm_for(format);
         let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 8000).unwrap());
         let mut dec = decoder_for(&info).unwrap();
-        let mut enc = encoder_for(codec, &audio).unwrap();
+        let mut enc = encoder_for(codec, &audio, &EncodeOptions::default()).unwrap();
         let bytes: Vec<u8> = (0..format.bytes_per_sample() * 6)
             .map(|i| i as u8)
             .collect();
@@ -33,5 +33,48 @@ fn boxed_codecs_round_trip_for_every_pcm_codec() {
         assert!(enc.receive_packet(&mut out).unwrap());
         // NaN payloads and S24 high bits survive: compare bytes, not values.
         assert_eq!(out.data, bytes, "{format:?}");
+    }
+}
+
+fn unsupported_what(r: Result<impl Sized, Error>) -> String {
+    match r {
+        Err(Error::Unsupported { what }) => what,
+        Err(e) => panic!("wrong error {e:?}"),
+        Ok(_) => panic!("expected Unsupported"),
+    }
+}
+
+#[test]
+fn flac_is_routed_to_stubs_that_say_so() {
+    let audio = AudioSpec::new(8000, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
+    let info = StreamInfo::new(0, CodecId::Flac, audio.clone(), TimeBase::new(1, 8000).unwrap());
+    assert_eq!(unsupported_what(decoder_for(&info)), "flac decoding is not built yet");
+    let opts = EncodeOptions {
+        compression_level: Some(5),
+    };
+    assert_eq!(
+        unsupported_what(encoder_for(CodecId::Flac, &audio, &opts)),
+        "flac encoding is not built yet"
+    );
+}
+
+#[test]
+fn big_endian_and_signed_8_bit_pcm_are_refused_rather_than_misread_as_little_endian() {
+    for (codec, format) in [
+        (CodecId::PcmS8, SampleFormat::U8),
+        (CodecId::PcmS16Be, SampleFormat::S16),
+        (CodecId::PcmS24Be, SampleFormat::S24),
+        (CodecId::PcmS32Be, SampleFormat::S32),
+        (CodecId::PcmF32Be, SampleFormat::F32),
+        (CodecId::PcmF64Be, SampleFormat::F64),
+    ] {
+        let audio = AudioSpec::new(8000, format, ChannelLayout::mono()).unwrap();
+        let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 8000).unwrap());
+        let want = format!("{} is not built yet", codec.name());
+        assert_eq!(unsupported_what(decoder_for(&info)), want);
+        assert_eq!(
+            unsupported_what(encoder_for(codec, &audio, &EncodeOptions::default())),
+            want
+        );
     }
 }
