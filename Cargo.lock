@@ -1548,6 +1548,9 @@ dependencies = [
 name = "crossfade-flac"
 version = "0.0.0"
 dependencies = [
+ "criterion 0.5.1",
+ "crossfade-codec",
+ "crossfade-core",
  "proptest",
 ]
 
