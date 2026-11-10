@@ -296,22 +296,21 @@ impl FlacDemuxer {
         }
         // The input has ended: this is the last frame, followed perhaps by a tag or padding.
         // Prefer the last span whose CRC-16 holds, so a chance zero inside the frame cannot cut
-        // it short.
-        let limit = self.buf.len().min(cap);
+        // it short. A frame whose CRC ends in a zero byte also has a zero CRC one byte early, and
+        // zero padding keeps the CRC at zero, so the two cannot be told apart: zeros stay with
+        // the frame and the decoder, which knows where the subframes end, skips them.
+        let mut limit = self.buf.len();
+        // An ID3v1 tag is the one trailer with a fixed size and a marker.
+        if limit >= 128 && self.buf[limit - 128..limit - 125] == *b"TAG" {
+            limit -= 128;
+        }
+        let limit = limit.min(cap);
         let mut crc = 0u16;
         let mut found = None;
-        let mut prev_zero = false;
         for (i, &b) in self.buf[..limit].iter().enumerate() {
             crc = crc16_update(crc, &[b]);
             if crc == 0 && i + 1 >= min_end {
-                // Zero padding after the frame keeps the CRC at zero; the frame ends where
-                // that run began.
-                if !(b == 0 && prev_zero) {
-                    found = Some(i + 1);
-                }
-                prev_zero = true;
-            } else {
-                prev_zero = false;
+                found = Some(i + 1);
             }
         }
         match found {

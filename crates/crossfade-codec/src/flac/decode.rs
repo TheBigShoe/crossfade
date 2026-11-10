@@ -140,7 +140,13 @@ impl FlacDecoder {
             read_subframe(&mut r, out, block, bps + u32::from(side == Some(c)))?;
         }
         r.align();
-        if r.bits_left() != 0 {
+        // The CRC-16 follows the subframes. Zero bytes after it are padding the container
+        // reader could not tell from the frame (the CRC-16 stays zero over zeros).
+        let end = data.len() - 2 - (r.bits_left() / 8) as usize;
+        if crc16(&data[..end + 2]) != 0 {
+            return Err(malformed("frame CRC-16 mismatch"));
+        }
+        if data[end + 2..].iter().any(|&b| b != 0) {
             return Err(malformed(
                 "unused bytes between the subframes and the CRC-16",
             ));
