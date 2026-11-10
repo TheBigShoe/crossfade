@@ -1,7 +1,7 @@
 //! Subframes (RFC 9639 section 9.2): the bit reader the decoder runs on, residual decoding and
 //! prediction.
 //!
-//! Samples are `i64` because the side channel of a 32-bit stream needs 33 bits. Everything a
+//! Samples are `i32`, or `i64` for the side channel of a 32-bit stream (33 bits). Everything a
 //! hostile stream controls goes through wrapping arithmetic, so corrupt data decodes to noise
 //! (the frame CRC catches that) instead of panicking.
 
@@ -106,7 +106,7 @@ impl<'a> Bits<'a> {
 
     /// Rice-decodes `out.len()` residuals with parameter `k` (below 32). A code that fits the
     /// window is taken in one step; a long one, or one at the end of the data, goes the slow way.
-    fn read_rice(&mut self, out: &mut [i64], k: u32) -> Result<()> {
+    fn read_rice<T: Sample>(&mut self, out: &mut [T], k: u32) -> Result<()> {
         for v in out {
             if self.n < 48 {
                 self.refill();
@@ -122,7 +122,7 @@ impl<'a> Bits<'a> {
                 let q = u64::from(self.read_unary()?);
                 (q << k) | self.read(k)?
             };
-            *v = ((folded >> 1) as i64) ^ -((folded & 1) as i64);
+            *v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
         }
         Ok(())
     }
@@ -139,8 +139,130 @@ impl<'a> Bits<'a> {
     }
 }
 
+/// The sample type a subframe is decoded into: `i32` when the stream's depth leaves room for
+/// it (nearly always, and much faster), `i64` for the side channel of a 32-bit stream.
+pub(super) trait Sample: Copy + Default {
+    /// Truncating: a corrupt stream decodes to noise, the frame CRC catches it.
+    fn from_i64(v: i64) -> Self;
+    fn wadd(self, o: Self) -> Self;
+    fn wsub(self, o: Self) -> Self;
+    fn wmul(self, k: i32) -> Self;
+    fn wshl(self, n: u32) -> Self;
+    /// Adds the LPC prediction to the residuals in place. `coefs[k]` multiplies the sample
+    /// `order - k` places back, i.e. the stream's order reversed so the inner loop runs forward
+    /// over the history. `bps` is the width of a valid sample, which bounds the prediction sum.
+    fn restore_lpc(out: &mut [Self], coefs: &[i32], shift: u32, bps: u32);
+}
+
+impl Sample for i64 {
+    fn from_i64(v: i64) -> Self {
+        v
+    }
+    fn wadd(self, o: Self) -> Self {
+        self.wrapping_add(o)
+    }
+    fn wsub(self, o: Self) -> Self {
+        self.wrapping_sub(o)
+    }
+    fn wmul(self, k: i32) -> Self {
+        self.wrapping_mul(i64::from(k))
+    }
+    fn wshl(self, n: u32) -> Self {
+        self.wrapping_shl(n)
+    }
+    fn restore_lpc(out: &mut [i64], coefs: &[i32], shift: u32, _bps: u32) {
+        let order = coefs.len();
+        for i in order..out.len() {
+            let (head, tail) = out.split_at_mut(i);
+            let sum = head[i - order..]
+                .iter()
+                .zip(coefs)
+                .fold(0i64, |acc, (&h, &c)| {
+                    acc.wrapping_add(h.wrapping_mul(i64::from(c)))
+                });
+            tail[0] = tail[0].wrapping_add(sum >> shift);
+        }
+    }
+}
+
+impl Sample for i32 {
+    fn from_i64(v: i64) -> Self {
+        v as i32
+    }
+    fn wadd(self, o: Self) -> Self {
+        self.wrapping_add(o)
+    }
+    fn wsub(self, o: Self) -> Self {
+        self.wrapping_sub(o)
+    }
+    fn wmul(self, k: i32) -> Self {
+        self.wrapping_mul(k)
+    }
+    fn wshl(self, n: u32) -> Self {
+        self.wrapping_shl(n)
+    }
+    fn restore_lpc(out: &mut [i32], coefs: &[i32], shift: u32, bps: u32) {
+        // Valid history is below 2^(bps-1) in magnitude, so this bounds the sum of products: when
+        // it fits 32 bits the products need no 64-bit accumulator.
+        let bound = coefs
+            .iter()
+            .map(|c| u64::from(c.unsigned_abs()))
+            .sum::<u64>()
+            << (bps - 1);
+        let narrow = bound < 1 << 31;
+        macro_rules! by_order {
+            ($($n:literal)*) => {
+                match (coefs.len(), narrow) {
+                    $(($n, true) => lpc32::<$n, false>(out, coefs, shift),
+                    ($n, false) => lpc32::<$n, true>(out, coefs, shift),)*
+                    _ => lpc_any(out, coefs, shift),
+                }
+            };
+        }
+        by_order!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
+    }
+}
+
+/// `WIDE` picks the 64-bit accumulator; the order is a constant so the taps unroll.
+fn lpc32<const N: usize, const WIDE: bool>(out: &mut [i32], coefs: &[i32], shift: u32) {
+    let Ok(c) = <&[i32; N]>::try_from(coefs) else {
+        return;
+    };
+    for i in N..out.len() {
+        let h = <&[i32; N]>::try_from(&out[i - N..i]).unwrap();
+        let p = if WIDE {
+            let mut sum = 0i64;
+            for j in 0..N {
+                sum = sum.wrapping_add(i64::from(h[j]) * i64::from(c[j]));
+            }
+            (sum >> shift) as i32
+        } else {
+            let mut sum = 0i32;
+            for j in 0..N {
+                sum = sum.wrapping_add(h[j].wrapping_mul(c[j]));
+            }
+            sum >> shift
+        };
+        out[i] = out[i].wrapping_add(p);
+    }
+}
+
+/// An order the table above does not list cannot occur (1 to 32); this keeps the match total.
+fn lpc_any(out: &mut [i32], coefs: &[i32], shift: u32) {
+    let order = coefs.len();
+    for i in order..out.len() {
+        let sum = out[i - order..i]
+            .iter()
+            .zip(coefs)
+            .fold(0i64, |acc, (&h, &c)| {
+                acc.wrapping_add(i64::from(h) * i64::from(c))
+            });
+        out[i] = out[i].wrapping_add((sum >> shift) as i32);
+    }
+}
+
 /// Fills `out[order..]` from the coded residual section.
-fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<()> {
+fn read_residual<T: Sample>(r: &mut Bits, out: &mut [T], order: usize) -> Result<()> {
     let block = out.len();
     let (param_bits, escape) = match r.read(2)? {
         0 => (4, 15),
@@ -169,7 +291,7 @@ fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<()> {
         if param == escape {
             let bits = r.read(5)? as u32;
             for v in part {
-                *v = r.read_signed(bits)?;
+                *v = T::from_i64(r.read_signed(bits)?);
             }
         } else {
             r.read_rice(part, param as u32)?;
@@ -178,68 +300,56 @@ fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<()> {
     Ok(())
 }
 
-/// Adds the fixed predictor of `order` (0 to 4) to the residuals in place.
-fn restore_fixed(out: &mut [i64], order: usize) {
-    let n = out.len();
+/// Adds the fixed predictor of `order` (0 to 4) to the residuals in place. The history lives in
+/// locals so the loop carries it in registers.
+fn restore_fixed<T: Sample>(out: &mut [T], order: usize) {
     match order {
-        1 => {
-            for i in 1..n {
-                out[i] = out[i].wrapping_add(out[i - 1]);
+        1 if !out.is_empty() => {
+            let mut a = out[0];
+            for v in &mut out[1..] {
+                a = v.wadd(a);
+                *v = a;
             }
         }
-        2 => {
-            for i in 2..n {
-                let p = out[i - 1].wrapping_mul(2).wrapping_sub(out[i - 2]);
-                out[i] = out[i].wrapping_add(p);
+        2 if out.len() >= 2 => {
+            let (mut b, mut a) = (out[0], out[1]);
+            for v in &mut out[2..] {
+                let x = v.wadd(a.wmul(2).wsub(b));
+                (b, a) = (a, x);
+                *v = x;
             }
         }
-        3 => {
-            for i in 3..n {
-                let p = out[i - 1]
-                    .wrapping_mul(3)
-                    .wrapping_sub(out[i - 2].wrapping_mul(3))
-                    .wrapping_add(out[i - 3]);
-                out[i] = out[i].wrapping_add(p);
+        3 if out.len() >= 3 => {
+            let (mut c, mut b, mut a) = (out[0], out[1], out[2]);
+            for v in &mut out[3..] {
+                let x = v.wadd(a.wmul(3).wsub(b.wmul(3)).wadd(c));
+                (c, b, a) = (b, a, x);
+                *v = x;
             }
         }
-        4 => {
-            for i in 4..n {
-                let p = out[i - 1]
-                    .wrapping_mul(4)
-                    .wrapping_sub(out[i - 2].wrapping_mul(6))
-                    .wrapping_add(out[i - 3].wrapping_mul(4))
-                    .wrapping_sub(out[i - 4]);
-                out[i] = out[i].wrapping_add(p);
+        4 if out.len() >= 4 => {
+            let (mut d, mut c, mut b, mut a) = (out[0], out[1], out[2], out[3]);
+            for v in &mut out[4..] {
+                let x = v.wadd(a.wmul(4).wsub(b.wmul(6)).wadd(c.wmul(4)).wsub(d));
+                (d, c, b, a) = (c, b, a, x);
+                *v = x;
             }
         }
         _ => {}
     }
 }
 
-/// `coefs[k]` multiplies the sample `order - k` places back, i.e. the stream's order reversed so
-/// the inner loop runs forward over the history.
-fn restore_lpc(out: &mut [i64], coefs: &[i64], shift: u32) {
-    let order = coefs.len();
-    for i in order..out.len() {
-        let (head, tail) = out.split_at_mut(i);
-        let sum = head[i - order..]
-            .iter()
-            .zip(coefs)
-            .fold(0i64, |acc, (&h, &c)| acc.wrapping_add(h.wrapping_mul(c)));
-        tail[0] = tail[0].wrapping_add(sum >> shift);
-    }
-}
-
 /// Decodes one subframe of `bps` bits per sample (already widened for a side channel) into
-/// `out`, which becomes `block` samples long.
-pub(super) fn read_subframe(
+/// `out`, which becomes `block` samples long. `bps` must fit `T`.
+pub(super) fn read_subframe<T: Sample>(
     r: &mut Bits,
-    out: &mut Vec<i64>,
+    out: &mut Vec<T>,
     block: usize,
     bps: u32,
 ) -> Result<()> {
-    out.clear();
-    out.resize(block, 0);
+    // Every path below writes all `block` samples before it succeeds, so stale contents of a
+    // reused buffer never show.
+    out.resize(block, T::default());
     if r.read(1)? != 0 {
         return Err(malformed("subframe padding bit is set"));
     }
@@ -255,12 +365,12 @@ pub(super) fn read_subframe(
     let bps = bps - wasted;
     match kind {
         0 => {
-            let v = r.read_signed(bps)?;
+            let v = T::from_i64(r.read_signed(bps)?);
             out.fill(v);
         }
         1 => {
             for v in out.iter_mut() {
-                *v = r.read_signed(bps)?;
+                *v = T::from_i64(r.read_signed(bps)?);
             }
         }
         8..=12 => {
@@ -269,7 +379,7 @@ pub(super) fn read_subframe(
                 return Err(malformed("predictor order exceeds the block size"));
             }
             for v in &mut out[..order] {
-                *v = r.read_signed(bps)?;
+                *v = T::from_i64(r.read_signed(bps)?);
             }
             read_residual(r, out, order)?;
             restore_fixed(out, order);
@@ -280,7 +390,7 @@ pub(super) fn read_subframe(
                 return Err(malformed("predictor order exceeds the block size"));
             }
             for v in &mut out[..order] {
-                *v = r.read_signed(bps)?;
+                *v = T::from_i64(r.read_signed(bps)?);
             }
             let precision = r.read(4)? as u32 + 1;
             if precision == 16 {
@@ -290,20 +400,20 @@ pub(super) fn read_subframe(
             let Ok(shift) = u32::try_from(shift) else {
                 return Err(malformed("negative prediction shift"));
             };
-            let mut coefs = [0i64; 32];
+            let mut coefs = [0i32; 32];
             for c in &mut coefs[..order] {
-                *c = r.read_signed(precision)?;
+                *c = r.read_signed(precision)? as i32;
             }
             let coefs = &mut coefs[..order];
             coefs.reverse();
             read_residual(r, out, order)?;
-            restore_lpc(out, coefs, shift);
+            T::restore_lpc(out, coefs, shift, bps);
         }
         _ => return Err(malformed("reserved subframe type")),
     }
     if wasted > 0 {
         for v in out.iter_mut() {
-            *v = v.wrapping_shl(wasted);
+            *v = v.wshl(wasted);
         }
     }
     Ok(())
@@ -362,7 +472,61 @@ mod tests {
         ]
     }
 
+    /// `bps`-bit values, with the extremes over-represented.
+    fn sample(bps: u32) -> impl Strategy<Value = i64> {
+        let (lo, hi) = (-(1i64 << (bps - 1)), (1i64 << (bps - 1)) - 1);
+        prop_oneof![Just(lo), Just(hi), Just(0), lo..=hi]
+    }
+
+    /// A valid stream's samples, their LPC residuals and the coefficients, in the order
+    /// `restore_lpc` takes them (reversed). `None` when a residual would not fit 32 bits.
+    fn lpc_case() -> impl Strategy<Value = (u32, u32, Vec<i32>, Vec<i64>)> {
+        (4u32..=32, 1u32..=15, 1usize..=32, 0u32..=15).prop_flat_map(
+            |(bps, precision, order, shift)| {
+                let c = (-(1i32 << (precision - 1)), (1i32 << (precision - 1)) - 1);
+                (
+                    Just(bps),
+                    Just(shift),
+                    prop::collection::vec(prop_oneof![Just(c.0), Just(c.1), c.0..=c.1], order),
+                    prop::collection::vec(sample(bps), order..order + 40),
+                )
+            },
+        )
+    }
+
     proptest! {
+        // Whatever predictor the fast path takes (32-bit sums, 64-bit sums of 32-bit
+        // products, or the i64 samples), a valid stream comes back exactly.
+        #[test]
+        fn lpc_restore_inverts_prediction_on_every_path((bps, shift, coefs, samples) in lpc_case()) {
+            let order = coefs.len();
+            let mut residual = samples.clone();
+            for i in order..samples.len() {
+                let sum: i64 = (0..order).map(|j| i64::from(coefs[j]) * samples[i - order + j]).sum();
+                residual[i] = samples[i] - (sum >> shift);
+            }
+            prop_assume!(residual.iter().all(|&v| i32::try_from(v).is_ok()));
+            let mut narrow: Vec<i32> = residual.iter().map(|&v| v as i32).collect();
+            <i32 as Sample>::restore_lpc(&mut narrow, &coefs, shift, bps);
+            prop_assert_eq!(narrow.iter().map(|&v| i64::from(v)).collect::<Vec<_>>(), samples.clone());
+            let mut wide = residual;
+            <i64 as Sample>::restore_lpc(&mut wide, &coefs, shift, bps);
+            prop_assert_eq!(wide, samples);
+        }
+
+        #[test]
+        fn fixed_restore_is_the_same_in_both_widths(
+            order in 0usize..=4,
+            data in prop::collection::vec(sample(32), 0..30),
+        ) {
+            let mut narrow: Vec<i32> = data.iter().map(|&v| v as i32).collect();
+            let mut wide = data;
+            restore_fixed(&mut narrow, order);
+            restore_fixed(&mut wide, order);
+            // Wrapping arithmetic agrees on the low 32 bits.
+            prop_assert_eq!(narrow, wide.iter().map(|&v| v as i32).collect::<Vec<_>>());
+        }
+
         // The windowed reader must agree with a bit-by-bit one on any mix of operations,
         // including the end of the data, where both must fail together.
         #[test]
