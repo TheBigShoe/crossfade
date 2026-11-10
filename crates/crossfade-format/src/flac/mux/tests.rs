@@ -1,9 +1,7 @@
 use super::*;
 use crate::vorbis_comment;
 use crossfade_codec::flac::streaminfo::StreamInfoBlock;
-use crossfade_core::{
-    AudioSpec, ChannelLayout, CodecId, Limits, Packet, SampleFormat, TimeBase,
-};
+use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Limits, Packet, SampleFormat, TimeBase};
 use std::io::{Cursor, SeekFrom};
 use std::sync::{Arc, Mutex};
 
@@ -272,7 +270,12 @@ fn other_codecs_and_malformed_extradata_are_refused() {
         Err(Error::Malformed { .. })
     ));
     assert!(matches!(
-        create(Box::new(Shared::default()), &stream(&[0u8; 34]), &Tags::new()).err(),
+        create(
+            Box::new(Shared::default()),
+            &stream(&[0u8; 34]),
+            &Tags::new()
+        )
+        .err(),
         Some(Error::Malformed { .. })
     ));
 }
@@ -281,6 +284,10 @@ fn other_codecs_and_malformed_extradata_are_refused() {
 fn a_comment_block_over_the_24_bit_length_limit_is_refused() {
     let mut t = Tags::new();
     t.push("COMMENT", "x".repeat(1 << 24));
-    let r = create(Box::new(Shared::default()), &stream(&block(0, 0).write()), &t);
+    let r = create(
+        Box::new(Shared::default()),
+        &stream(&block(0, 0).write()),
+        &t,
+    );
     assert!(matches!(r.err(), Some(Error::Unsupported { .. })));
 }
