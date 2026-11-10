@@ -53,7 +53,9 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 ## Gate
 
 ```sh
-just ci        # fmt-check + clippy -D warnings + cargo test --workspace
+just ci        # fmt-check + clippy -D warnings + cargo test --workspace + just conformance
+just corpus    # once per clone: fetch the conformance files (needs curl and the network)
+just conformance  # tier 3, FLAC corpus vs the frozen results (needs the corpus, ~3 s)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
@@ -66,6 +68,11 @@ just screenshots [names]  # offscreen PNGs in target/screenshots (macOS only)
 `just ci` must pass before a branch is handed over. Work happens on a task
 branch (`m<N>/<topic>`); the lead reviews and merges it into `main` with
 `--no-ff`, so `main`'s first-parent history is always green.
+
+`just ci` runs tier 3, so a fresh clone needs `just corpus` once. The tier FAILS,
+never skips, when a corpus file is missing (the error says to run `just corpus`);
+`CROSSFADE_CORPUS_DIR` points it at a shared cache. Plain `cargo test --workspace`
+never needs the corpus: the conformance tests are `#[ignore]`d.
 
 `fuzz/` is its own workspace (libFuzzer is C++) with its own lockfile. Without
 nightly, a target still runs unsanitised on the pinned toolchain:
@@ -94,7 +101,9 @@ Run on every `cargo test`:
 
 Later milestones:
 
-- 3: conformance against reference vectors
+- 3: conformance against reference vectors (`just conformance`; the frozen results
+  in `crates/crossfade-format/tests/conformance/` are rewritten only on purpose,
+  with `CROSSFADE_BLESS=1`)
 - 4: UI (`#[gpui_test]` runs on every `cargo test`; screenshots are a review
   aid, not a gate)
 - 5: fuzzing (`cargo-fuzz`)

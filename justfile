@@ -15,6 +15,13 @@ lint:
 test:
     cargo test --workspace
 
+# Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
+# crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
+# skips, without it. Release because the corpus is ~300 MB (about 3 s; debug takes ~40 s).
+# After a deliberate decoder change: CROSSFADE_BLESS=1 just conformance
+conformance:
+    cargo test --release -p crossfade-format --test conformance_flac -- --ignored
+
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
     for t in aarch64-apple-ios aarch64-linux-android; do \
@@ -56,7 +63,7 @@ screenshots *names:
     @ls -lh target/screenshots/*.png
 
 # Dependencies run in order and the first failure stops the recipe.
-ci: fmt-check lint test
+ci: fmt-check lint test conformance
 
 # Needs nightly and cargo-fuzz; not part of `ci`.
 fuzz target secs="60":
