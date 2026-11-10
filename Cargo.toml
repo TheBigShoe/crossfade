@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+crossfade-core = { path = "crates/crossfade-core" }
+crossfade-format = { path = "crates/crossfade-format" }
+crossfade-codec = { path = "crates/crossfade-codec" }
+crossfade-dsp = { path = "crates/crossfade-dsp" }
+crossfade-graph = { path = "crates/crossfade-graph" }
+crossfade-testkit = { path = "crates/crossfade-testkit" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+cast_lossless = "warn"
+semicolon_if_nothing_returned = "warn"

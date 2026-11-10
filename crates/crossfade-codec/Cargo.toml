@@ -1,0 +1,13 @@
+[package]
+name = "crossfade-codec"
+description = "Audio and video codecs for Crossfade."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+crossfade-core.workspace = true
+
+[lints]
+workspace = true

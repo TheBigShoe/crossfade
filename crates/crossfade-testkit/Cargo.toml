@@ -1,0 +1,14 @@
+[package]
+name = "crossfade-testkit"
+description = "Test support for Crossfade: generators, fakes and metrics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+crossfade-core.workspace = true
+
+[lints]
+workspace = true
