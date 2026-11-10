@@ -8,46 +8,99 @@ pub mod ogg;
 mod replay;
 pub mod wav;
 
-use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo};
+use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
+use replay::Replay;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FormatId {
     Wav,
+    Flac,
+    Aiff,
+    Ogg,
 }
 
 impl FormatId {
     pub fn name(self) -> &'static str {
         match self {
             Self::Wav => "wav",
+            Self::Flac => "flac",
+            Self::Aiff => "aiff",
+            Self::Ogg => "ogg",
         }
     }
 
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_ascii_lowercase().as_str() {
             "wav" | "wave" => Some(Self::Wav),
+            "flac" => Some(Self::Flac),
+            "aiff" | "aif" | "aifc" => Some(Self::Aiff),
+            "ogg" | "oga" => Some(Self::Ogg),
             _ => None,
         }
     }
 }
 
-/// Identifies the container by its magic. Each demuxer checks its own, so
-/// nothing needs to seek back on a pipe.
+/// The longest magic: `FORM` + size + `AIFF`.
+const SNIFF_LEN: usize = 12;
+
+fn sniff(head: &[u8]) -> Option<FormatId> {
+    match head {
+        [b'R', b'I', b'F', b'F', ..] | [b'R', b'F', b'6', b'4', ..] => Some(FormatId::Wav),
+        // An ID3v2 tag may precede the stream marker; the FLAC reader skips it.
+        [b'f', b'L', b'a', b'C', ..] | [b'I', b'D', b'3', ..] => Some(FormatId::Flac),
+        [
+            b'F',
+            b'O',
+            b'R',
+            b'M',
+            _,
+            _,
+            _,
+            _,
+            b'A',
+            b'I',
+            b'F',
+            b'F' | b'C',
+            ..,
+        ] => Some(FormatId::Aiff),
+        [b'O', b'g', b'g', b'S', ..] => Some(FormatId::Ogg),
+        _ => None,
+    }
+}
+
+/// Identifies the container from its first bytes without seeking, so a pipe works: the
+/// chosen demuxer gets those bytes back in front of the rest.
 pub fn open_demuxer(
     source: Box<dyn MediaSource>,
     limits: &Limits,
 ) -> Result<(FormatId, Box<dyn Demuxer>), Error> {
-    let demuxer = wav::WavDemuxer::new(source, limits)?;
-    Ok((FormatId::Wav, Box::new(demuxer)))
+    let (head, source) = Replay::sniff(source, SNIFF_LEN)?;
+    let format = sniff(&head).ok_or(Error::UnrecognisedFormat)?;
+    let source: Box<dyn MediaSource> = Box::new(source);
+    let demuxer: Box<dyn Demuxer> = match format {
+        FormatId::Wav => Box::new(wav::WavDemuxer::new(source, limits)?),
+        FormatId::Flac => flac::open(source, limits)?,
+        FormatId::Aiff => aiff::open(source, limits)?,
+        FormatId::Ogg => ogg::open(source, limits)?,
+    };
+    Ok((format, demuxer))
 }
 
+/// `tags` are written where the container can hold them; WAV does not yet.
 pub fn create_muxer(
     format: FormatId,
     sink: Box<dyn MediaSink>,
     stream: &StreamInfo,
+    tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
     match format {
         FormatId::Wav => Ok(Box::new(wav::WavMuxer::new(sink, stream)?)),
+        FormatId::Flac => flac::create(sink, stream, tags),
+        FormatId::Aiff => aiff::create(sink, stream, tags),
+        FormatId::Ogg => Err(Error::Unsupported {
+            what: "writing ogg is not built yet".into(),
+        }),
     }
 }
 
@@ -89,7 +142,8 @@ mod tests {
             Box::new(sink.clone()),
             &stream(),
             &Tags::new(),
-        ).unwrap();
+        )
+        .unwrap();
         let p = Packet {
             data: vec![1, 0, 2, 0],
             ..Packet::default()
@@ -162,12 +216,16 @@ mod tests {
         for bytes in [
             Vec::new(),
             b"fLa".to_vec(),
-            b"FORM\0\0\0\x10" .to_vec(),
+            b"FORM\0\0\0\x10".to_vec(),
             b"FORM\0\0\0\x108SVXVHDR".to_vec(),
             b"ID".to_vec(),
             b"hello world, not audio".to_vec(),
         ] {
-            assert_eq!(open(bytes.clone()).err(), Some(Error::UnrecognisedFormat), "{bytes:?}");
+            assert_eq!(
+                open(bytes.clone()).err(),
+                Some(Error::UnrecognisedFormat),
+                "{bytes:?}"
+            );
         }
         let mut rf64 = wav_bytes();
         rf64[..4].copy_from_slice(b"RF64");
@@ -178,8 +236,17 @@ mod tests {
     fn muxers_exist_for_wav_only_so_far() {
         let mk = |f| create_muxer(f, Box::new(Shared::default()), &stream(), &Tags::new());
         assert!(mk(FormatId::Wav).is_ok());
-        assert_eq!(unsupported(mk(FormatId::Flac)), "writing flac is not built yet");
-        assert_eq!(unsupported(mk(FormatId::Aiff)), "writing aiff is not built yet");
-        assert_eq!(unsupported(mk(FormatId::Ogg)), "writing ogg is not built yet");
+        assert_eq!(
+            unsupported(mk(FormatId::Flac)),
+            "writing flac is not built yet"
+        );
+        assert_eq!(
+            unsupported(mk(FormatId::Aiff)),
+            "writing aiff is not built yet"
+        );
+        assert_eq!(
+            unsupported(mk(FormatId::Ogg)),
+            "writing ogg is not built yet"
+        );
     }
 }

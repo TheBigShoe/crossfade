@@ -96,7 +96,7 @@ impl Pipeline {
         let (decoded, converted) = (AudioFrame::new(in_spec), AudioFrame::new(&out_spec));
 
         let sink = io.create_sink(&output.path)?;
-        let muxer = match create_muxer(output_format, sink, &plan.output) {
+        let muxer = match create_muxer(output_format, sink, &plan.output, demuxer.tags()) {
             Ok(m) => m,
             Err(e) => {
                 io.discard(&output.path);
