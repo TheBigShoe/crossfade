@@ -9,6 +9,7 @@
 
 pub mod atomic;
 pub mod paths;
+pub mod settings;
 
 pub use atomic::write_atomic;
 pub use paths::{AppIdentity, ConfigPaths, Platform};
