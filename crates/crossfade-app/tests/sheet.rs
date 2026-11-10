@@ -36,6 +36,15 @@ fn wav_entry(path: &str, rate: u32, format: SampleFormat) -> InputEntry {
     entry_in(&mut wav_io(path, rate, format), path)
 }
 
+/// A probed WAV with `channels` unpositioned channels.
+fn wide_entry(path: &str, channels: u16) -> InputEntry {
+    let layout = ChannelLayout::unpositioned(channels).unwrap();
+    let (_, wav) = sine_wav(&spec(8000, SampleFormat::S16, layout), 200);
+    let mut io = MemoryIo::new();
+    io.insert(path, wav);
+    entry_in(&mut io, path)
+}
+
 /// `path` converted by the engine to `to` (a `.flac` or `.aiff` name), then probed.
 fn converted_entry(path: &str, to: &str) -> InputEntry {
     let mut io = wav_io(path, 48_000, SampleFormat::S16);
@@ -377,7 +386,7 @@ fn format_options_are_what_the_engine_accepts_for_the_container() {
     s.set_container(Container::Aiff);
     assert_eq!(s.format_options(), all(&[U8, S16, S24, S32, F32, F64]));
     s.set_container(Container::Flac);
-    assert_eq!(s.format_options(), all(&[U8, S16, S24]));
+    assert_eq!(s.format_options(), all(&[U8, S16, S24, S32]));
 
     let mut s = sheet_of(&wav_entry("f.wav", 48_000, F32));
     s.set_container(Container::Flac);
@@ -386,7 +395,8 @@ fn format_options_are_what_the_engine_accepts_for_the_container() {
         [
             FormatChoice::Format(U8),
             FormatChoice::Format(S16),
-            FormatChoice::Format(S24)
+            FormatChoice::Format(S24),
+            FormatChoice::Format(S32)
         ]
     );
 }
@@ -399,7 +409,7 @@ fn a_float_source_into_flac_is_saved_as_24_bit_with_a_hint() {
     assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
     assert_eq!(
         s.hint().as_deref(),
-        Some("FLAC stores whole-number samples up to 24-bit, so this will be saved as 24-bit.")
+        Some("FLAC stores whole-number samples, so this will be saved as 24-bit.")
     );
     assert_eq!(s.output(), p(&["m", "f-s24.flac"]));
     let request = s.build(&nothing_exists).unwrap();
@@ -423,17 +433,34 @@ fn a_float_source_into_flac_is_saved_as_24_bit_with_a_hint() {
     let s32 = wav_entry("w.wav", 48_000, SampleFormat::S32);
     let mut s = sheet_of(&s32);
     s.apply_preset("flac");
-    assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
-    assert!(s.hint().is_some());
+    // FLAC holds 32-bit integers, so a 32-bit source keeps its format.
+    assert_eq!(s.format(), FormatChoice::SameAsSource);
+    assert_eq!(s.hint(), None);
+
+    // A float source may be saved as 32-bit whole numbers by choice.
+    let mut s = sheet_of(&wav_entry("f.wav", 48_000, SampleFormat::F32));
+    s.set_container(Container::Flac);
+    s.set_format(FormatChoice::Format(SampleFormat::S32));
+    assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S32));
+    assert_eq!(s.hint(), None);
 }
 
 #[test]
-fn a_192_khz_source_cannot_go_into_flac() {
+fn a_192_khz_source_goes_into_flac_unchanged() {
     let mut s = sheet_of(&wav_entry("hi.wav", 192_000, SampleFormat::S24));
+    s.set_container(Container::Flac);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(s.format(), FormatChoice::SameAsSource);
+    assert!(s.build(&nothing_exists).is_ok());
+}
+
+#[test]
+fn a_source_with_more_than_8_channels_cannot_go_into_flac() {
+    let mut s = sheet_of(&wide_entry("wide.wav", 9));
     assert!(s.problems(&nothing_exists).is_empty());
     s.set_container(Container::Flac);
     assert!(s.format_options().is_empty());
-    let want = "FLAC output is limited to 96 kHz for now; this file is 192 kHz.";
+    let want = "FLAC can store up to 8 channels; this file has 9.";
     assert_eq!(
         s.problems(&nothing_exists),
         [Problem::Source(want.to_owned())]
@@ -553,7 +580,7 @@ fn engine_wording_loses_its_flags() {
 
 #[test]
 fn a_source_flac_cannot_take_leaves_the_audio_choices_disabled() {
-    let mut s = sheet_of(&wav_entry("hi.wav", 192_000, SampleFormat::S24));
+    let mut s = sheet_of(&wide_entry("wide.wav", 9));
     s.set_container(Container::Flac);
     assert!(s.level_visible());
     assert!(!s.level_enabled());
