@@ -133,6 +133,11 @@ impl ConvertDialog {
         self.sheet.output().to_owned()
     }
 
+    /// Whether the sheet will replace an existing output file.
+    pub fn overwrite(&self) -> bool {
+        self.sheet.overwrite()
+    }
+
     /// What the sample-format select shows.
     pub fn format_label(&self, _: &App) -> &'static str {
         FORMATS

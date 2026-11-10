@@ -104,6 +104,16 @@ pub(crate) fn wav_s16(rate: u32, channels: u16, frames: u32) -> Vec<u8> {
     v
 }
 
+/// The paths the app asked the platform to open, in order.
+#[derive(Clone, Default)]
+pub(crate) struct Opened(pub(crate) std::rc::Rc<std::cell::RefCell<Vec<PathBuf>>>);
+
+impl Global for Opened {}
+
+pub(crate) fn opened(cx: &mut TestAppContext) -> Vec<PathBuf> {
+    cx.update(|cx| cx.global::<Opened>().0.borrow().clone())
+}
+
 /// A window over a scripted runner and a scratch directory.
 pub(crate) struct Rig {
     pub(crate) window: AnyWindowHandle,
@@ -152,6 +162,12 @@ pub(crate) fn open_in(
         // they show their end state from the first frame.
         cx.set_reduce_motion(true);
         init(cx);
+        let log = Opened::default();
+        let record = log.clone();
+        cx.set_global(log);
+        cx.set_global(config::Opener(std::rc::Rc::new(move |path, _| {
+            record.0.borrow_mut().push(path.to_path_buf());
+        })));
         config::install(Config::load(&paths, true), cx);
         let bounds = Bounds {
             origin: Point::default(),

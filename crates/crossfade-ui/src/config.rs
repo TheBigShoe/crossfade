@@ -521,12 +521,52 @@ pub fn paths_for(config_dir: Option<PathBuf>) -> ConfigPaths {
     }
 }
 
+/// The one line `crossfade-gui` prints for a command line it does not understand.
+const USAGE: &str = "usage: crossfade-gui [--config-dir <DIR>]";
+
+/// The command line after the program name: only `--config-dir <DIR>` (or `=DIR`) is
+/// known. `Err` is one line for stderr.
+pub fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, String> {
+    let mut dir = None;
+    while let Some(arg) = args.next() {
+        let value = if arg == "--config-dir" {
+            args.next()
+        } else if let Some(value) = arg.strip_prefix("--config-dir=") {
+            Some(value.to_owned())
+        } else {
+            return Err(format!("unknown argument {arg:?}; {USAGE}"));
+        };
+        match value.filter(|value| !value.is_empty()) {
+            Some(value) => dir = Some(PathBuf::from(value)),
+            None => return Err(format!("--config-dir needs a directory; {USAGE}")),
+        }
+    }
+    Ok(dir)
+}
+
 /// Make sure `settings.json` exists (created from the commented template, never
-/// overwritten) and return its path, for the caller to open in the user's editor with
-/// `cx.open_with_system(&path)`.
+/// overwritten) and return its path, for the caller to open with [`open_path`].
 pub fn open_settings_file(paths: &ConfigPaths) -> io::Result<PathBuf> {
     paths.ensure_settings_file(SETTINGS_TEMPLATE)?;
     Ok(paths.settings.clone())
+}
+
+/// How a file is opened in the user's editor. Absent, the platform's handler is used; the
+/// headless test platform has none, so tests install a recorder.
+#[derive(Clone)]
+pub struct Opener(pub std::rc::Rc<OpenFn>);
+
+/// What an [`Opener`] runs for each file.
+pub type OpenFn = dyn Fn(&Path, &mut App);
+
+impl Global for Opener {}
+
+/// Open `path` with the installed [`Opener`], else the platform's handler.
+pub fn open_path(path: &Path, cx: &mut App) {
+    match cx.try_global::<Opener>().cloned() {
+        Some(opener) => (opener.0)(path, cx),
+        None => cx.open_with_system(path),
+    }
 }
 
 /// The same for `keymap.json`.

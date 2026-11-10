@@ -7,7 +7,14 @@ use crate::config_test_support::TempDir as ConfigDir;
 use crate::prelude::*;
 use crate::settings::{KEYMAP_TEMPLATE, SETTINGS_TEMPLATE};
 use crate::test_support::{
-    add_paths, click, draw, has, open_rig, open_rig_in, open_sheet, press, step,
+    add_paths, click, draw, has, open_rig, open_rig_in, open_sheet, opened, press, step,
+};
+
+/// The bundled keymap's binding for OpenFiles on this platform.
+const OPEN_KEY: &str = if cfg!(target_os = "macos") {
+    "cmd-o"
+} else {
+    "ctrl-o"
 };
 
 fn last_action(cx: &mut TestAppContext, rig: &crate::test_support::Rig) -> Option<AppAction> {
@@ -30,7 +37,8 @@ fn init_installs_a_bundled_config_before_any_window(cx: &mut TestAppContext) {
             "bundled dark until a config is started"
         );
         // The bundled keymap, not hard-coded bindings, is what is bound.
-        let open = cx.all_bindings_for_input(&[Keystroke::parse("secondary-o").unwrap()]);
+        let key = Keystroke::parse(OPEN_KEY).unwrap();
+        let open = cx.all_bindings_for_input(&[key]);
         assert_eq!(open.len(), 1);
     });
 }
@@ -72,14 +80,15 @@ fn a_broken_settings_file_shows_a_status_notice_until_it_is_fixed(cx: &mut TestA
 
 #[gpui_test]
 fn open_settings_creates_the_template_in_the_config_directory(cx: &mut TestAppContext) {
-    // The test platform records nothing for `open_with_system`, so this checks the file
-    // the app would open.
+    // The test platform's `open_with_system` is unimplemented, so the app opens files
+    // through `config::Opener`, which the test window records.
     let rig = open_rig(cx);
     draw(cx, rig.window);
     let path = rig.config.path().join("settings.json");
     assert!(!path.exists());
     press(cx, rig.window, "secondary-,");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), SETTINGS_TEMPLATE);
+    assert_eq!(opened(cx), vec![path.clone()]);
     assert_eq!(last_action(cx, &rig), Some(AppAction::OpenSettings));
 
     std::fs::write(&path, "{}").unwrap();
@@ -101,7 +110,8 @@ fn open_keymap_creates_the_keymap_template(cx: &mut TestAppContext) {
     .expect("open");
     cx.run_until_parked();
     let path = rig.config.path().join("keymap.json");
-    assert_eq!(std::fs::read_to_string(path).unwrap(), KEYMAP_TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), KEYMAP_TEMPLATE);
+    assert_eq!(opened(cx), vec![path]);
 }
 
 #[gpui_test]

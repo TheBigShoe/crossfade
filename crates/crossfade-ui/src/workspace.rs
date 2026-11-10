@@ -12,11 +12,13 @@ use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
 use crate::actions::{
-    About, AppAction, Convert, OpenFiles, OpenSettings, Quit, ToggleQueue, WORKSPACE_CONTEXT,
-    bind_default_keys,
+    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, Quit, ToggleQueue,
+    WORKSPACE_CONTEXT,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
+use crate::config::{self, Config};
 use crate::convert_sheet::{ConvertDialog, ConvertEvent};
+use crate::keymap::snapshot_kit_bindings;
 use crate::prelude::*;
 
 /// What the window is called.
@@ -56,6 +58,16 @@ impl WorkspaceOptions {
     }
 }
 
+/// How long a workspace notice stays in the status bar.
+const NOTICE_TIME: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// A configuration file the app opens in the user's editor.
+#[derive(Clone, Copy)]
+enum ConfigFile {
+    Settings,
+    Keymap,
+}
+
 /// The root view.
 pub struct Workspace {
     pub(crate) focus: FocusHandle,
@@ -70,6 +82,12 @@ pub struct Workspace {
     _convert_events: Option<Subscription>,
     /// Set while a drag of files is over the window.
     pub(crate) drag_over: bool,
+    /// A short-lived message of the workspace's own (a settings file that would not open),
+    /// and which one it is, so an older timer never clears a newer message.
+    flash: Option<String>,
+    flash_serial: u64,
+    /// Redraws when the configuration is installed again.
+    _config: Subscription,
     /// Applies the runner's reports as they arrive; ends with the view.
     _events: Task<()>,
 }
@@ -117,6 +135,9 @@ impl Workspace {
             convert: None,
             _convert_events: None,
             drag_over: false,
+            flash: None,
+            flash_serial: 0,
+            _config: cx.observe_global::<Config>(|_, cx| cx.notify()),
             _events: listening,
         }
     }
@@ -142,7 +163,13 @@ impl Workspace {
         let Some(entry) = self.inputs.selected().filter(|_| self.can_convert()) else {
             return;
         };
-        let sheet = ConvertSheet::for_input(entry);
+        let mut sheet = ConvertSheet::for_input(entry);
+        if let Some(config) = cx.try_global::<Config>() {
+            let defaults = &config.settings().convert;
+            // An id the sheet does not know leaves its own default, "same".
+            sheet.apply_preset(&defaults.preset);
+            sheet.set_overwrite(defaults.overwrite);
+        }
         let name = entry.name.clone();
         let exists = Arc::clone(&self.exists);
         let dialog = cx.new(|cx| ConvertDialog::new(sheet, &name, exists, window, cx));
@@ -259,6 +286,51 @@ impl Workspace {
         self.last_action
     }
 
+    /// Show `text` in the status bar for a few seconds.
+    fn flash(&mut self, text: String, cx: &mut Context<Self>) {
+        self.flash_serial += 1;
+        let serial = self.flash_serial;
+        self.flash = Some(text);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NOTICE_TIME).await;
+            this.update(cx, |this, cx| {
+                if this.flash_serial == serial {
+                    this.flash = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// What the status bar says in place of its normal text: the workspace's own message,
+    /// else the configuration's problem, if either exists.
+    pub fn status_notice(&self, cx: &App) -> Option<String> {
+        self.flash
+            .clone()
+            .or_else(|| cx.try_global::<Config>().and_then(Config::notice))
+    }
+
+    /// Create the file from its template if need be and open it in the user's editor.
+    fn open_config_file(&mut self, file: ConfigFile, cx: &mut Context<Self>) {
+        let paths = cx.global::<Config>().paths().clone();
+        let (name, opened) = match file {
+            ConfigFile::Settings => ("settings.json", config::open_settings_file(&paths)),
+            ConfigFile::Keymap => ("keymap.json", config::open_keymap_file(&paths)),
+        };
+        match opened {
+            Ok(path) => config::open_path(&path, cx),
+            Err(error) => self.flash(format!("Could not open {name}: {error}"), cx),
+        }
+    }
+
+    /// The window's background, from the theme.
+    pub fn surface_color(&self, cx: &App) -> Hsla {
+        cx.theme().background
+    }
+
     fn record(&mut self, action: AppAction, cx: &mut Context<Self>) {
         self.last_action = Some(action);
         cx.notify();
@@ -311,6 +383,7 @@ impl Workspace {
                 icon_button("toolbar-overflow", IconName::Ellipsis, "More", cx).dropdown_menu(
                     move |menu, _, _| {
                         menu.action_context(menu_focus.clone())
+                            .menu("Open Keymap", Box::new(OpenKeymap))
                             .menu("About Crossfade", Box::new(About))
                     },
                 ),
@@ -330,15 +403,23 @@ impl Workspace {
             .border_color(theme.border)
             .text_size(LABEL_SIZE)
             .text_color(theme.muted_foreground)
-            .child(
-                div()
+            .child(match self.status_notice(cx) {
+                Some(notice) => div()
+                    .id("status-notice")
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(theme.warning)
+                    .child(SharedString::from(notice)),
+                None => div()
                     .id("status-text")
                     .test_support()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .child(SharedString::from(self.status_text())),
-            )
+            })
             .child(
                 div()
                     .id("status-queue")
@@ -376,7 +457,7 @@ impl Render for Workspace {
             .key_context(WORKSPACE_CONTEXT)
             .track_focus(&self.focus)
             .size_full()
-            .bg(theme.background)
+            .bg(self.surface_color(cx))
             .text_color(theme.foreground)
             .on_action(cx.listener(|this, _: &OpenFiles, window, cx| {
                 this.record(AppAction::OpenFiles, cx);
@@ -392,6 +473,11 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
                 this.record(AppAction::OpenSettings, cx);
+                this.open_config_file(ConfigFile::Settings, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenKeymap, _, cx| {
+                this.record(AppAction::OpenKeymap, cx);
+                this.open_config_file(ConfigFile::Keymap, cx);
             }))
             .on_action(cx.listener(|this, _: &About, _, cx| {
                 this.record(AppAction::About, cx);
@@ -402,13 +488,18 @@ impl Render for Workspace {
     }
 }
 
-/// Global setup: kit components, actions, key bindings and menus. Call once, before
-/// opening a window.
+/// Global setup: kit components, actions, menus and the bundled configuration (so a window
+/// is themed and bound before `config::start` runs). Call once, before opening a window.
+/// Reads no directory: the bundled config's paths are a placeholder in the temp directory
+/// that `config::start` or a test replaces.
 pub fn init(cx: &mut App) {
     kit_init(cx);
+    // Before anything binds keys of its own: keymap applies rebuild from this snapshot.
+    snapshot_kit_bindings(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
-    bind_default_keys(cx);
     set_menus(cx);
+    let unstarted = appconfig::ConfigPaths::new(std::env::temp_dir().join("crossfade-unstarted"));
+    config::install(Config::bundled(unstarted), cx);
 }
 
 fn set_menus(cx: &mut App) {
@@ -419,6 +510,7 @@ fn set_menus(cx: &mut App) {
                 MenuItem::action("About Crossfade", About),
                 MenuItem::separator(),
                 MenuItem::action("Settings\u{2026}", OpenSettings),
+                MenuItem::action("Open Keymap", OpenKeymap),
                 MenuItem::separator(),
                 MenuItem::action("Quit Crossfade", Quit),
             ],
@@ -451,6 +543,16 @@ pub fn open_main_window(cx: &mut App) -> Result<Entity<Workspace>> {
         ..Default::default()
     };
     let (_, workspace) = kit_open_window(options, cx, |window, cx| {
+        // `"mode": "system"` themes follow the OS from here on.
+        window
+            .observe_window_appearance(|window, cx| {
+                let dark = matches!(
+                    window.appearance(),
+                    WindowAppearance::Dark | WindowAppearance::VibrantDark
+                );
+                config::set_appearance(dark, cx);
+            })
+            .detach();
         cx.new(|cx| Workspace::new(WorkspaceOptions::real(), window, cx))
     })?;
     cx.activate(true);

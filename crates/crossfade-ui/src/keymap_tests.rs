@@ -41,6 +41,11 @@ fn last_action(cx: &mut TestAppContext, workspace: &Entity<crate::Workspace>) ->
 fn every_bundled_binding_names_an_action_that_can_be_built(cx: &mut TestAppContext) {
     cx.update(crate::workspace::init);
     cx.update(|cx| {
+        // Actions with no default binding still have to be buildable by name, for a user
+        // keymap to bind them.
+        for name in ["crossfade::About", "crossfade::OpenKeymap"] {
+            cx.build_action(name, None).expect(name);
+        }
         for platform in PLATFORMS {
             let keymap = bundled(platform);
             assert!(!keymap.entries.is_empty(), "{platform:?} binds nothing");
@@ -85,10 +90,12 @@ fn each_platform_binds_the_same_actions_to_its_own_modifier() {
                 .unwrap_or_else(|| panic!("{platform:?} does not bind {keystrokes}"));
             assert_eq!(found.action.as_ref().map(|a| a.name.as_str()), Some(action));
         }
-        assert!(
-            !keymap.action_names().contains(&"crossfade::About"),
-            "About is unbound"
-        );
+        for unbound in ["crossfade::About", "crossfade::OpenKeymap"] {
+            assert!(
+                !keymap.action_names().contains(&unbound),
+                "{unbound} has no default binding"
+            );
+        }
     }
 }
 
