@@ -13,18 +13,89 @@ pub struct Section {
 pub struct Row {
     /// The `probe --json` key this row shows.
     pub field: &'static str,
+    /// Unique within a section for a view's element ids: the key, or `tags-<n>` for the
+    /// n-th tag, since a key may repeat.
+    pub id: String,
     pub label: String,
+    /// What a person reads.
     pub value: String,
+    /// The probe's own value, for scripts and tests.
+    pub raw: String,
 }
 
 const UNKNOWN: &str = "unknown";
 
 fn row(field: &'static str, label: &str, value: String) -> Row {
+    friendly_row(field, label, value.clone(), value)
+}
+
+fn friendly_row(field: &'static str, label: &str, value: String, raw: String) -> Row {
     Row {
         field,
+        id: field.to_owned(),
         label: label.to_owned(),
         value,
+        raw,
     }
+}
+
+/// `wav` reads `WAV`; a container this build has no name for shows as probed.
+pub fn format_name(raw: &str) -> String {
+    match raw {
+        "wav" => "WAV".into(),
+        "flac" => "FLAC".into(),
+        "aiff" => "AIFF".into(),
+        "ogg" => "Ogg".into(),
+        other => other.into(),
+    }
+}
+
+/// `s16` reads `16-bit`, `f32` reads `32-bit float`.
+pub fn sample_format_name(raw: &str) -> String {
+    match raw {
+        "u8" => "8-bit".into(),
+        "s16" => "16-bit".into(),
+        "s24" => "24-bit".into(),
+        "s32" => "32-bit".into(),
+        "f32" => "32-bit float".into(),
+        "f64" => "64-bit float".into(),
+        other => other.into(),
+    }
+}
+
+/// `pcm_s16le` reads `PCM (16-bit little-endian)`; short enough for a value column.
+pub fn codec_name(raw: &str) -> String {
+    if raw == "flac" {
+        return "FLAC".into();
+    }
+    let Some(rest) = raw.strip_prefix("pcm_") else {
+        return raw.into();
+    };
+    let (sample, endian) = match rest.strip_suffix("le") {
+        Some(sample) => (sample, Some("little-endian")),
+        None => (
+            rest.strip_suffix("be").unwrap_or(rest),
+            rest.strip_suffix("be").map(|_| "big-endian"),
+        ),
+    };
+    let depth = match (sample, endian) {
+        ("u8", _) => return "PCM (8-bit unsigned)".into(),
+        ("s8", _) => return "PCM (8-bit signed)".into(),
+        (other, _) => sample_format_name(other),
+    };
+    match endian {
+        Some(endian) if depth.ends_with("float") => format!("PCM ({depth}, {endian})"),
+        Some(endian) => format!("PCM ({depth} {endian})"),
+        None => raw.into(),
+    }
+}
+
+/// The significant bits of a stream: the raw count when it is below the sample format's.
+pub fn depth(stream: &ProbeStream) -> String {
+    stream.bits_per_raw_sample.map_or_else(
+        || sample_format_name(&stream.sample_format),
+        |bits| format!("{bits}-bit"),
+    )
 }
 
 fn or_unknown<T>(v: Option<T>, f: impl FnOnce(T) -> String) -> String {
@@ -35,7 +106,12 @@ pub fn sections(doc: &ProbeDocument) -> Vec<Section> {
     let mut out = vec![Section {
         title: "File".into(),
         rows: vec![
-            row("format", "Format", doc.format.clone()),
+            friendly_row(
+                "format",
+                "Format",
+                format_name(&doc.format),
+                doc.format.clone(),
+            ),
             row("size_bytes", "Size", or_unknown(doc.size_bytes, size)),
         ],
     }];
@@ -46,7 +122,11 @@ pub fn sections(doc: &ProbeDocument) -> Vec<Section> {
             rows: doc
                 .tags
                 .iter()
-                .map(|t| row("tags", &title_case(&t.key), t.value.clone()))
+                .enumerate()
+                .map(|(n, t)| Row {
+                    id: format!("tags-{n}"),
+                    ..row("tags", &title_case(&t.key), t.value.clone())
+                })
                 .collect(),
         });
     }
@@ -68,8 +148,13 @@ fn stream_section(s: &ProbeStream) -> Section {
     let mut rows = vec![
         row("index", "Index", s.index.to_string()),
         row("type", "Type", s.kind.clone()),
-        row("codec", "Codec", s.codec.clone()),
-        row("sample_format", "Sample format", s.sample_format.clone()),
+        friendly_row("codec", "Codec", codec_name(&s.codec), s.codec.clone()),
+        friendly_row(
+            "sample_format",
+            "Sample format",
+            sample_format_name(&s.sample_format),
+            s.sample_format.clone(),
+        ),
         row("sample_rate", "Sample rate", rate(s.sample_rate)),
         row("channels", "Channels", s.channels.to_string()),
         row("layout", "Layout", s.layout.clone()),
