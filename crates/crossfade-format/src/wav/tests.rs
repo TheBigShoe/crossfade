@@ -2,8 +2,7 @@
 
 use super::*;
 use crossfade_core::{
-    AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, Packet, SampleFormat,
-    TimeBase,
+    AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, Packet, SampleFormat, TimeBase,
 };
 use std::io::Cursor;
 
@@ -320,4 +319,162 @@ fn trailing_partial_frame_in_a_sized_chunk_is_ignored() {
     let mut d = open(simple(&fmt, &pcm)).unwrap();
     assert_eq!(d.streams()[0].frames, Some(2));
     assert_eq!(drain(&mut d), (vec![(0, 2, pcm[..8].to_vec())], None));
+}
+
+fn open_with(bytes: Vec<u8>, limits: &Limits) -> Result<WavDemuxer, Error> {
+    WavDemuxer::new(Box::new(Cursor::new(bytes)), limits)
+}
+
+fn unsupported(r: Result<WavDemuxer, Error>, needle: &str) {
+    match r {
+        Err(Error::Unsupported { what }) => {
+            assert!(what.contains(needle), "{what:?} lacks {needle:?}");
+        }
+        other => panic!(
+            "expected Unsupported({needle}), got {:?}",
+            other.map(|_| ())
+        ),
+    }
+}
+
+fn is_malformed(r: Result<WavDemuxer, Error>) {
+    assert!(
+        matches!(r, Err(Error::Malformed { .. })),
+        "expected Malformed, got {:?}",
+        r.map(|_| ())
+    );
+}
+
+#[test]
+fn rf64_and_bw64_are_unsupported() {
+    for magic in [b"RF64", b"BW64"] {
+        let mut bytes = simple(&Fmt::new(TAG_PCM, 1, 8000, 16), &[]);
+        bytes[..4].copy_from_slice(magic);
+        unsupported(open(bytes), "RF64");
+    }
+}
+
+#[test]
+fn other_magic_is_unrecognised() {
+    for bytes in [
+        b"RIFX\0\0\0\0WAVE".to_vec(),
+        b"RIFF\0\0\0\0AVI ".to_vec(),
+        b"ID3\x03\0\0\0\0\0\0\0\0".to_vec(),
+        b"RIFF".to_vec(),
+        Vec::new(),
+    ] {
+        assert_eq!(open(bytes).err(), Some(Error::UnrecognisedFormat));
+    }
+}
+
+#[test]
+fn data_before_fmt_is_malformed() {
+    let fmt = Fmt::new(TAG_PCM, 1, 8000, 16);
+    let bytes = riff(&[chunk(b"data", &[0, 0]), chunk(b"fmt ", &fmt.body())]);
+    is_malformed(open(bytes));
+}
+
+#[test]
+fn invalid_fmt_fields_are_malformed() {
+    let good = Fmt::new(TAG_PCM, 2, 8000, 16);
+    let mut zero_ch = Fmt::new(TAG_PCM, 0, 8000, 16);
+    zero_ch.channels = 0;
+    for fmt in [zero_ch, Fmt::new(TAG_PCM, 2, 0, 16)] {
+        is_malformed(open(simple(&fmt, &[])));
+    }
+    // block_align must equal channels * bytes per sample.
+    let mut body = good.body();
+    body[12..14].copy_from_slice(&3u16.to_le_bytes());
+    is_malformed(open(riff(&[chunk(b"fmt ", &body), chunk(b"data", &[])])));
+    // Short fmt chunk.
+    let body = &good.body()[..12];
+    is_malformed(open(riff(&[chunk(b"fmt ", body), chunk(b"data", &[])])));
+    // Extensible fmt without its extension.
+    let mut body = good.base(0xFFFE);
+    body.extend_from_slice(&[0, 0]);
+    is_malformed(open(riff(&[chunk(b"fmt ", &body), chunk(b"data", &[])])));
+    // No data chunk at all.
+    is_malformed(open(riff(&[chunk(b"fmt ", &good.body())])));
+}
+
+#[test]
+fn unsupported_tags_and_depths_name_what_they_are() {
+    let adpcm = Fmt::new(2, 1, 8000, 4);
+    unsupported(open(simple(&adpcm, &[])), "tag 2");
+    let alaw = Fmt::new(6, 1, 8000, 8);
+    unsupported(open(simple(&alaw, &[])), "tag 6");
+    unsupported(open(simple(&Fmt::new(TAG_PCM, 1, 8000, 12), &[])), "12");
+    unsupported(open(simple(&Fmt::new(TAG_PCM, 1, 8000, 64), &[])), "64");
+    unsupported(open(simple(&Fmt::new(TAG_FLOAT, 1, 8000, 16), &[])), "16");
+    unsupported(open(simple(&Fmt::new(TAG_FLOAT, 1, 8000, 24), &[])), "24");
+}
+
+#[test]
+fn extensible_valid_bits_must_match_the_container() {
+    let fmt = Fmt::new(TAG_PCM, 2, 48000, 24);
+    unsupported(open(ext_file(&fmt, 20, 3, 1, &[])), "valid");
+    // An unsupported sub-format is named too.
+    unsupported(open(ext_file(&fmt, 24, 3, 0x11, &[])), "0x11");
+}
+
+#[test]
+fn oversized_fmt_chunk_is_checked_against_limits_before_allocating() {
+    let limits = Limits {
+        max_alloc_bytes: 1024,
+        ..Limits::default()
+    };
+    let mut body = Fmt::new(TAG_PCM, 1, 8000, 16).body();
+    body.resize(2000, 0);
+    let bytes = riff(&[chunk(b"fmt ", &body), chunk(b"data", &[])]);
+    assert_eq!(
+        open_with(bytes, &limits).err(),
+        Some(Error::AllocLimitExceeded {
+            requested: 2000,
+            max: 1024
+        })
+    );
+    // A huge declared size must fail on the declaration, not on memory.
+    let bytes = riff(&[raw_chunk(b"fmt ", 0xFFFF_FFF0, &[])]);
+    assert!(matches!(
+        open_with(bytes, &limits).err(),
+        Some(Error::AllocLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn a_frame_larger_than_the_packet_limit_is_refused() {
+    let limits = Limits {
+        max_packet_bytes: 100,
+        ..Limits::default()
+    };
+    let fmt = Fmt::new(TAG_FLOAT, 20, 8000, 64);
+    assert!(matches!(
+        open_with(simple(&fmt, &[]), &limits).err(),
+        Some(Error::AllocLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn packets_shrink_to_fit_the_packet_limit() {
+    let limits = Limits {
+        max_packet_bytes: 64,
+        ..Limits::default()
+    };
+    let fmt = Fmt::new(TAG_PCM, 2, 8000, 16);
+    let pcm = payload(4 * 40);
+    let mut d = open_with(simple(&fmt, &pcm), &limits).unwrap();
+    let (packets, err) = drain(&mut d);
+    assert_eq!(err, None);
+    assert!(packets.iter().all(|p| p.2.len() <= 64));
+    assert_eq!(packets.concat_bytes(), pcm);
+}
+
+trait ConcatBytes {
+    fn concat_bytes(&self) -> Vec<u8>;
+}
+
+impl ConcatBytes for Vec<Got> {
+    fn concat_bytes(&self) -> Vec<u8> {
+        self.iter().flat_map(|p| p.2.clone()).collect()
+    }
 }
