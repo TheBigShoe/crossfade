@@ -1,3 +1,4 @@
+use crate::rational::gcd;
 use crate::{Error, Rational};
 use std::cmp::Ordering;
 
@@ -38,13 +39,6 @@ pub enum Rounding {
 pub struct Timestamp {
     ticks: i64,
     base: TimeBase,
-}
-
-fn gcd(mut a: u128, mut b: u128) -> u128 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
 }
 
 /// `(a * b) / d` as quotient and remainder, with `a < 2^64`, `b < d < 2^126`.
