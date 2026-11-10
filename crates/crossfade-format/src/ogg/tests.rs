@@ -379,6 +379,16 @@ fn a_different_serial_number_changes_nothing() {
     assert_eq!(a, read_all(d.as_mut()).unwrap());
 }
 
+/// Found by the `ogg_demux` fuzz target: skipping a page of another stream at the end of input
+/// left that page's segments looking like ours, and the next read sliced past its body.
+#[test]
+fn a_foreign_page_at_the_end_of_input_ends_the_stream_without_a_panic() {
+    let mut d = open_bytes(fixture!("foreign-serial-tail.oga").to_vec()).unwrap();
+    assert!(read_all(d.as_mut()).unwrap().is_empty());
+    let mut p = Packet::default();
+    assert!(!d.read_packet(&mut p).unwrap());
+}
+
 #[test]
 fn a_file_that_does_not_start_a_stream_is_malformed() {
     let mut pages = stream_pages("stereo16", 1, &[255]);

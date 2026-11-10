@@ -33,3 +33,7 @@ flac -s -f --no-padding --ogg --serial-number=6006 $R16 -o serial.oga stereo16.r
 
 The encoder never splits a packet across pages at these sizes (that needs a packet over 64 KB),
 so the tests re-page `noise8.oga` themselves for the continued-packet cases.
+
+`foreign-serial-tail.oga` (181 bytes) is a fuzzer find, not an encoder file: a FLAC mapping page,
+a Vorbis-comment page, then a page of another serial number with a stray two-segment body. It is
+the regression input for the reader that kept the other stream's page as its own at end of input.
