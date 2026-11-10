@@ -248,7 +248,9 @@ version = "0.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "crossfade-core",
  "crossfade-graph",
+ "crossfade-testkit",
  "insta",
 ]
 

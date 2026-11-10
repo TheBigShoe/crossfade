@@ -16,6 +16,8 @@ clap.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+crossfade-core.workspace = true
+crossfade-testkit.workspace = true
 insta.workspace = true
 
 [lints]
