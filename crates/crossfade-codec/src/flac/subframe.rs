@@ -108,22 +108,6 @@ impl<'a> Bits<'a> {
     }
 }
 
-/// The integer width a linear predictor's prediction sum can run in without overflowing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Accumulator {
-    Narrow,
-    Wide,
-}
-
-/// Placeholder until the narrow path exists: everything stays wide.
-pub(super) fn lpc_accumulator(_bps: u32, _precision: u32, _order: usize) -> Accumulator {
-    Accumulator::Wide
-}
-
-#[cfg(test)]
-#[path = "subframe_tests.rs"]
-mod tests;
-
 /// Fills `out[order..]` from the coded residual section.
 fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<(), Error> {
     let block = out.len();

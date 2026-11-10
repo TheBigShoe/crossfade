@@ -45,25 +45,6 @@ struct FlacDecoder {
     failed: bool,
 }
 
-/// How wide the samples of one frame are held while decoding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Width {
-    /// `i32`: every sample, side channels included, fits.
-    Narrow,
-    /// `i64`: the side channel of a 32-bit stream needs 33 bits.
-    Wide,
-}
-
-/// Placeholder until the narrow path exists: everything stays wide.
-pub(super) fn width_for(_bits_per_sample: u8) -> Width {
-    Width::Wide
-}
-
-/// `decoder` with the sample width chosen by the caller, so tests can compare the two paths.
-pub(super) fn decoder_with(stream: &StreamInfo, _width: Width) -> Result<Box<dyn Decoder>, Error> {
-    decoder(stream)
-}
-
 pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
     let info = StreamInfoBlock::parse(&stream.extradata)?;
     let format = format_for(info.bits_per_sample);
