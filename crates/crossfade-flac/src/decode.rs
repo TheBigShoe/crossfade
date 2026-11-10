@@ -29,7 +29,10 @@ pub enum Verification {
 /// Decodes the frames of one stream, one after another.
 pub struct Decoder {
     info: StreamInfoBlock,
-    /// Work buffers, one per channel, wide enough for the side channel of a 32-bit stream.
+    /// The stream is too deep for `i32` subframes (see `work`).
+    wide: bool,
+    /// Work buffers for 32-bit streams only, whose side channel needs 33 bits; every other
+    /// stream decodes straight into `planes`.
     work: Vec<Vec<i64>>,
     /// The finished block, one buffer per channel, reused from frame to frame.
     planes: Vec<Vec<i32>>,
@@ -60,6 +63,7 @@ impl Decoder {
         let channels = usize::from(info.channels);
         Ok(Self {
             info: *info,
+            wide: info.bits_per_sample > 31,
             work: vec![Vec::new(); channels],
             planes: vec![Vec::new(); channels],
             md5: Md5::new(),
@@ -161,23 +165,36 @@ impl Decoder {
             ChannelAssignment::SideRight => Some(0),
             ChannelAssignment::Independent(_) => None,
         };
-        for (c, out) in self.work.iter_mut().enumerate() {
-            read_subframe(&mut r, out, block, bps + u32::from(side == Some(c)))?;
+        let side_channel = |c: usize| bps + u32::from(side == Some(c));
+        if self.wide {
+            for (c, out) in self.work.iter_mut().enumerate() {
+                read_subframe(&mut r, out, block, side_channel(c))?;
+            }
+        } else {
+            for (c, out) in self.planes.iter_mut().enumerate() {
+                read_subframe(&mut r, out, block, side_channel(c))?;
+            }
         }
         r.align();
         // The CRC-16 follows the subframes. Zero bytes after it are padding the container
         // reader could not tell from the frame (the CRC-16 stays zero over zeros).
         let end = data.len() - 2 - (r.bits_left() / 8) as usize;
-        if crc16(&data[..end + 2]) != 0 {
-            return Err(malformed("frame CRC-16 mismatch"));
+        if end + 2 < data.len() {
+            if crc16(&data[..end + 2]) != 0 {
+                return Err(malformed("frame CRC-16 mismatch"));
+            }
+            if data[end + 2..].iter().any(|&b| b != 0) {
+                return Err(malformed(
+                    "unused bytes between the subframes and the CRC-16",
+                ));
+            }
         }
-        if data[end + 2..].iter().any(|&b| b != 0) {
-            return Err(malformed(
-                "unused bytes between the subframes and the CRC-16",
-            ));
+        if self.wide {
+            self.decorrelate(h.channels);
+            self.narrow(block);
+        } else {
+            decorrelate_i32(&mut self.planes, h.channels);
         }
-        self.decorrelate(h.channels);
-        self.narrow(block);
         self.hash(block);
         self.first = self.decoded;
         self.decoded += block as u64;
@@ -226,19 +243,79 @@ impl Decoder {
     }
 
     /// Hashes the raw samples as the format defines it: interleaved, little-endian, in the
-    /// smallest whole number of bytes the depth fits.
+    /// smallest whole number of bytes the depth fits. Skipped when there is nothing to compare
+    /// the hash with.
     fn hash(&mut self, block: usize) {
-        let nch = self.planes.len();
+        if self.info.md5 == [0; 16] {
+            return;
+        }
         let width = usize::from(self.info.bits_per_sample).div_ceil(8);
-        self.md5_bytes.clear();
-        self.md5_bytes.resize(block * nch * width, 0);
-        for (c, plane) in self.planes.iter().enumerate() {
-            let slots = self.md5_bytes.chunks_exact_mut(width).skip(c).step_by(nch);
-            for (slot, &v) in slots.zip(plane) {
-                slot.copy_from_slice(&v.to_le_bytes()[..width]);
-            }
+        match width {
+            1 => pack::<1>(&self.planes, block, &mut self.md5_bytes),
+            2 => pack::<2>(&self.planes, block, &mut self.md5_bytes),
+            3 => pack::<3>(&self.planes, block, &mut self.md5_bytes),
+            _ => pack::<4>(&self.planes, block, &mut self.md5_bytes),
         }
         self.md5.update(&self.md5_bytes);
+    }
+}
+
+/// The planes as interleaved little-endian samples of `W` bytes each. With the width a constant
+/// each sample is a plain store, not a `memcpy` call.
+// `as_chunks_mut::<{ 2 * W }>` needs unstable const expressions.
+#[allow(clippy::chunks_exact_to_as_chunks)]
+fn pack<const W: usize>(planes: &[Vec<i32>], block: usize, bytes: &mut Vec<u8>) {
+    let nch = planes.len();
+    // Every byte is overwritten below, so a buffer of the right size is reused as it is.
+    bytes.resize(block * nch * W, 0);
+    if let [left, right] = planes {
+        for ((slot, &l), &r) in bytes.chunks_exact_mut(2 * W).zip(left).zip(right) {
+            slot[..W].copy_from_slice(&l.to_le_bytes()[..W]);
+            slot[W..].copy_from_slice(&r.to_le_bytes()[..W]);
+        }
+        return;
+    }
+    pack_any::<W>(planes, bytes);
+}
+
+fn pack_any<const W: usize>(planes: &[Vec<i32>], bytes: &mut [u8]) {
+    let nch = planes.len();
+    for (c, plane) in planes.iter().enumerate() {
+        let slots = bytes.as_chunks_mut::<W>().0.iter_mut().skip(c).step_by(nch);
+        for (slot, &v) in slots.zip(plane) {
+            slot.copy_from_slice(&v.to_le_bytes()[..W]);
+        }
+    }
+}
+
+/// Turns the channels of a stereo pair back into left and right, in place.
+fn decorrelate_i32(planes: &mut [Vec<i32>], assignment: ChannelAssignment) {
+    if matches!(assignment, ChannelAssignment::Independent(_)) {
+        return;
+    }
+    // The other assignments are stereo pairs, so two buffers exist.
+    let (first, rest) = planes.split_at_mut(1);
+    let (a, b) = (&mut first[0], &mut rest[0]);
+    match assignment {
+        ChannelAssignment::Independent(_) => {}
+        ChannelAssignment::LeftSide => {
+            for (l, s) in a.iter().zip(b.iter_mut()) {
+                *s = l.wrapping_sub(*s);
+            }
+        }
+        ChannelAssignment::SideRight => {
+            for (s, r) in a.iter_mut().zip(b.iter()) {
+                *s = s.wrapping_add(*r);
+            }
+        }
+        ChannelAssignment::MidSide => {
+            for (m, s) in a.iter_mut().zip(b.iter_mut()) {
+                // The mid channel dropped the low bit of L + R; the side's parity restores it.
+                let sum = m.wrapping_shl(1) | (*s & 1);
+                *m = sum.wrapping_add(*s) >> 1;
+                *s = sum.wrapping_sub(*s) >> 1;
+            }
+        }
     }
 }
 
@@ -259,10 +336,28 @@ fn interleave<T: Copy + Default>(
     f: impl Fn(i32) -> T,
 ) {
     let nch = planes.len();
-    out.clear();
+    // Every slot is overwritten below, so a buffer of the right size is reused as it is.
     out.resize(len * nch, T::default());
+    match planes {
+        [mono] => {
+            for (dst, &v) in out.iter_mut().zip(mono) {
+                *dst = f(v);
+            }
+        }
+        [left, right] => {
+            for ((dst, &l), &r) in out.as_chunks_mut::<2>().0.iter_mut().zip(left).zip(right) {
+                dst[0] = f(l);
+                dst[1] = f(r);
+            }
+        }
+        _ => interleave_any(planes, out, f),
+    }
+}
+
+fn interleave_any<T: Copy>(planes: &[Vec<i32>], out: &mut [T], f: impl Fn(i32) -> T) {
+    let nch = planes.len();
     for (c, plane) in planes.iter().enumerate() {
-        for (dst, &v) in out[c..].iter_mut().step_by(nch).zip(plane) {
+        for (dst, &v) in out.iter_mut().skip(c).step_by(nch).zip(plane) {
             *dst = f(v);
         }
     }

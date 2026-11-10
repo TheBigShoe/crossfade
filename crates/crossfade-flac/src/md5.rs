@@ -11,6 +11,23 @@ const K: [u32; 64] = [
     0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
 ];
 
+/// Index of the message word each step reads.
+const G: [usize; 64] = {
+    let mut g = [0usize; 64];
+    let mut i = 0;
+    while i < 64 {
+        g[i] = match i / 16 {
+            0 => i,
+            1 => (5 * i + 1) % 16,
+            2 => (3 * i + 5) % 16,
+            _ => (7 * i) % 16,
+        };
+        i += 1;
+    }
+    g
+};
+
+#[cfg(test)]
 const S: [u32; 64] = [
     7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
     14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
@@ -31,7 +48,74 @@ impl Default for Md5 {
     }
 }
 
+/// The four round functions, one per 16 steps.
+#[inline(always)]
+fn ff(b: u32, c: u32, d: u32) -> u32 {
+    d ^ (b & (c ^ d))
+}
+#[inline(always)]
+fn gg(b: u32, c: u32, d: u32) -> u32 {
+    c ^ (d & (b ^ c))
+}
+#[inline(always)]
+fn hh(b: u32, c: u32, d: u32) -> u32 {
+    b ^ c ^ d
+}
+#[inline(always)]
+fn ii(b: u32, c: u32, d: u32) -> u32 {
+    c ^ (b | !d)
+}
+
+/// Fully unrolled, so the message indices, constants and rotations are all immediates and the
+/// four state words rotate by renaming instead of moves.
 fn compress(state: &mut [u32; 4], block: &[u8; 64]) {
+    let mut m = [0u32; 16];
+    for (w, c) in m.iter_mut().zip(block.as_chunks::<4>().0) {
+        *w = u32::from_le_bytes(*c);
+    }
+    let [mut a, mut b, mut c, mut d] = *state;
+    macro_rules! step {
+        ($f:ident, $a:ident, $b:ident, $c:ident, $d:ident, $i:expr, $s:expr) => {
+            $a = $b.wrapping_add(
+                $a.wrapping_add($f($b, $c, $d))
+                    .wrapping_add(m[G[$i]])
+                    .wrapping_add(K[$i])
+                    .rotate_left($s),
+            );
+        };
+    }
+    macro_rules! round {
+        ($f:ident, $i:expr, $s:expr) => {
+            step!($f, a, b, c, d, $i, $s[0]);
+            step!($f, d, a, b, c, $i + 1, $s[1]);
+            step!($f, c, d, a, b, $i + 2, $s[2]);
+            step!($f, b, c, d, a, $i + 3, $s[3]);
+        };
+    }
+    round!(ff, 0, [7, 12, 17, 22]);
+    round!(ff, 4, [7, 12, 17, 22]);
+    round!(ff, 8, [7, 12, 17, 22]);
+    round!(ff, 12, [7, 12, 17, 22]);
+    round!(gg, 16, [5, 9, 14, 20]);
+    round!(gg, 20, [5, 9, 14, 20]);
+    round!(gg, 24, [5, 9, 14, 20]);
+    round!(gg, 28, [5, 9, 14, 20]);
+    round!(hh, 32, [4, 11, 16, 23]);
+    round!(hh, 36, [4, 11, 16, 23]);
+    round!(hh, 40, [4, 11, 16, 23]);
+    round!(hh, 44, [4, 11, 16, 23]);
+    round!(ii, 48, [6, 10, 15, 21]);
+    round!(ii, 52, [6, 10, 15, 21]);
+    round!(ii, 56, [6, 10, 15, 21]);
+    round!(ii, 60, [6, 10, 15, 21]);
+    for (s, v) in state.iter_mut().zip([a, b, c, d]) {
+        *s = s.wrapping_add(v);
+    }
+}
+
+/// The textbook loop the unrolled version must equal.
+#[cfg(test)]
+fn compress_simple(state: &mut [u32; 4], block: &[u8; 64]) {
     let mut m = [0u32; 16];
     for (w, c) in m.iter_mut().zip(block.as_chunks::<4>().0) {
         *w = u32::from_le_bytes(*c);
@@ -156,6 +240,18 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn unrolled_compress_equals_the_textbook_loop(
+            state in any::<[u32; 4]>(),
+            block in prop::collection::vec(any::<u8>(), 64),
+        ) {
+            let block: [u8; 64] = block.try_into().unwrap();
+            let (mut fast, mut slow) = (state, state);
+            compress(&mut fast, &block);
+            compress_simple(&mut slow, &block);
+            prop_assert_eq!(fast, slow);
+        }
+
         #[test]
         fn splitting_the_input_changes_nothing(
             data in prop::collection::vec(any::<u8>(), 0..300),

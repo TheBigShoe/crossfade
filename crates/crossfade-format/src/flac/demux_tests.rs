@@ -608,3 +608,19 @@ fn zero_padding_after_the_last_frame_is_left_to_the_decoder() {
             .all(|&b| b == 0)
     );
 }
+
+mod find_ff {
+    use super::super::find_ff;
+    use proptest::prelude::*;
+
+    proptest! {
+        // The word-at-a-time scan must find what a byte loop finds, on data rich in 0xFF and 0xFE
+        // (the bytes the has-zero test is most likely to get wrong).
+        #[test]
+        fn equals_a_byte_loop(
+            data in prop::collection::vec(prop_oneof![Just(0xFFu8), Just(0xFE), Just(0), any::<u8>()], 0..64),
+        ) {
+            prop_assert_eq!(find_ff(&data), data.iter().position(|&b| b == 0xFF));
+        }
+    }
+}
