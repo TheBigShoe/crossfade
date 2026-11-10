@@ -281,6 +281,8 @@ name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-testkit",
+ "proptest",
 ]
 
 [[package]]
