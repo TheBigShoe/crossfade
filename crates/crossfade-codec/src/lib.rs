@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bits;
+pub mod flac;
 pub mod md5;
 pub mod pcm;
 
