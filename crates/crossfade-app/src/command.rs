@@ -193,12 +193,48 @@ mod tests {
     }
 
     #[test]
-    fn a_codec_or_compression_level_has_no_spelling_yet() {
-        let mut with_codec = request("a.wav", "b.flac", None, false);
-        with_codec.job.outputs[0].audio.codec = Some("flac".into());
-        assert_eq!(convert_args(&with_codec), Err(NotExpressible));
-        let mut with_level = request("a.wav", "b.flac", None, false);
-        with_level.job.outputs[0].audio.compression_level = Some(5);
-        assert_eq!(command_line(&with_level), Err(NotExpressible));
+    fn codec_and_compression_level_have_flags_after_the_sample_format() {
+        let mut r = request("a.wav", "b.flac", Some(SampleFormat::S24), true);
+        r.job.outputs[0].audio.codec = Some("flac".into());
+        r.job.outputs[0].audio.compression_level = Some(8);
+        assert_eq!(
+            args(&r),
+            [
+                "convert",
+                "a.wav",
+                "-o",
+                "b.flac",
+                "--sample-format",
+                "s24",
+                "--codec",
+                "flac",
+                "--compression-level",
+                "8",
+                "--force"
+            ]
+        );
+        let mut only_level = request("a.wav", "b.flac", None, false);
+        only_level.job.outputs[0].audio.compression_level = Some(0);
+        assert_eq!(
+            command_line(&only_level).unwrap(),
+            "crossfade convert a.wav -o b.flac --compression-level 0"
+        );
+    }
+
+    #[test]
+    fn the_new_flags_go_before_a_double_dash_input() {
+        let mut r = request("-in.wav", "b.flac", None, false);
+        r.job.outputs[0].audio.codec = Some("copy".into());
+        assert_eq!(
+            args(&r),
+            [
+                "convert",
+                "--output=b.flac",
+                "--codec",
+                "copy",
+                "--",
+                "-in.wav"
+            ]
+        );
     }
 }
