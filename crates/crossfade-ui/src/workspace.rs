@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crossfade_app::Request;
 use crossfade_app::inputs::{InputState, Inputs, probe_path};
 use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent};
+use crossfade_app::sheet::ConvertSheet;
 use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
@@ -15,6 +16,7 @@ use crate::actions::{
     bind_default_keys,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
+use crate::convert_sheet::{ConvertDialog, ConvertEvent};
 use crate::prelude::*;
 
 /// What the window is called.
@@ -63,6 +65,9 @@ pub struct Workspace {
     pub(crate) queue: Queue,
     runner: Box<dyn Runner>,
     queue_open: bool,
+    exists: Exists,
+    convert: Option<Entity<ConvertDialog>>,
+    _convert_events: Option<Subscription>,
     /// Set while a drag of files is over the window.
     pub(crate) drag_over: bool,
     /// Applies the runner's reports as they arrive; ends with the view.
@@ -76,7 +81,10 @@ impl Workspace {
         // clicks and shortcuts reach the same handlers.
         window.focus(&focus, cx);
         let WorkspaceOptions {
-            runner, events, io, ..
+            runner,
+            events,
+            io,
+            exists,
         } = options;
         let listening = cx.spawn(async move |this, cx| {
             // Reports from a busy worker pile up between wake-ups; apply them together.
@@ -105,6 +113,9 @@ impl Workspace {
             queue: Queue::new(),
             runner,
             queue_open: false,
+            exists,
+            convert: None,
+            _convert_events: None,
             drag_over: false,
             _events: listening,
         }
@@ -118,6 +129,59 @@ impl Workspace {
     /// Whether the queue dock is showing.
     pub fn queue_open(&self) -> bool {
         self.queue_open
+    }
+
+    /// The open convert sheet, if there is one.
+    pub fn convert_dialog(&self) -> Option<&Entity<ConvertDialog>> {
+        self.convert.as_ref()
+    }
+
+    /// Open the convert sheet for the selected file. Nothing happens unless the file was
+    /// probed.
+    pub fn open_convert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.inputs.selected().filter(|_| self.can_convert()) else {
+            return;
+        };
+        let sheet = ConvertSheet::for_input(entry);
+        let name = entry.name.clone();
+        let exists = Arc::clone(&self.exists);
+        let dialog = cx.new(|cx| ConvertDialog::new(sheet, &name, exists, window, cx));
+        self._convert_events = Some(cx.subscribe_in(
+            &dialog,
+            window,
+            |this, _, event: &ConvertEvent, window, cx| {
+                let ConvertEvent::Confirmed(request) = event;
+                this.convert = None;
+                window.close_dialog(cx);
+                this.enqueue(request.clone(), cx);
+            },
+        ));
+        self.convert = Some(dialog.clone());
+        let this = cx.entity().downgrade();
+        let title = SharedString::from(dialog.read(cx).title().to_owned());
+        window.open_dialog(cx, move |sheet, _, _| {
+            let confirm = dialog.clone();
+            let closed = this.clone();
+            sheet
+                .title(title.clone())
+                .w(px(520.))
+                .child(dialog.clone())
+                // The sheet ends in its own footer; confirming emits the request and the
+                // subscription closes the dialog, so this handler never closes it itself.
+                .on_ok(move |_, _, cx| {
+                    confirm.update(cx, |dialog, cx| dialog.confirm(cx));
+                    false
+                })
+                .on_close(move |_, _, cx| {
+                    closed
+                        .update(cx, |workspace, _| workspace.convert = None)
+                        .ok();
+                })
+        });
+        if let Some(dialog) = &self.convert {
+            dialog.update(cx, |dialog, cx| dialog.focus(window, cx));
+        }
+        cx.notify();
     }
 
     /// Queue `request`, start it if nothing runs, and show the dock.
@@ -318,8 +382,9 @@ impl Render for Workspace {
                 this.record(AppAction::OpenFiles, cx);
                 this.prompt_for_files(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &Convert, _, cx| {
+            .on_action(cx.listener(|this, _: &Convert, window, cx| {
                 this.record(AppAction::Convert, cx);
+                this.open_convert(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleQueue, _, cx| {
                 this.queue_open = !this.queue_open;

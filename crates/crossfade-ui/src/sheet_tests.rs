@@ -28,19 +28,39 @@ fn sheet_output(cx: &mut TestAppContext, rig: &Rig) -> String {
     })
 }
 
-/// Pick item `ix` of the select called `id`.
-fn pick(cx: &mut TestAppContext, rig: &Rig, id: &'static str, ix: usize) {
+const PRESET_LABELS: [&str; 4] = ["Same as source", "16-bit (CD)", "24-bit", "32-bit float"];
+const FORMAT_LABELS: [&str; 7] = [
+    "Same as source",
+    "8-bit unsigned",
+    "16-bit integer",
+    "24-bit integer",
+    "32-bit integer",
+    "32-bit float",
+    "64-bit float",
+];
+
+/// Pick item `ix` of the select called `id` with the keyboard, as a user can: the select
+/// shows its popup rows lazily, so arrow keys are the dependable way in.
+fn pick(cx: &mut TestAppContext, rig: &Rig, id: &'static str, labels: &[&str], ix: usize) {
+    let shown = rig.workspace.read_with(cx, |w, cx| {
+        let dialog = w.convert_dialog().expect("the sheet is open").read(cx);
+        match id {
+            "sheet-preset" => dialog.preset_label(cx),
+            _ => Some(dialog.format_label(cx)),
+        }
+    });
+    let at = shown.and_then(|text| labels.iter().position(|l| *l == text));
     cx.update_window(rig.window, |_, window, cx| {
         window.within(id).click("input", cx);
+        match at {
+            Some(at) if ix >= at => (0..ix - at).for_each(|_| window.press("down", cx)),
+            Some(at) => (0..at - ix).for_each(|_| window.press("up", cx)),
+            None => (0..=ix).for_each(|_| window.press("down", cx)),
+        }
+        window.press("enter", cx);
     })
     .expect("open");
-    step(cx, 2);
-    draw(cx, rig.window);
-    cx.update_window(rig.window, |_, window, cx| {
-        window.click(("searchable-list-item", ix), cx);
-    })
-    .expect("open");
-    step(cx, 2);
+    step(cx, 3);
     draw(cx, rig.window);
 }
 
@@ -85,7 +105,11 @@ fn convert_opens_a_sheet_titled_with_the_file_and_cancel_closes_it(cx: &mut Test
     }
     assert!(!has(cx, rig.window, "sheet-problems"));
     let title = rig.workspace.read_with(cx, |w, cx| {
-        w.convert_dialog().expect("open").read(cx).title()
+        w.convert_dialog()
+            .expect("open")
+            .read(cx)
+            .title()
+            .to_owned()
     });
     assert_eq!(title, "Convert in.wav");
 
@@ -138,13 +162,13 @@ fn changing_the_preset_renames_the_default_output_until_the_path_is_edited(
     assert_eq!(sheet_output(cx, &rig), rig.dir.path("in-copy.wav"));
 
     // Presets: Same as source, 16-bit (CD), 24-bit, 32-bit float.
-    pick(cx, &rig, "sheet-preset", 2);
+    pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 2);
     assert_eq!(sheet_output(cx, &rig), rig.dir.path("in-s24.wav"));
 
     let mine = rig.dir.path("mine.wav");
     type_output(cx, &rig, &mine);
     assert_eq!(sheet_output(cx, &rig), mine);
-    pick(cx, &rig, "sheet-preset", 1);
+    pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 1);
     assert_eq!(sheet_output(cx, &rig), mine);
 }
 
@@ -152,14 +176,14 @@ fn changing_the_preset_renames_the_default_output_until_the_path_is_edited(
 fn the_format_select_and_the_preset_select_stay_in_step(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);
-    pick(cx, &rig, "sheet-preset", 1);
+    pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 1);
     let format = rig.workspace.read_with(cx, |w, cx| {
         w.convert_dialog().expect("open").read(cx).format_label(cx)
     });
     assert_eq!(format, "16-bit integer");
 
     // f64 has no preset.
-    pick(cx, &rig, "sheet-format", 6);
+    pick(cx, &rig, "sheet-format", &FORMAT_LABELS, 6);
     let preset = rig.workspace.read_with(cx, |w, cx| {
         w.convert_dialog().expect("open").read(cx).preset_label(cx)
     });
@@ -223,7 +247,7 @@ fn browse_asks_for_a_save_path_and_puts_it_in_the_field(cx: &mut TestAppContext)
 fn the_copy_button_puts_the_equivalent_command_on_the_clipboard(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);
-    pick(cx, &rig, "sheet-preset", 1);
+    pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 1);
     click(cx, rig.window, "sheet-copy");
     let copied = cx.read_from_clipboard().and_then(|item| item.text());
     let expected = format!(
@@ -371,10 +395,10 @@ fn the_sheet_builds_what_the_cli_builds_for_the_same_intent(cx: &mut TestAppCont
         }
         open_sheet(cx, &rig);
         if let Some(preset) = intent.preset {
-            pick(cx, &rig, "sheet-preset", preset);
+            pick(cx, &rig, "sheet-preset", &PRESET_LABELS, preset);
         }
         if let Some(format) = intent.format {
-            pick(cx, &rig, "sheet-format", format);
+            pick(cx, &rig, "sheet-format", &FORMAT_LABELS, format);
         }
         if let Some(output) = intent.output {
             type_output(cx, &rig, &rig.dir.path(output));

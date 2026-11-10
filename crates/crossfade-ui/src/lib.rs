@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod chrome;
+pub mod convert_sheet;
 pub mod dialog_footer;
 pub mod files;
 pub mod icons;
@@ -21,6 +22,7 @@ mod test_support;
 #[cfg(test)]
 mod workspace_tests;
 
+pub use convert_sheet::{ConvertDialog, ConvertEvent};
 pub use workspace::{Workspace, WorkspaceOptions, init, open_main_window};
 
 pub mod prelude {
@@ -55,10 +57,14 @@ pub mod prelude {
     pub use gpui_kit::TestSupportExt;
 
     pub use gpui_kit::component::button::{Button, ButtonVariants};
-    pub use gpui_kit::component::dialog::{Cancel, Confirm, DialogFooter};
+    pub use gpui_kit::component::dialog::{Cancel, Confirm, Dialog, DialogFooter};
+    pub use gpui_kit::component::input::{Input, InputEvent, InputState};
     pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
+    pub use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+    pub use gpui_kit::component::switch::Switch;
     pub use gpui_kit::component::{
         ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex,
         v_flex,
     };
+    pub use gpui_kit::component::{IndexPath, WindowExt};
 }

@@ -21,12 +21,22 @@ pub const CANCEL_BUTTON: &str = "dialog-cancel";
 #[derive(IntoElement)]
 pub struct DialogButtons {
     ok: SharedString,
+    ok_disabled: bool,
 }
 
 impl DialogButtons {
     /// A footer whose primary button says `ok` ("Save", "Convert").
     pub fn new(ok: impl Into<SharedString>) -> Self {
-        Self { ok: ok.into() }
+        Self {
+            ok: ok.into(),
+            ok_disabled: false,
+        }
+    }
+
+    /// Grey out the primary button; Enter is the dialog's own and its `on_ok` decides.
+    pub fn ok_disabled(mut self, disabled: bool) -> Self {
+        self.ok_disabled = disabled;
+        self
     }
 }
 
@@ -44,6 +54,7 @@ impl RenderOnce for DialogButtons {
             .child(
                 Button::new(OK_BUTTON)
                     .primary()
+                    .disabled(self.ok_disabled)
                     .label(self.ok)
                     .child(ok.element())
                     .on_click(move |_, window, cx| {
