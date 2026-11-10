@@ -1,19 +1,7 @@
-//! FLAC container.
+//! FLAC container. The reader and the writer live in separate files.
 
-use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
+mod demux;
+mod mux;
 
-pub fn open(_source: Box<dyn MediaSource>, _limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
-    Err(Error::Unsupported {
-        what: "reading flac is not built yet".into(),
-    })
-}
-
-pub fn create(
-    _sink: Box<dyn MediaSink>,
-    _stream: &StreamInfo,
-    _tags: &Tags,
-) -> Result<Box<dyn Muxer>, Error> {
-    Err(Error::Unsupported {
-        what: "writing flac is not built yet".into(),
-    })
-}
+pub use demux::open;
+pub use mux::create;
