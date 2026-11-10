@@ -389,8 +389,6 @@ fn a_pipe_that_returns_one_byte_at_a_time_gives_the_same_packets() {
 fn trailing_bytes_after_the_last_frame_are_ignored() {
     let want = all_packets(&stream(120, &[], &frames(3)));
     for tail in [
-        vec![0u8; 1],
-        vec![0u8; 200],
         // An ID3v1 tag.
         [b"TAG".as_slice(), &[b'x'; 125]].concat(),
         // A false header start that never completes.
@@ -570,4 +568,43 @@ fn variable_block_size_streams_use_the_coded_sample_number_as_pts() {
     let packets = all_packets(&stream(97, &[], &out));
     let got: Vec<(i64, u64)> = packets.iter().map(|p| (p.pts, p.duration)).collect();
     assert_eq!(got, [(0, 40), (40, 40), (80, 17)]);
+}
+
+/// A payload that makes the frame's CRC-16 end in a zero byte, so the CRC-16 over the frame
+/// minus its last byte is already zero.
+fn payload_with_crc_low_byte_zero() -> (Vec<u8>, Vec<u8>) {
+    for k in 0..4096u64 {
+        let p = plain_payload(k);
+        let f = verbatim_frame(2, &p);
+        if f[f.len() - 1] == 0 {
+            return (p, f);
+        }
+    }
+    panic!("no payload found");
+}
+
+#[test]
+fn a_last_frame_whose_crc_ends_in_a_zero_byte_is_kept_whole() {
+    let (_, last) = payload_with_crc_low_byte_zero();
+    let mut f = frames(2);
+    f.push(last.clone());
+    let packets = all_packets(&stream(120, &[], &f));
+    assert_eq!(packets.len(), 3);
+    assert_eq!(packets[2].data, last);
+}
+
+#[test]
+fn zero_padding_after_the_last_frame_is_left_to_the_decoder() {
+    // The CRC-16 stays zero over zero bytes, so the padding cannot be told from a frame whose
+    // CRC ends in zeros; the reader keeps it with the frame and the decoder skips it.
+    let mut bytes = stream(120, &[], &frames(3));
+    bytes.extend([0u8; 9]);
+    let packets = all_packets(&bytes);
+    assert_eq!(packets.len(), 3);
+    assert!(packets[2].data.starts_with(&frames(3)[2]));
+    assert!(
+        packets[2].data[frames(3)[2].len()..]
+            .iter()
+            .all(|&b| b == 0)
+    );
 }

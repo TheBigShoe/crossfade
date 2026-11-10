@@ -785,6 +785,22 @@ fn structural_violations_are_malformed() {
 }
 
 #[test]
+fn zero_bytes_after_the_crc_are_ignored() {
+    // The container reader cannot tell zero padding after the last frame from the frame itself.
+    let x = wave(16, 16, 1);
+    let mut f = mono_frame(&x, 16, |w| sub_verbatim(w, &x, 16));
+    f.extend([0u8; 7]);
+    let out = decode(&stream(44100, 1, 16), &f).unwrap();
+    assert_eq!(s16(&out), x.iter().map(|&v| v as i16).collect::<Vec<_>>());
+    // Anything but zeros there is not padding.
+    *f.last_mut().unwrap() = 1;
+    assert!(matches!(
+        decode(&stream(44100, 1, 16), &f),
+        Err(Error::Malformed { .. })
+    ));
+}
+
+#[test]
 fn a_bad_stream_description_is_rejected() {
     let mut info = stream(44100, 2, 16);
     info.extradata.pop();
