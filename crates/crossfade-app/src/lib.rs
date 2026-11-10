@@ -6,6 +6,7 @@ pub mod command;
 pub mod fsio;
 pub mod inputs;
 pub mod inspector;
+pub mod queue;
 pub mod sheet;
 
 pub use command::{NotExpressible, Request, command_line, convert_args};
