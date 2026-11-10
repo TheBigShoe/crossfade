@@ -44,6 +44,7 @@ fn decode_into(data: &[u8], out: &mut Samples) {
 pub struct PcmDecoder {
     sample_rate: u32,
     layout: ChannelLayout,
+    format: SampleFormat,
     bytes_per_frame: usize,
     pending: AudioFrame,
     has_pending: bool,
@@ -56,6 +57,7 @@ impl PcmDecoder {
         let spec = AudioSpec::new(stream.audio.sample_rate(), format, layout.clone())?;
         Ok(Self {
             sample_rate: spec.sample_rate(),
+            format,
             bytes_per_frame: spec.bytes_per_frame(),
             layout,
             pending: AudioFrame::new(&spec),
@@ -81,7 +83,12 @@ impl Decoder for PcmDecoder {
                 ),
             });
         }
-        self.pending.samples.clear();
+        // The swap in receive_frame may have brought in the caller's buffer.
+        if self.pending.samples.format() == self.format {
+            self.pending.samples.clear();
+        } else {
+            self.pending.samples = Samples::new(self.format);
+        }
         decode_into(&packet.data, &mut self.pending.samples);
         self.pending.pts = packet.pts;
         self.has_pending = true;
