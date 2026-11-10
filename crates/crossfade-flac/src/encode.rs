@@ -62,6 +62,8 @@ pub struct Encoder {
     done: Option<StreamInfoBlock>,
     md5: Md5,
     md5_bytes: Vec<u8>,
+    /// Samples taken by `write` that do not fill a block yet.
+    pending: Vec<i32>,
     /// One block, deinterleaved.
     planes: Vec<Vec<i32>>,
     /// Mid and side of a stereo block; the side of a 32-bit stream needs 33 bits.
@@ -104,6 +106,7 @@ impl Encoder {
             done: None,
             md5: Md5::new(),
             md5_bytes: Vec::with_capacity(level.block * channels * 4),
+            pending: Vec::with_capacity(level.block * channels),
             planes: vec![vec![0; level.block]; channels],
             mid: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
             side32: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
@@ -148,13 +151,11 @@ impl Encoder {
         if n > self.block {
             return Err(malformed("block is longer than block_size()"));
         }
-        let bps = u32::from(self.config.bits_per_sample);
-        if bps < 32 {
-            let (lo, hi) = (-(1i32 << (bps - 1)), (1i32 << (bps - 1)) - 1);
-            if interleaved.iter().any(|&s| s < lo || s > hi) {
-                return Err(malformed("sample outside the configured bit depth"));
-            }
+        if !self.pending.is_empty() {
+            return Err(malformed("samples from write() are pending; flush() first"));
         }
+        self.check_range(interleaved)?;
+        let bps = u32::from(self.config.bits_per_sample);
         if self.frame_number >= 1 << 31 || self.total + n as u64 >= 1 << 36 {
             return Err(unsupported("stream is longer than FLAC can number"));
         }
@@ -195,6 +196,68 @@ impl Encoder {
         self.total += n as u64;
         self.short_seen = n < self.block;
         Ok(())
+    }
+
+    fn check_range(&self, samples: &[i32]) -> Result<()> {
+        let bps = u32::from(self.config.bits_per_sample);
+        if bps < 32 {
+            let (lo, hi) = (-(1i32 << (bps - 1)), (1i32 << (bps - 1)) - 1);
+            if samples.iter().any(|&s| s < lo || s > hi) {
+                return Err(malformed("sample outside the configured bit depth"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes samples in chunks of any size (whole sample frames) and appends a frame to `out`
+    /// each time a block fills. Call [`flush`](Self::flush) at the end for the remainder. Do
+    /// not mix with [`encode_block`](Self::encode_block) while samples are pending.
+    pub fn write(&mut self, mut interleaved: &[i32], out: &mut Vec<u8>) -> Result<()> {
+        if self.done.is_some() {
+            return Err(malformed("the stream is finished"));
+        }
+        if self.short_seen {
+            return Err(malformed("a short block must be the last"));
+        }
+        let channels = usize::from(self.config.channels);
+        if !interleaved.len().is_multiple_of(channels) {
+            return Err(malformed("write() takes whole sample frames"));
+        }
+        self.check_range(interleaved)?;
+        let per = self.block * channels;
+        if !self.pending.is_empty() {
+            let take = (per - self.pending.len()).min(interleaved.len());
+            self.pending.extend_from_slice(&interleaved[..take]);
+            interleaved = &interleaved[take..];
+            if self.pending.len() == per {
+                let full = std::mem::take(&mut self.pending);
+                let result = self.encode_block(&full, out);
+                self.pending = full;
+                self.pending.clear();
+                result?;
+            }
+        }
+        while interleaved.len() >= per {
+            let (block, rest) = interleaved.split_at(per);
+            self.encode_block(block, out)?;
+            interleaved = rest;
+        }
+        self.pending.extend_from_slice(interleaved);
+        Ok(())
+    }
+
+    /// Encodes the samples [`write`](Self::write) still holds as the final (short) block. Does
+    /// nothing when none are pending. Call it before [`finish`](Self::finish): samples left
+    /// pending then are not part of the stream.
+    pub fn flush(&mut self, out: &mut Vec<u8>) -> Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let rest = std::mem::take(&mut self.pending);
+        let result = self.encode_block(&rest, out);
+        self.pending = rest;
+        self.pending.clear();
+        result
     }
 
     /// The MD5 is over the samples as little-endian integers in the smallest whole number
