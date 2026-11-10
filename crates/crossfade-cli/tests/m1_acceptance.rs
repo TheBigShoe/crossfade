@@ -117,7 +117,6 @@ fn sine() -> (Vec<u8>, Vec<u8>) {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn probe_json_snapshot() {
     let d = Dir::new("probe-json");
     d.write("sine.wav", &sine().1);
@@ -147,7 +146,6 @@ fn probe_json_snapshot() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn probe_human_output() {
     let d = Dir::new("probe-human");
     d.write("sine.wav", &sine().1);
@@ -160,7 +158,6 @@ fn probe_human_output() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn convert_round_trip_s24_and_back_is_bit_exact() {
     let d = Dir::new("round-trip");
     let (pcm, wav) = sine();
@@ -188,7 +185,6 @@ fn convert_round_trip_s24_and_back_is_bit_exact() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn truncated_input_fails_cleanly() {
     let d = Dir::new("truncated");
     let wav = sine().1;
@@ -203,7 +199,6 @@ fn truncated_input_fails_cleanly() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn overwrite_needs_force() {
     let d = Dir::new("overwrite");
     let wav = sine().1;
@@ -218,7 +213,6 @@ fn overwrite_needs_force() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn emit_job_prints_json_and_writes_nothing() {
     let d = Dir::new("emit-job");
     d.write("sine.wav", &sine().1);
@@ -254,7 +248,6 @@ fn emit_job_prints_json_and_writes_nothing() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn missing_input_names_the_file() {
     let d = Dir::new("missing");
     let out = d.run(&["convert", "nope.wav", "-o", "out.wav"]);
@@ -263,7 +256,6 @@ fn missing_input_names_the_file() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn bad_sample_format_is_a_usage_error() {
     let d = Dir::new("bad-format");
     d.write("sine.wav", &sine().1);
@@ -285,7 +277,6 @@ fn bad_sample_format_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "M1 acceptance: red until the pipeline lands"]
 fn probe_rejects_non_wav() {
     let d = Dir::new("not-wav");
     d.write("zeros.bin", &[0u8; 64]);
