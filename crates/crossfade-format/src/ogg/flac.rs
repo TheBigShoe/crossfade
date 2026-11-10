@@ -15,8 +15,6 @@ fn malformed(what: &str) -> Error {
 }
 
 pub(crate) struct MappingHeader {
-    /// Header packets that follow the first, as declared; 0 means unknown. Not trusted.
-    pub declared_headers: u16,
     pub block: StreamInfoBlock,
     pub streaminfo: [u8; StreamInfoBlock::LEN],
 }
@@ -43,7 +41,6 @@ pub(crate) fn parse_first_packet(p: &[u8]) -> Result<MappingHeader, Error> {
     let mut streaminfo = [0; StreamInfoBlock::LEN];
     streaminfo.copy_from_slice(&p[17..ID_LEN]);
     Ok(MappingHeader {
-        declared_headers: u16::from_be_bytes([p[7], p[8]]),
         block: StreamInfoBlock::parse(&streaminfo)?,
         streaminfo,
     })
@@ -103,7 +100,6 @@ mod tests {
     #[test]
     fn the_identification_packet_of_a_real_file() {
         let h = parse_first_packet(fixture_id_packet()).unwrap();
-        assert_eq!(h.declared_headers, 1);
         assert_eq!(h.block.sample_rate, 44100);
         assert_eq!((h.block.channels, h.block.bits_per_sample), (2, 16));
         assert_eq!(h.block.total_samples, 4410);
@@ -171,7 +167,7 @@ mod tests {
         let mut tags = Tags::new();
         tags.push("TITLE", "Song");
         let mut body = Vec::new();
-        crate::vorbis_comment::write("v", &tags, &mut body);
+        vorbis_comment::write("v", &tags, &mut body);
         body
     }
 

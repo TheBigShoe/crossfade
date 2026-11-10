@@ -64,7 +64,7 @@ fn native(file: &[u8]) -> Native {
             4 => {
                 tags = crate::vorbis_comment::parse(body, &Limits::default())
                     .unwrap()
-                    .tags
+                    .tags;
             }
             _ => {}
         }

@@ -26,7 +26,7 @@ pub(crate) struct PacketReader {
 }
 
 impl PacketReader {
-    pub fn new(pages: PageReader, serial: u32, max_packet: usize) -> Self {
+    pub(crate) fn new(pages: PageReader, serial: u32, max_packet: usize) -> Self {
         Self {
             pages,
             serial,
@@ -42,7 +42,7 @@ impl PacketReader {
 
     /// Carries on after the stream's first page, which the caller consumed itself.
     /// `page_loaded`: the reader holds a page that has not been looked at.
-    pub fn resume(&mut self, next_sequence: u32, page_loaded: bool) {
+    pub(crate) fn resume(&mut self, next_sequence: u32, page_loaded: bool) {
         self.next_sequence = Some(next_sequence);
         self.pending = page_loaded;
         // The loaded page is not this reader's yet; its segments must not be taken unchecked.
@@ -92,7 +92,7 @@ impl PacketReader {
     }
 
     /// Clears `out` and fills it with the next packet; `Ok(false)` at the end of the stream.
-    pub fn next_packet(&mut self, out: &mut Vec<u8>) -> Result<bool, Error> {
+    pub(crate) fn next_packet(&mut self, out: &mut Vec<u8>) -> Result<bool, Error> {
         out.clear();
         let mut started = false;
         loop {
@@ -128,10 +128,6 @@ impl PacketReader {
                 return Ok(true);
             }
         }
-    }
-
-    pub fn header(&self) -> &super::page::PageHeader {
-        self.pages.header()
     }
 }
 

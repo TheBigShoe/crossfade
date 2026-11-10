@@ -3,23 +3,23 @@
 
 use super::crc::crc32;
 
-pub const BOS: u8 = 0x02;
-pub const EOS: u8 = 0x04;
-pub const CONTINUED: u8 = 0x01;
+pub(super) const BOS: u8 = 0x02;
+pub(super) const EOS: u8 = 0x04;
+pub(super) const CONTINUED: u8 = 0x01;
 
 /// One page's worth of fields; `lacing` and `body` are written as given.
 #[derive(Clone, Debug, Default)]
-pub struct RawPage {
-    pub flags: u8,
-    pub granule: i64,
-    pub serial: u32,
-    pub sequence: u32,
-    pub lacing: Vec<u8>,
-    pub body: Vec<u8>,
+pub(super) struct RawPage {
+    pub(super) flags: u8,
+    pub(super) granule: i64,
+    pub(super) serial: u32,
+    pub(super) sequence: u32,
+    pub(super) lacing: Vec<u8>,
+    pub(super) body: Vec<u8>,
 }
 
 impl RawPage {
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub(super) fn to_bytes(&self) -> Vec<u8> {
         let mut out = b"OggS".to_vec();
         out.push(0);
         out.push(self.flags);
@@ -37,7 +37,7 @@ impl RawPage {
 }
 
 /// Lacing values of one packet: 255s, then a value below 255 (a 0 after an exact multiple).
-pub fn lacing_of(len: usize) -> Vec<u8> {
+pub(super) fn lacing_of(len: usize) -> Vec<u8> {
     let mut v = vec![255; len / 255];
     v.push((len % 255) as u8);
     v
@@ -45,7 +45,7 @@ pub fn lacing_of(len: usize) -> Vec<u8> {
 
 /// Packets as pages. `segments_per_page` cycles; a packet that does not fit is continued
 /// on the next page. The first page is marked BOS and the last EOS. Granules are -1.
-pub fn pages(
+pub(super) fn pages(
     serial: u32,
     first_sequence: u32,
     packets: &[Vec<u8>],
@@ -91,6 +91,6 @@ pub fn pages(
     out
 }
 
-pub fn bytes(pages: &[RawPage]) -> Vec<u8> {
+pub(super) fn bytes(pages: &[RawPage]) -> Vec<u8> {
     pages.iter().flat_map(RawPage::to_bytes).collect()
 }

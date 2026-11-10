@@ -13,24 +13,26 @@ const LAST: u8 = 0x04;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PageHeader {
-    pub flags: u8,
-    pub granule: i64,
-    pub serial: u32,
-    pub sequence: u32,
+    pub(crate) flags: u8,
+    /// Timing comes from the frame headers; only the tests read this.
+    #[allow(dead_code)]
+    pub(crate) granule: i64,
+    pub(crate) serial: u32,
+    pub(crate) sequence: u32,
     /// Byte offset of the page in the input, for error messages.
-    pub offset: u64,
+    pub(crate) offset: u64,
 }
 
 impl PageHeader {
-    pub fn is_continued(&self) -> bool {
+    pub(crate) fn is_continued(&self) -> bool {
         self.flags & CONTINUED != 0
     }
 
-    pub fn is_first(&self) -> bool {
+    pub(crate) fn is_first(&self) -> bool {
         self.flags & FIRST != 0
     }
 
-    pub fn is_last(&self) -> bool {
+    pub(crate) fn is_last(&self) -> bool {
         self.flags & LAST != 0
     }
 }
@@ -50,7 +52,7 @@ fn malformed(what: String) -> Error {
 }
 
 impl PageReader {
-    pub fn new(source: Box<dyn MediaSource>) -> Self {
+    pub(crate) fn new(source: Box<dyn MediaSource>) -> Self {
         Self {
             source,
             pos: 0,
@@ -61,21 +63,21 @@ impl PageReader {
         }
     }
 
-    pub fn header(&self) -> &PageHeader {
+    pub(crate) fn header(&self) -> &PageHeader {
         &self.header
     }
 
-    pub fn lacing(&self) -> &[u8] {
+    pub(crate) fn lacing(&self) -> &[u8] {
         &self.buf[HEADER_LEN..HEADER_LEN + self.segments]
     }
 
-    pub fn body(&self) -> &[u8] {
+    pub(crate) fn body(&self) -> &[u8] {
         let start = HEADER_LEN + self.segments;
         &self.buf[start..start + self.body_len]
     }
 
     /// Bytes read so far.
-    pub fn position(&self) -> u64 {
+    pub(crate) fn position(&self) -> u64 {
         self.pos
     }
 
@@ -105,7 +107,7 @@ impl PageReader {
     }
 
     /// `Ok(false)` when the input ends cleanly between pages.
-    pub fn next_page(&mut self) -> Result<bool, Error> {
+    pub(crate) fn next_page(&mut self) -> Result<bool, Error> {
         let offset = self.pos;
         match self.fill(0, HEADER_LEN)? {
             0 => return Ok(false),
