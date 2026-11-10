@@ -163,8 +163,5 @@ fn same_as_source_leaves_the_format_unset() {
 fn build_refuses_with_the_problems() {
     let mut s = sheet("in.wav");
     s.set_output("in.wav".into());
-    assert_eq!(
-        s.build(&nothing_exists),
-        Err(vec![Problem::OutputIsInput])
-    );
+    assert_eq!(s.build(&nothing_exists), Err(vec![Problem::OutputIsInput]));
 }

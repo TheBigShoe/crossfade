@@ -142,7 +142,10 @@ fn durations_and_frames_are_readable() {
         s.duration_seconds = Some(secs);
         doc(None, vec![s])
     };
-    assert_eq!(value(&with(1_234_567, 62.25), "duration_seconds"), "1:02.250");
+    assert_eq!(
+        value(&with(1_234_567, 62.25), "duration_seconds"),
+        "1:02.250"
+    );
     assert_eq!(value(&with(1_234_567, 62.25), "frames"), "1,234,567");
     assert_eq!(value(&with(5, 0.0), "duration_seconds"), "0:00.000");
     assert_eq!(value(&with(5, 3723.5), "duration_seconds"), "1:02:03.500");
