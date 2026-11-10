@@ -45,6 +45,16 @@ pub fn output_codec(
     }
 }
 
+/// Containers we can write; a reader existing for one does not make it writable.
+pub fn can_write(format: FormatId) -> bool {
+    matches!(format, FormatId::Wav | FormatId::Flac | FormatId::Aiff)
+}
+
+/// File extensions a front end can offer for an output, canonical spelling first.
+pub fn writable_extensions() -> &'static [&'static str] {
+    &["wav", "flac", "aiff", "aif", "aifc"]
+}
+
 /// Whether `format` can carry `codec`'s packets unchanged (stream copy).
 pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
     use CodecId::*;

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::job::AudioSettings;
-use crossfade_core::{ChannelLayout, CodecId, SampleFormat, Samples, TimeBase};
+use crossfade_core::{AudioSpec, ChannelLayout, CodecId, SampleFormat, Samples, TimeBase};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
