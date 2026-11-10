@@ -19,7 +19,7 @@ pub use clock::{Clock, SystemClock};
 pub use codec::CodecId;
 pub use engine::{Decoder, Demuxer, Encoder, Muxer};
 pub use error::Error;
-pub use io::{MediaSink, MediaSource};
+pub use io::{JobIo, MediaSink, MediaSource};
 pub use limits::Limits;
 pub use media::{AudioFrame, Packet, Samples, StreamInfo};
 pub use rational::Rational;

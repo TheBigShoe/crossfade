@@ -1,3 +1,4 @@
+use crate::Error;
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
@@ -15,6 +16,20 @@ pub trait MediaSink {
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
     fn finish(&mut self) -> io::Result<()>;
+}
+
+/// How a job reaches its bytes: files, memory or anything else.
+pub trait JobIo {
+    fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, Error>;
+
+    /// May write somewhere temporary until `commit`.
+    fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, Error>;
+
+    /// Finished output becomes visible at `path`.
+    fn commit(&mut self, path: &str) -> Result<(), Error>;
+
+    /// Removes partial output; best effort.
+    fn discard(&mut self, path: &str);
 }
 
 impl MediaSource for Cursor<Vec<u8>> {
