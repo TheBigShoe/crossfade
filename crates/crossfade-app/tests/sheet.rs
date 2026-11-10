@@ -2,7 +2,7 @@ mod common;
 
 use common::{sine_wav, spec};
 use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
-use crossfade_app::sheet::{ConvertSheet, Container, FormatChoice, PRESETS, Problem};
+use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice, PRESETS, Problem};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
 use crossfade_testkit::memory::MemoryIo;
@@ -47,7 +47,14 @@ fn converted_entry(path: &str, to: &str) -> InputEntry {
             audio: AudioSettings::default(),
         }],
     };
-    run(&job, &mut io, &Limits::default(), &CancelToken::new(), &mut |_| {}).unwrap();
+    run(
+        &job,
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
     entry_in(&mut io, to)
 }
 
@@ -123,8 +130,16 @@ fn flac_and_aiff_presets_set_the_container_and_format() {
     let mut s = sheet("a.wav");
     for (id, container, format) in [
         ("flac", Container::Flac, FormatChoice::SameAsSource),
-        ("flac-cd", Container::Flac, FormatChoice::Format(SampleFormat::S16)),
-        ("flac-24", Container::Flac, FormatChoice::Format(SampleFormat::S24)),
+        (
+            "flac-cd",
+            Container::Flac,
+            FormatChoice::Format(SampleFormat::S16),
+        ),
+        (
+            "flac-24",
+            Container::Flac,
+            FormatChoice::Format(SampleFormat::S24),
+        ),
         ("aiff", Container::Aiff, FormatChoice::SameAsSource),
         ("same", Container::Wav, FormatChoice::SameAsSource),
     ] {
@@ -441,7 +456,9 @@ fn the_level_belongs_to_flac_alone() {
     s.set_level(Some(9));
     assert_eq!(s.level(), None);
     s.set_level(Some(8));
-    let audio = s.build(&nothing_exists).unwrap().job.outputs[0].audio.clone();
+    let audio = s.build(&nothing_exists).unwrap().job.outputs[0]
+        .audio
+        .clone();
     assert_eq!(audio.compression_level, Some(8));
     assert_eq!(audio.codec, None);
     s.set_level(Some(0));
@@ -493,7 +510,9 @@ fn copy_replaces_the_format_and_level_in_the_request() {
     s.set_copy(true);
     assert!(!s.format_enabled() && !s.level_enabled());
     assert!(s.preset().is_none());
-    let audio = s.build(&nothing_exists).unwrap().job.outputs[0].audio.clone();
+    let audio = s.build(&nothing_exists).unwrap().job.outputs[0]
+        .audio
+        .clone();
     assert_eq!(
         audio,
         AudioSettings {
