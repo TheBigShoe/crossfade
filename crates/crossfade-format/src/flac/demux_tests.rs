@@ -624,3 +624,172 @@ mod find_ff {
         }
     }
 }
+
+/// A mono 8-bit verbatim frame for `h` whose audio holds a false frame header after a prefix
+/// whose CRC-16 is zero: the bytes of the frame up to the prefix's end are followed by their own
+/// CRC, then `fake`. Returns the frame and the offset of the false header in it.
+fn frame_with_false_header(h: FrameHeader, fake: &FrameHeader) -> (Vec<u8>, usize) {
+    assert!(h.block_size >= 40);
+    let mut f = Vec::new();
+    frame::write_header(&h, &mut f);
+    f.push(0b0000_0010);
+    f.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x08]);
+    let crc = crc16(&f);
+    f.extend_from_slice(&crc.to_be_bytes());
+    assert_eq!(crc16(&f), 0, "the prefix is CRC-valid");
+    let at = f.len();
+    frame::write_header(fake, &mut f);
+    let body = 1 + h.block_size as usize;
+    while f.len() < body + frame_header_len(&h) {
+        f.push(0x35);
+    }
+    let crc = crc16(&f);
+    f.extend_from_slice(&crc.to_be_bytes());
+    (f, at)
+}
+
+fn frame_header_len(h: &FrameHeader) -> usize {
+    let mut v = Vec::new();
+    frame::write_header(h, &mut v);
+    v.len()
+}
+
+fn variable_header(start: u64, size: u32) -> FrameHeader {
+    FrameHeader {
+        variable_block_size: true,
+        block_size: size,
+        number: start,
+        ..header(0)
+    }
+}
+
+fn plain_frame(h: FrameHeader) -> Vec<u8> {
+    let mut f = Vec::new();
+    frame::write_header(&h, &mut f);
+    f.push(0b0000_0010);
+    f.extend((0..h.block_size).map(|i| ((i * 3 + 1) % 100) as u8));
+    let crc = crc16(&f);
+    f.extend_from_slice(&crc.to_be_bytes());
+    f
+}
+
+#[test]
+fn a_false_header_after_a_zero_crc_prefix_with_the_wrong_number_is_not_a_boundary() {
+    let (f1, _) = frame_with_false_header(header(1), &header(9));
+    let frames = [
+        verbatim_frame(0, &plain_payload(0)),
+        f1,
+        verbatim_frame(2, &plain_payload(2)),
+    ];
+    let packets = all_packets(&stream(120, &[], &frames));
+    assert_eq!(packets.len(), 3);
+    for (p, f) in packets.iter().zip(&frames) {
+        assert_eq!(&p.data, f);
+    }
+}
+
+#[test]
+fn the_same_false_header_with_the_right_number_cannot_be_told_from_a_boundary() {
+    // Without decoding, a CRC-valid prefix followed by a header that carries the number the next
+    // frame should have is a frame boundary. The decoder then refuses the cut-off frame.
+    let (f1, at) = frame_with_false_header(header(1), &header(2));
+    let frames = [
+        verbatim_frame(0, &plain_payload(0)),
+        f1.clone(),
+        verbatim_frame(2, &plain_payload(2)),
+    ];
+    let bytes = stream(120, &[], &frames);
+    let packets = all_packets(&bytes);
+    assert_eq!(packets[1].data, f1[..at]);
+    let mut dec = crossfade_flac::Decoder::new(&info(120)).unwrap();
+    assert!(dec.decode_frame(&packets[0].data).is_ok());
+    assert!(dec.decode_frame(&packets[1].data).is_err());
+}
+
+#[test]
+fn a_variable_block_size_stream_follows_the_start_plus_the_block_size() {
+    let (f1, _) = frame_with_false_header(variable_header(40, 40), &variable_header(7, 40));
+    let frames = [
+        plain_frame(variable_header(0, 40)),
+        f1,
+        plain_frame(variable_header(80, 40)),
+    ];
+    let packets = all_packets(&stream(120, &[], &frames));
+    assert_eq!(packets.len(), 3);
+    for (p, f) in packets.iter().zip(&frames) {
+        assert_eq!(&p.data, f);
+    }
+}
+
+#[test]
+fn a_real_number_jump_is_still_a_boundary() {
+    // Numbers 0, 1, 5, 6: the jump at the third frame is genuine, nothing later fits better,
+    // so the first CRC-valid boundary stands, as it always did.
+    let numbers = [0u64, 1, 5, 6];
+    let frames: Vec<Vec<u8>> = numbers
+        .iter()
+        .map(|&n| verbatim_frame(n, &plain_payload(n)))
+        .collect();
+    let packets = all_packets(&stream(160, &[], &frames));
+    assert_eq!(packets.len(), 4);
+    for (p, f) in packets.iter().zip(&frames) {
+        assert_eq!(&p.data, f);
+    }
+    // And with a frame after the jump that is not consecutive either.
+    let numbers = [0u64, 7, 3, 12, 13];
+    let frames: Vec<Vec<u8>> = numbers
+        .iter()
+        .map(|&n| verbatim_frame(n, &plain_payload(n)))
+        .collect();
+    assert_eq!(all_packets(&stream(200, &[], &frames)).len(), 5);
+}
+
+#[test]
+fn a_false_header_in_the_last_frame_with_other_stream_parameters_is_not_a_boundary() {
+    // At the end of input the reader cannot look for a later boundary; a candidate whose header
+    // disagrees with the frame's on channels, depth or rate is not trusted then.
+    let mut fake = header(9);
+    fake.channels = ChannelAssignment::Independent(2);
+    let (f1, _) = frame_with_false_header(header(1), &fake);
+    let frames = [verbatim_frame(0, &plain_payload(0)), f1];
+    let packets = all_packets(&stream(80, &[], &frames));
+    assert_eq!(packets.len(), 2);
+    assert_eq!(packets[1].data, frames[1]);
+}
+
+#[test]
+fn frames_with_wrong_numbers_are_scanned_in_linear_time() {
+    // Thousands of tiny frames, none carrying the number its predecessor announces: every
+    // frame has a boundary but none "matches", so each read could rescan everything up to the
+    // frame-length cap. The running CRC and the remembered candidates keep it linear.
+    let h = |n: u64| FrameHeader {
+        block_size: 4096,
+        channels: ChannelAssignment::Independent(2),
+        bits_per_sample: Some(8),
+        number: n,
+        ..header(0)
+    };
+    let tiny = |n: u64| {
+        let mut f = Vec::new();
+        frame::write_header(&h(n), &mut f);
+        // Two constant subframes.
+        f.extend_from_slice(&[0x00, 0x05, 0x00, 0x06]);
+        let crc = crc16(&f);
+        f.extend_from_slice(&crc.to_be_bytes());
+        f
+    };
+    let count = 4000u64;
+    let frames: Vec<Vec<u8>> = (0..count).map(|k| tiny(k * 3)).collect();
+    let mut bytes = stream(count * 4096, &[], &frames);
+    // `info` says mono; the frames say stereo, which the demuxer does not compare.
+    let total = bytes.len() as u64;
+    CRC_STEPS.with(|c| c.set(0));
+    let packets = all_packets(&bytes);
+    let steps = CRC_STEPS.with(|c| c.get());
+    assert_eq!(packets.len(), count as usize);
+    assert!(
+        steps <= 2 * total,
+        "{steps} CRC byte-steps for {total} bytes"
+    );
+    bytes.clear();
+}

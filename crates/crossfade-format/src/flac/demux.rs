@@ -27,6 +27,19 @@ const TRAILING_SLACK: usize = 64 * 1024;
 /// Shortest frame after its header: a subframe header byte and the CRC-16.
 const MIN_AFTER_HEADER: usize = 3;
 
+#[cfg(test)]
+thread_local! {
+    /// CRC-16 bytes processed on this thread, so tests can bound the scanning work.
+    static CRC_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The running CRC-16 over `data` (the demuxer's only CRC work, counted under test).
+fn crc_steps(crc: u16, data: &[u8]) -> u16 {
+    #[cfg(test)]
+    CRC_STEPS.with(|c| c.set(c.get() + data.len() as u64));
+    crc16_update(crc, data)
+}
+
 struct FlacDemuxer {
     source: Box<dyn MediaSource>,
     /// Bytes taken from the source so far.
@@ -298,7 +311,7 @@ impl FlacDemuxer {
                     if next.variable_block_size != h.variable_block_size || j < min_end {
                         continue;
                     }
-                    crc = crc16_update(crc, &self.buf[crc_pos..j]);
+                    crc = crc_steps(crc, &self.buf[crc_pos..j]);
                     crc_pos = j;
                     if crc == 0 {
                         return Ok((j, false));
@@ -329,7 +342,7 @@ impl FlacDemuxer {
         let mut crc = 0u16;
         let mut found = None;
         for (i, &b) in self.buf[..limit].iter().enumerate() {
-            crc = crc16_update(crc, &[b]);
+            crc = crc_steps(crc, &[b]);
             if crc == 0 && i + 1 >= min_end {
                 found = Some(i + 1);
             }
