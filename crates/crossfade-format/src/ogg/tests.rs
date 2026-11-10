@@ -436,7 +436,7 @@ fn extra_header_blocks_are_skipped_and_the_first_comment_is_kept() {
 
 #[test]
 fn a_wrong_page_crc_names_the_page_and_packets_before_it_still_arrive() {
-    let pages = stream_pages("smallblock", 1, &[255]);
+    let pages = stream_pages("smallblock", 1, &[4]);
     let mut bytes = testutil::bytes(&pages);
     let at: usize = pages[..pages.len() - 1]
         .iter()
@@ -460,7 +460,7 @@ fn a_wrong_crc_on_the_first_page_fails_the_open() {
 
 #[test]
 fn a_sequence_gap_is_malformed() {
-    let mut pages = stream_pages("smallblock", 1, &[255]);
+    let mut pages = stream_pages("smallblock", 1, &[4]);
     let n = pages.len();
     pages[n - 1].sequence += 1;
     let mut d = open_bytes(testutil::bytes(&pages)).unwrap();
@@ -470,7 +470,11 @@ fn a_sequence_gap_is_malformed() {
 #[test]
 fn an_orphan_continuation_is_malformed() {
     let mut pages = stream_pages("smallblock", 1, &[3]);
-    pages[2].flags |= CONTINUED;
+    // A page that starts a packet, so the flag has nothing to continue.
+    let k = (2..pages.len())
+        .find(|&k| pages[k].flags & CONTINUED == 0)
+        .unwrap();
+    pages[k].flags |= CONTINUED;
     let r = open_bytes(testutil::bytes(&pages)).and_then(|mut d| read_all(d.as_mut()));
     assert!(malformed(r).contains("continu"));
 }
@@ -502,8 +506,9 @@ fn a_small_packet_limit_refuses_the_big_frames() {
         max_packet_bytes: 4000,
         ..Limits::default()
     };
-    let mut d = open(Box::new(Cursor::new(oga("noise8").to_vec())), &limits).unwrap();
-    assert!(malformed(read_all(d.as_mut())).contains("limit"));
+    // The first frame is read while the headers are searched for their end, so it fails the open.
+    let got = open(Box::new(Cursor::new(oga("noise8").to_vec())), &limits).map(|_| ());
+    assert!(malformed(got).contains("limit"));
 }
 
 #[test]

@@ -45,6 +45,8 @@ impl PacketReader {
     pub fn resume(&mut self, next_sequence: u32, page_loaded: bool) {
         self.next_sequence = Some(next_sequence);
         self.pending = page_loaded;
+        // The loaded page is not this reader's yet; its segments must not be taken unchecked.
+        self.seg = self.pages.lacing().len();
     }
 
     /// Loads the next page of this stream; `Ok(false)` when the input ends.
