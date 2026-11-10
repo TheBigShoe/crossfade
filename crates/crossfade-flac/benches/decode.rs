@@ -4,7 +4,6 @@
 mod support;
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use crossfade_core::SampleFormat;
 use crossfade_flac::Decoder;
 use crossfade_flac::crc::crc16;
 use crossfade_flac::md5::Md5;
@@ -12,8 +11,8 @@ use std::hint::black_box;
 use std::time::Duration;
 
 fn bench(c: &mut Criterion) {
-    let long = support::input("60s_44k1_16bit_stereo", 44_100, SampleFormat::S16, 60);
-    let wide = support::input("10s_96k_24bit_stereo", 96_000, SampleFormat::S24, 10);
+    let long = support::input("60s_44k1_16bit_stereo", 44_100, 16, 60);
+    let wide = support::input("10s_96k_24bit_stereo", 96_000, 24, 10);
 
     let mut group = c.benchmark_group("decode_frames");
     group

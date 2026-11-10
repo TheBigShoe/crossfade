@@ -63,7 +63,7 @@ the tests calls it), output sizes at the same level are within 0.3% on music (us
 little smaller, up to 2% smaller on a 5.1 file), and every output passes `flac -t` and
 decodes back to the source. On 60 s of 44.1 kHz 16-bit stereo this encoder takes about
 68 / 125 / 273 ms at levels 0 / 5 / 8 on an Apple M-series laptop, against 120 / 204 / 300 ms
-for the engine's previous `flacenc`-based path. At levels 0 to 5 a good part of the time is
+for the third-party encoder the engine used before. At levels 0 to 5 a good part of the time is
 the MD5 of the audio. `examples/flac_encode.rs` writes a `.flac` from raw PCM or WAV for such
 comparisons; `cargo bench -p crossfade-flac` has the speed baselines.
 

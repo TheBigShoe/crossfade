@@ -1,10 +1,7 @@
 //! Input shared by the bench and the profiling example: a synthetic signal encoded once through
-//! the engine's FLAC encoder, returned as STREAMINFO plus pre-split frames.
-use crossfade_codec::{EncodeOptions, encoder_for};
-use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, CodecId, Packet, SampleFormat, Samples,
-};
+//! this crate's encoder, returned as STREAMINFO plus pre-split frames.
 use crossfade_flac::streaminfo::StreamInfoBlock;
+use crossfade_flac::{Encoder, EncoderConfig};
 
 pub(crate) struct Input {
     pub(crate) name: &'static str,
@@ -14,8 +11,7 @@ pub(crate) struct Input {
 }
 
 /// A sine mix plus seeded noise, so the residual is realistic.
-pub(crate) fn input(name: &'static str, rate: u32, format: SampleFormat, seconds: u32) -> Input {
-    let bits = format.bits() as u32;
+pub(crate) fn input(name: &'static str, rate: u32, bits: u32, seconds: u32) -> Input {
     let amp = f64::from((1u32 << (bits - 1)) - 1);
     let mut state = 0x9e37_79b9u32;
     let mut samples = Vec::new();
@@ -30,31 +26,23 @@ pub(crate) fn input(name: &'static str, rate: u32, format: SampleFormat, seconds
             samples.push(((tone + noise * 0.02) * amp) as i32);
         }
     }
-    let spec = AudioSpec::new(rate, format, ChannelLayout::stereo()).unwrap();
-    let mut frame = AudioFrame::new(&spec);
-    frame.samples = match format {
-        SampleFormat::S16 => Samples::S16(samples.iter().map(|&v| v as i16).collect()),
-        _ => Samples::S24(samples.clone()),
-    };
-    let mut enc = encoder_for(
-        CodecId::Flac,
-        &spec,
-        &EncodeOptions {
-            compression_level: None,
-        },
-    )
-    .unwrap();
-    enc.send_frame(&frame).unwrap();
-    enc.drain();
-    let mut frames = Vec::new();
-    let mut p = Packet::default();
-    while enc.receive_packet(&mut p).unwrap() {
-        frames.push(p.data.clone());
-    }
+    let mut enc = Encoder::new(EncoderConfig::new(rate, 2, bits as u8)).unwrap();
+    let (mut bytes, mut ends) = (Vec::new(), Vec::new());
+    enc.write_ends(&samples, &mut bytes, &mut ends).unwrap();
+    enc.flush_ends(&mut bytes, &mut ends).unwrap();
+    let mut start = 0;
+    let frames = ends
+        .iter()
+        .map(|&end| {
+            let f = bytes[start..end].to_vec();
+            start = end;
+            f
+        })
+        .collect();
     Input {
         name,
-        pcm_bytes: (samples.len() * format.bytes_per_sample()) as u64,
-        info: StreamInfoBlock::parse(enc.extradata()).unwrap(),
+        pcm_bytes: (samples.len() * (bits as usize).div_ceil(8)) as u64,
+        info: enc.finish(),
         frames,
     }
 }

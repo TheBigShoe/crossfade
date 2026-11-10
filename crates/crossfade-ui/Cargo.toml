@@ -36,6 +36,7 @@ crossfade-testkit.workspace = true
 # Fixtures are written by the engine's own muxers, so the tests read real FLAC and AIFF.
 crossfade-format.workspace = true
 crossfade-codec.workspace = true
+crossfade-flac.workspace = true
 
 [lints]
 workspace = true

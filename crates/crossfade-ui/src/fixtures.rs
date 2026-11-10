@@ -3,8 +3,8 @@
 //! the screenshots example (which includes this file by path).
 #![allow(dead_code, unreachable_pub)]
 
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{JobIo, Limits, Packet, SampleFormat, Tags};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
 use crossfade_testkit::memory::MemoryIo;
