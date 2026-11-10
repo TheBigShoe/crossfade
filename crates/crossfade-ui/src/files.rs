@@ -318,6 +318,7 @@ impl Workspace {
             return div().id("inspector").flex_1().into_any_element();
         };
         let (dir, name) = split_path(&entry.path);
+        let streams = entry.document().map_or(0, |doc| doc.streams.len());
         let body =
             match &entry.state {
                 InputState::Failed(error) => h_flex()
@@ -341,31 +342,40 @@ impl Workspace {
                             v_flex()
                                 .gap_1()
                                 .child(section_label(&section.title, cx))
-                                .children(section.rows.into_iter().map(|row| {
-                                    h_flex()
-                                        .id(SharedString::from(format!(
-                                            "inspector-row-{s}-{}",
-                                            row.id
-                                        )))
-                                        .test_support()
-                                        .h(INSPECTOR_ROW)
-                                        .items_center()
-                                        .gap_3()
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .w(LABEL_COLUMN)
-                                                .text_color(theme.muted_foreground)
-                                                .child(row.label),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .truncate()
-                                                .child(SharedString::from(row.value)),
-                                        )
-                                }))
+                                .children(
+                                    section
+                                        .rows
+                                        .into_iter()
+                                        .filter(|row| {
+                                            // Noise for the usual one-stream file.
+                                            streams > 1 || !matches!(row.field, "index" | "type")
+                                        })
+                                        .map(|row| {
+                                            h_flex()
+                                                .id(SharedString::from(format!(
+                                                    "inspector-row-{s}-{}",
+                                                    row.id
+                                                )))
+                                                .test_support()
+                                                .h(INSPECTOR_ROW)
+                                                .items_center()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .flex_none()
+                                                        .w(LABEL_COLUMN)
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(row.label),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .child(SharedString::from(row.value)),
+                                                )
+                                        }),
+                                )
                         },
                     ))
                     .into_any_element(),
