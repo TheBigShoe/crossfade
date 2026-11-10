@@ -1,7 +1,10 @@
 use std::process::{Command, Output};
 
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_crossfade")).args(args).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_crossfade"))
+        .args(args)
+        .output()
+        .unwrap()
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -12,7 +15,10 @@ fn text(bytes: &[u8]) -> String {
 fn version_prints_name_and_version_only() {
     let out = run(&["--version"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(text(&out.stdout), format!("crossfade {}\n", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        text(&out.stdout),
+        format!("crossfade {}\n", env!("CARGO_PKG_VERSION"))
+    );
     assert!(out.stderr.is_empty());
 }
 
