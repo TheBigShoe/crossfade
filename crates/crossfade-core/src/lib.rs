@@ -9,3 +9,4 @@ mod time;
 
 pub use error::Error;
 pub use rational::Rational;
+pub use time::{Rounding, TimeBase, Timestamp};

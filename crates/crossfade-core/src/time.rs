@@ -1,3 +1,154 @@
+use crate::{Error, Rational};
+use std::cmp::Ordering;
+
+/// Seconds per tick, strictly positive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TimeBase(Rational);
+
+impl TimeBase {
+    pub fn new(num: i64, den: i64) -> Result<Self, Error> {
+        Self::from_rational(Rational::new(num, den)?)
+    }
+
+    pub fn from_rational(r: Rational) -> Result<Self, Error> {
+        if r.num() > 0 {
+            Ok(Self(r))
+        } else {
+            Err(Error::InvalidTimeBase)
+        }
+    }
+
+    pub fn as_rational(self) -> Rational {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rounding {
+    /// Ties away from zero.
+    NearestAwayFromZero,
+    Floor,
+    Ceil,
+    TowardZero,
+}
+
+/// A point in time: `ticks` of `base` seconds each. Equality and ordering
+/// compare the instant, not the representation.
+#[derive(Debug, Clone, Copy)]
+pub struct Timestamp {
+    ticks: i64,
+    base: TimeBase,
+}
+
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// `(a * b) / d` as quotient and remainder, with `a < 2^64`, `b < d < 2^126`.
+/// Horner over the bits of `a` keeps every step inside u128 (no 256-bit type).
+fn mul_div_small(a: u64, b: u128, d: u128) -> (u128, u128) {
+    let (mut q, mut r) = (0u128, 0u128);
+    for i in (0..64).rev() {
+        q <<= 1;
+        r <<= 1;
+        if r >= d {
+            r -= d;
+            q += 1;
+        }
+        if (a >> i) & 1 == 1 {
+            r += b;
+            if r >= d {
+                r -= d;
+                q += 1;
+            }
+        }
+    }
+    (q, r)
+}
+
+impl Timestamp {
+    pub fn new(ticks: i64, base: TimeBase) -> Self {
+        Self { ticks, base }
+    }
+
+    pub fn ticks(self) -> i64 {
+        self.ticks
+    }
+
+    pub fn base(self) -> TimeBase {
+        self.base
+    }
+
+    /// Exact conversion; errors if the result does not fit `i64`.
+    pub fn rescale(self, to: TimeBase, rounding: Rounding) -> Result<Self, Error> {
+        let (f, t) = (self.base.0, to.0);
+        // ratio = from / to; both bases are positive so these fit u128.
+        let mut num = u128::try_from(f.num()).map_err(|_| Error::Overflow)?
+            * u128::try_from(t.den()).map_err(|_| Error::Overflow)?;
+        let mut den = u128::try_from(f.den()).map_err(|_| Error::Overflow)?
+            * u128::try_from(t.num()).map_err(|_| Error::Overflow)?;
+        let g = gcd(num, den);
+        (num, den) = (num / g, den / g);
+
+        let neg = self.ticks < 0;
+        let mag = self.ticks.unsigned_abs();
+        // mag * (q + r/den) = mag*q + mag*r/den
+        let (q, r) = (num / den, num % den);
+        let whole = u128::from(mag).checked_mul(q).ok_or(Error::Overflow)?;
+        let (frac, rem) = mul_div_small(mag, r, den);
+        let mut out = whole.checked_add(frac).ok_or(Error::Overflow)?;
+
+        let round_up = match rounding {
+            Rounding::TowardZero => false,
+            Rounding::Floor => neg && rem > 0,
+            Rounding::Ceil => !neg && rem > 0,
+            Rounding::NearestAwayFromZero => rem * 2 >= den,
+        };
+        if round_up {
+            out = out.checked_add(1).ok_or(Error::Overflow)?;
+        }
+
+        let signed = i128::try_from(out).map_err(|_| Error::Overflow)?;
+        let signed = if neg { -signed } else { signed };
+        Ok(Self::new(
+            i64::try_from(signed).map_err(|_| Error::Overflow)?,
+            to,
+        ))
+    }
+}
+
+impl Ord for Timestamp {
+    // ticks*num fits i128; split into floor and remainder so the final
+    // cross-multiplication stays below 2^126.
+    fn cmp(&self, other: &Self) -> Ordering {
+        let split = |t: Timestamp| {
+            let p = i128::from(t.ticks) * i128::from(t.base.0.num());
+            let d = i128::from(t.base.0.den());
+            (p.div_euclid(d), p.rem_euclid(d), d)
+        };
+        let (qa, ra, da) = split(*self);
+        let (qb, rb, db) = split(*other);
+        qa.cmp(&qb).then_with(|| (ra * db).cmp(&(rb * da)))
+    }
+}
+
+impl PartialOrd for Timestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Timestamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Timestamp {}
+
 #[cfg(test)]
 mod tests {
     use crate::time::{Rounding, TimeBase, Timestamp};

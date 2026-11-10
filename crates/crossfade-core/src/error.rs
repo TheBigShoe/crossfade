@@ -7,4 +7,6 @@ pub enum Error {
     DivisionByZero,
     #[error("arithmetic overflow")]
     Overflow,
+    #[error("time base must be strictly positive")]
+    InvalidTimeBase,
 }
