@@ -5,6 +5,7 @@
 
 mod error;
 mod rational;
+mod time;
 
 pub use error::Error;
 pub use rational::Rational;
