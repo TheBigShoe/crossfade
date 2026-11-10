@@ -18,9 +18,15 @@ path = "src/main.rs"
 # gpui-kit re-exports GPUI and its macros resolve through it, so GPUI is not listed
 # separately. Code reaches all of it through `prelude`.
 gpui-kit.workspace = true
+crossfade-app.workspace = true
+crossfade-core.workspace = true
+crossfade-graph.workspace = true
+async-channel.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+crossfade-cli.workspace = true
+crossfade-testkit.workspace = true
 
 [lints]
 workspace = true
