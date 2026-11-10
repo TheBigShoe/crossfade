@@ -307,7 +307,7 @@ fn decode_back(spec: &AudioSpec, out: &Output) -> Vec<i32> {
         dec.finish().unwrap(),
         crossfade_flac::Verification::Md5Matched
     );
-    assert_eq!(info.channels as u16, spec.layout().channels());
+    assert_eq!(u16::from(info.channels), spec.layout().channels());
     all
 }
 

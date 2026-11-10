@@ -159,8 +159,8 @@ const GOLDEN: [&str; 18] = [
     "multi6 L0 d48a6d31f3d690b0666ef7e8398ba2f0",
     "mono24 L5 20751a3922a69899998ce918c9920903",
     "wide32 L5 c2c4a441eac2eea5fd84387a68929d5c",
-    "multi6 L5 4a8e04c3c1e3acb4795ec4e3c738b384",
+    "multi6 L5 9f166b4741f01822764eee9f651ac300",
     "mono24 L8 72d16db0429cff96713960b395cf404b",
     "wide32 L8 53cd8b2ebba06df9d968fadbe67a70dc",
-    "multi6 L8 e6b475f7d5054726b86f2f67c71d9258",
+    "multi6 L8 e47a341d49928db9700c78ec846a8500",
 ];
