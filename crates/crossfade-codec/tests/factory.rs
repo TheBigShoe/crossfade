@@ -66,9 +66,8 @@ fn flac_is_routed_to_stubs_that_say_so() {
         "flac encoding is not built yet"
     );
 }
-
 #[test]
-fn big_endian_and_signed_8_bit_pcm_are_refused_rather_than_misread_as_little_endian() {
+fn the_factories_build_big_endian_and_signed_8_bit_pcm() {
     for (codec, format) in [
         (CodecId::PcmS8, SampleFormat::U8),
         (CodecId::PcmS16Be, SampleFormat::S16),
@@ -79,11 +78,10 @@ fn big_endian_and_signed_8_bit_pcm_are_refused_rather_than_misread_as_little_end
     ] {
         let audio = AudioSpec::new(8000, format, ChannelLayout::mono()).unwrap();
         let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 8000).unwrap());
-        let want = format!("{} is not built yet", codec.name());
-        assert_eq!(unsupported_what(decoder_for(&info)), want);
-        assert_eq!(
-            unsupported_what(encoder_for(codec, &audio, &EncodeOptions::default())),
-            want
+        assert!(decoder_for(&info).is_ok(), "{codec:?}");
+        assert!(
+            encoder_for(codec, &audio, &EncodeOptions::default()).is_ok(),
+            "{codec:?}"
         );
     }
 }
