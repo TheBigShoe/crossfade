@@ -1,3 +1,107 @@
+//! The on-disk cache: `<dir>/<id>/<name>`, verified by size then SHA-256.
+
+use std::ffi::OsString;
+use std::fmt;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use crate::Entry;
+
+/// Why a cached file cannot be used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Problem {
+    Missing,
+    WrongSize { expected: u64, actual: u64 },
+    WrongHash { expected: String, actual: String },
+    Unreadable(String),
+}
+
+impl fmt::Display for Problem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing => write!(f, "missing"),
+            Self::WrongSize { expected, actual } => {
+                write!(f, "wrong size: expected {expected} bytes, found {actual}")
+            }
+            Self::WrongHash { expected, actual } => {
+                write!(f, "wrong sha256: expected {expected}, found {actual}")
+            }
+            Self::Unreadable(e) => write!(f, "unreadable: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for Problem {}
+
+pub(crate) fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+#[derive(Debug, Clone)]
+pub struct Cache {
+    dir: PathBuf,
+}
+
+impl Cache {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// `CROSSFADE_CORPUS_DIR` when set and non-empty, else `<root>/.corpus-cache`.
+    pub(crate) fn dir_from(env: Option<OsString>, root: &Path) -> PathBuf {
+        match env {
+            Some(d) if !d.is_empty() => PathBuf::from(d),
+            _ => root.join(".corpus-cache"),
+        }
+    }
+
+    pub fn path(&self, entry: &Entry) -> PathBuf {
+        self.dir.join(&entry.id).join(&entry.name)
+    }
+
+    /// Where a download is staged. Never the final name, so a half-written
+    /// file cannot pass for a cached one.
+    pub(crate) fn temp_path(&self, entry: &Entry) -> PathBuf {
+        self.dir.join(&entry.id).join(format!("{}.part", entry.name))
+    }
+
+    pub fn verify(&self, entry: &Entry) -> Result<(), Problem> {
+        verify_file(entry, &self.path(entry))
+    }
+}
+
+pub(crate) fn verify_file(entry: &Entry, path: &Path) -> Result<(), Problem> {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Problem::Missing),
+        Err(e) => return Err(Problem::Unreadable(e.to_string())),
+    };
+    if meta.len() != entry.bytes {
+        return Err(Problem::WrongSize { expected: entry.bytes, actual: meta.len() });
+    }
+    let actual = sha256_file(path).map_err(|e| Problem::Unreadable(e.to_string()))?;
+    if actual != entry.sha256 {
+        return Err(Problem::WrongHash { expected: entry.sha256.clone(), actual });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
