@@ -726,10 +726,9 @@ fn level_and_format_are_disabled_when_the_source_cannot_be_saved_as_the_containe
     cx: &mut TestAppContext,
 ) {
     let rig = open_rig(cx);
-    let input = rig.dir.write(
-        "hi.wav",
-        &crate::fixtures::wav(192_000, 2, SampleFormat::S24, 480),
-    );
+    let input = rig
+        .dir
+        .write("hi.wav", &fixtures::wav(192_000, 2, SampleFormat::S24, 480));
     add_paths(cx, &rig, &[&input]);
     open_sheet(cx, &rig);
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
