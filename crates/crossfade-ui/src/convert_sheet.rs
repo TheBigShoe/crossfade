@@ -2,7 +2,7 @@
 //! every choice and decides what is a problem; this view forwards edits to it, draws what
 //! it says and keeps the two selects and the path field in step with it.
 
-use crossfade_app::sheet::{ConvertSheet, FormatChoice, PRESETS};
+use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice, PRESETS};
 use crossfade_app::{Request, command_line};
 use crossfade_core::SampleFormat;
 
@@ -11,7 +11,7 @@ use crate::dialog_footer::DialogButtons;
 use crate::prelude::*;
 use crate::workspace::Exists;
 
-/// The sample-format select's items, in order; the label is what the select shows.
+/// Every sample-format item there can be, in order; the model says which are offered.
 const FORMATS: [(FormatChoice, &str); 7] = [
     (FormatChoice::SameAsSource, "Same as source"),
     (FormatChoice::Format(SampleFormat::U8), "8-bit unsigned"),
@@ -21,6 +21,27 @@ const FORMATS: [(FormatChoice, &str); 7] = [
     (FormatChoice::Format(SampleFormat::F32), "32-bit float"),
     (FormatChoice::Format(SampleFormat::F64), "64-bit float"),
 ];
+
+/// The level select's items: the encoder's default, then FLAC's 0 to 8.
+const LEVELS: [&str; 10] = [
+    "Default",
+    "0 \u{b7} Fastest",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8 \u{b7} Smallest",
+];
+
+fn format_label(choice: FormatChoice) -> &'static str {
+    FORMATS
+        .iter()
+        .find(|(format, _)| *format == choice)
+        .map_or("", |(_, label)| label)
+}
 
 /// The label column's width.
 const LABEL_COLUMN: Pixels = px(88.);
@@ -44,7 +65,11 @@ pub struct ConvertDialog {
     exists: Exists,
     output: Entity<InputState>,
     preset: Choice,
+    container: Choice,
     format: Choice,
+    level: Choice,
+    /// What the format select lists now: the engine's options for this source and container.
+    format_items: Vec<FormatChoice>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,21 +93,32 @@ impl ConvertDialog {
             window,
             cx,
         );
-        let format = choice(
-            FORMATS
+        let container = choice(
+            Container::ALL
                 .iter()
-                .map(|(_, label)| (*label).to_owned())
+                .map(|c| c.label().to_owned())
                 .collect(),
             window,
             cx,
         );
+        let format_items = sheet.format_options();
+        let format = choice(
+            format_items
+                .iter()
+                .map(|c| format_label(*c).to_owned())
+                .collect(),
+            window,
+            cx,
+        );
+        let level = choice(LEVELS.iter().map(|l| (*l).to_owned()).collect(), window, cx);
         let subscriptions = vec![
             // `set_value` stays silent, so a change event is always the user typing.
-            cx.subscribe_in(&output, window, |this, input, event, _, cx| {
+            cx.subscribe_in(&output, window, |this, input, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = input.read(cx).value().to_string();
                     this.sheet.set_output(text);
-                    cx.notify();
+                    // A typed extension can change the container and what it offers.
+                    this.sync_choices(window, cx);
                 }
             }),
             cx.subscribe_in(
@@ -98,13 +134,41 @@ impl ConvertDialog {
                 },
             ),
             cx.subscribe_in(
+                &container,
+                window,
+                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event
+                        && let Some(container) = Container::ALL.iter().find(|c| c.label() == label)
+                    {
+                        this.sheet.set_container(*container);
+                        this.sync(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
                 &format,
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(label)) = event
-                        && let Some((format, _)) = FORMATS.iter().find(|(_, l)| l == label)
+                        && let Some(choice) = this
+                            .format_items
+                            .iter()
+                            .find(|c| format_label(**c) == label)
                     {
-                        this.sheet.set_format(*format);
+                        this.sheet.set_format(*choice);
+                        this.sync(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &level,
+                window,
+                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event
+                        && let Some(at) = LEVELS.iter().position(|l| l == label)
+                    {
+                        this.sheet
+                            .set_level(at.checked_sub(1).and_then(|l| u8::try_from(l).ok()));
                         this.sync(window, cx);
                     }
                 },
@@ -116,7 +180,10 @@ impl ConvertDialog {
             exists,
             output,
             preset,
+            container,
             format,
+            level,
+            format_items,
             _subscriptions: subscriptions,
         };
         dialog.sync(window, cx);
@@ -140,10 +207,66 @@ impl ConvertDialog {
 
     /// What the sample-format select shows.
     pub fn format_label(&self, _: &App) -> &'static str {
-        FORMATS
-            .iter()
-            .find(|(format, _)| *format == self.sheet.format())
-            .map_or("", |(_, label)| label)
+        format_label(self.sheet.format())
+    }
+
+    /// What the container select shows.
+    pub fn container_label(&self, _: &App) -> &'static str {
+        self.sheet.container().label()
+    }
+
+    /// What the level select shows.
+    pub fn level_label(&self, _: &App) -> &'static str {
+        LEVELS[self.sheet.level().map_or(0, |l| usize::from(l) + 1)]
+    }
+
+    /// The items of the select called `id`, in order.
+    pub fn select_labels(&self, id: &str, _: &App) -> Vec<String> {
+        match id {
+            "sheet-preset" => PRESETS.iter().map(|p| p.label.to_owned()).collect(),
+            "sheet-container" => Container::ALL
+                .iter()
+                .map(|c| c.label().to_owned())
+                .collect(),
+            "sheet-format" => self
+                .format_items
+                .iter()
+                .map(|c| format_label(*c).to_owned())
+                .collect(),
+            "sheet-level" => LEVELS.iter().map(|l| (*l).to_owned()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The item of the select called `id` that is showing, if any.
+    pub fn shown_label(&self, id: &str, cx: &App) -> Option<String> {
+        match id {
+            "sheet-preset" => self.preset_label(cx).map(str::to_owned),
+            "sheet-container" => Some(self.container_label(cx).to_owned()),
+            "sheet-format" => Some(self.format_label(cx).to_owned()),
+            "sheet-level" => Some(self.level_label(cx).to_owned()),
+            _ => None,
+        }
+    }
+
+    /// The line saying why the file will not be saved as asked, if it will not.
+    pub fn hint(&self) -> Option<String> {
+        self.sheet.hint()
+    }
+
+    /// Whether the format select can be used (it cannot while copying).
+    pub fn format_enabled(&self) -> bool {
+        self.sheet.format_enabled()
+    }
+
+    /// Whether the level select shows, and can be used.
+    pub fn level_enabled(&self) -> bool {
+        self.sheet.level_enabled()
+    }
+
+    /// Whether "Copy audio unchanged" is on.
+    pub fn copy(&self) -> bool {
+        self.sheet.copy()
     }
 
     /// What the preset select shows; `None` when the format matches no preset.
@@ -179,7 +302,7 @@ impl ConvertDialog {
         }
     }
 
-    /// Push the model's state into the path field and both selects.
+    /// Push the model's state into the path field and the selects.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.sheet.output().to_owned();
         self.output.update(cx, |input, cx| {
@@ -190,17 +313,44 @@ impl ConvertDialog {
             // input scrolls back to the start on `set_value`.
             input.set_scroll_offset(point(px(-1_000_000.), px(0.)), cx);
         });
+        self.sync_choices(window, cx);
+    }
+
+    /// Push the model's state into the selects, leaving the path field alone.
+    fn sync_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let preset = PRESETS
             .iter()
             .position(|p| Some(p.id) == self.sheet.preset().map(|s| s.id));
         self.preset.update(cx, |select, cx| {
             select.set_selected_index(preset.map(IndexPath::new), window, cx);
         });
-        let format = FORMATS
+        let container = Container::ALL
             .iter()
-            .position(|(format, _)| *format == self.sheet.format());
+            .position(|c| *c == self.sheet.container());
+        self.container.update(cx, |select, cx| {
+            select.set_selected_index(container.map(IndexPath::new), window, cx);
+        });
+        let options = self.sheet.format_options();
+        if options != self.format_items {
+            self.format_items = options;
+            let labels = self
+                .format_items
+                .iter()
+                .map(|c| format_label(*c).to_owned())
+                .collect();
+            self.format
+                .update(cx, |select, cx| select.set_items(labels, window, cx));
+        }
+        let format = self
+            .format_items
+            .iter()
+            .position(|c| *c == self.sheet.format());
         self.format.update(cx, |select, cx| {
             select.set_selected_index(format.map(IndexPath::new), window, cx);
+        });
+        let level = usize::from(self.sheet.level().map_or(0, |l| l + 1));
+        self.level.update(cx, |select, cx| {
+            select.set_selected_index(Some(IndexPath::new(level)), window, cx);
         });
         cx.notify();
     }
@@ -258,6 +408,8 @@ impl Render for ConvertDialog {
             .ok()
             .and_then(|request| command_line(&request).ok());
         let overwrite = self.sheet.overwrite();
+        let hint = self.sheet.hint();
+        let (copy_available, copy) = (self.sheet.copy_available(), self.sheet.copy());
         v_flex()
             .id("convert-sheet")
             .gap_3()
@@ -274,14 +426,53 @@ impl Render for ConvertDialog {
             )
             .child(
                 self.row(
-                    "Format",
+                    "Container",
                     div()
-                        .id("sheet-format")
+                        .id("sheet-container")
                         .test_support()
-                        .child(Select::new(&self.format).small()),
+                        .child(Select::new(&self.container).small()),
                     cx,
                 ),
             )
+            .child(
+                self.row(
+                    "Format",
+                    div().id("sheet-format").test_support().child(
+                        Select::new(&self.format)
+                            .small()
+                            .placeholder("Not available")
+                            .disabled(!self.sheet.format_enabled()),
+                    ),
+                    cx,
+                ),
+            )
+            .when(self.sheet.level_visible(), |sheet| {
+                sheet.child(
+                    self.row(
+                        "Level",
+                        div().id("sheet-level").test_support().child(
+                            Select::new(&self.level)
+                                .small()
+                                .disabled(!self.sheet.level_enabled()),
+                        ),
+                        cx,
+                    ),
+                )
+            })
+            .when_some(hint, |sheet, hint| {
+                sheet.child(
+                    self.row(
+                        "",
+                        div()
+                            .id("sheet-hint")
+                            .test_support()
+                            .text_size(LABEL_SIZE + px(1.))
+                            .text_color(muted)
+                            .child(SharedString::from(hint)),
+                        cx,
+                    ),
+                )
+            })
             .child(
                 self.row(
                     "Output",
@@ -310,22 +501,42 @@ impl Render for ConvertDialog {
             .child(
                 self.row(
                     "",
-                    h_flex().child(
-                        div().id("sheet-overwrite").test_support().child(
-                            Switch::new("sheet-overwrite-switch")
-                                .label("Replace existing file")
-                                .checked(overwrite)
-                                .on_click({
-                                    let this = cx.entity();
-                                    move |checked: &bool, _, cx| {
-                                        this.update(cx, |dialog, cx| {
-                                            dialog.sheet.set_overwrite(*checked);
-                                            cx.notify();
-                                        });
-                                    }
-                                }),
-                        ),
-                    ),
+                    h_flex()
+                        .gap_4()
+                        .child(
+                            div().id("sheet-overwrite").test_support().child(
+                                Switch::new("sheet-overwrite-switch")
+                                    .label("Replace existing file")
+                                    .checked(overwrite)
+                                    .on_click({
+                                        let this = cx.entity();
+                                        move |checked: &bool, _, cx| {
+                                            this.update(cx, |dialog, cx| {
+                                                dialog.sheet.set_overwrite(*checked);
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
+                            ),
+                        )
+                        .when(copy_available, |row| {
+                            row.child(
+                                div().id("sheet-copy").test_support().child(
+                                    Switch::new("sheet-copy-switch")
+                                        .label("Copy audio unchanged")
+                                        .checked(copy)
+                                        .on_click({
+                                            let this = cx.entity();
+                                            move |checked: &bool, window, cx| {
+                                                this.update(cx, |dialog, cx| {
+                                                    dialog.sheet.set_copy(*checked);
+                                                    dialog.sync(window, cx);
+                                                });
+                                            }
+                                        }),
+                                ),
+                            )
+                        }),
                     cx,
                 ),
             )
@@ -367,13 +578,12 @@ impl Render for ConvertDialog {
                                 .child(SharedString::from(command)),
                         )
                         .child(
-                            icon_button("sheet-copy", IconName::Copy, "Copy command", cx).on_click(
-                                move |_, _, cx| {
+                            icon_button("sheet-command-copy", IconName::Copy, "Copy command", cx)
+                                .on_click(move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
                                         copied.clone(),
                                     ));
-                                },
-                            ),
+                                }),
                         ),
                 )
             })

@@ -58,7 +58,7 @@ fn clock(seconds: f64) -> String {
     }
 }
 
-/// The muted line under a file's name: `48 kHz · stereo · s24 · 1:02.250`.
+/// The muted line under a file's name: `FLAC · 48 kHz · stereo · 24-bit · 1:02.250`.
 pub(crate) fn summary(entry: &InputEntry) -> String {
     let InputState::Probed(doc, _) = &entry.state else {
         return "unreadable".to_owned();
@@ -71,9 +71,10 @@ fn summary_of(doc: &ProbeDocument) -> String {
         return "no audio".to_owned();
     };
     let mut parts = vec![
+        inspector::format_name(&doc.format),
         kilohertz(stream.sample_rate),
         stream.layout.clone(),
-        stream.sample_format.clone(),
+        inspector::depth(stream),
     ];
     parts.extend(stream.duration_seconds.map(clock));
     parts.join(" \u{b7} ")
@@ -344,7 +345,7 @@ impl Workspace {
                                     h_flex()
                                         .id(SharedString::from(format!(
                                             "inspector-row-{s}-{}",
-                                            row.field
+                                            row.id
                                         )))
                                         .test_support()
                                         .h(INSPECTOR_ROW)

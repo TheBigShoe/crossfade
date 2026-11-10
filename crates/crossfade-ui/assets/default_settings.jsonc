@@ -25,6 +25,8 @@
   // What a new conversion starts from.
   "convert": {
     // The output preset a conversion starts with. "same" keeps the input's format.
+    // WAV: "same", "cd", "studio" (24-bit), "float". FLAC: "flac", "flac-cd", "flac-24".
+    // AIFF: "aiff".
     "preset": "same",
     // Replace an output file that already exists instead of asking.
     "overwrite": false
