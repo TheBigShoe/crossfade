@@ -63,8 +63,9 @@ impl Script {
             .clone()
     }
 
-    /// Report how job `id` is going, as the worker thread would.
-    pub fn send(&self, id: JobId, event: RunnerEvent) {
+    /// Report how the `start`-th job started is going, as its worker thread would.
+    pub fn send(&self, start: usize, event: RunnerEvent) {
+        let id = self.starts()[start].id;
         self.events
             .try_send((id, event))
             .expect("the workspace is listening");
