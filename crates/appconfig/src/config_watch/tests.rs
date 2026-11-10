@@ -18,10 +18,18 @@ use crossbeam_channel::{Receiver, TryRecvError, unbounded};
 use notify::event::{AccessKind, CreateKind, MetadataKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Event, EventKind};
 
-use crate::paths::ConfigPaths;
+use crate::paths::{AppIdentity, ConfigPaths};
 use crate::test_util::TempDir;
 
 use super::*;
+
+const APP: AppIdentity = AppIdentity {
+    env_var: "TESTAPP_CONFIG_DIR",
+    unix_dir: "testapp",
+    windows_dir: "TestApp",
+    project_dir: ".testapp",
+    fallback_dir: "testapp-config",
+};
 
 /// How long an expected event has to show up in. FSEvents can take a second or more on a
 /// loaded machine; the debounce itself is 100 ms.
@@ -393,8 +401,8 @@ fn a_missing_config_directory_is_created_so_files_can_appear_later() {
 fn the_project_settings_file_is_watched_too() {
     let root = TempDir::new("watch-project");
     let project_file = root.write("repo/.testapp/settings.json", "{}");
-    let paths =
-        ConfigPaths::new(root.path().join("config")).with_project_from(&root.path().join("repo"));
+    let paths = ConfigPaths::new(root.path().join("config"))
+        .with_project_from(&APP, &root.path().join("repo"));
     assert_eq!(
         paths.project_settings.as_deref(),
         Some(project_file.as_path())
@@ -481,7 +489,7 @@ fn the_forwarder_sends_each_kind_once_per_batch_and_stops_when_asked() {
                 &stop_rx,
                 &tx,
                 &alive,
-            )
+            );
         })
     };
 
@@ -518,7 +526,7 @@ fn the_forwarder_sends_nothing_once_the_watcher_is_not_alive() {
                 &stop_rx,
                 &tx,
                 &alive,
-            )
+            );
         })
     };
     batch_tx
@@ -550,7 +558,7 @@ fn the_forwarder_ends_when_the_receiver_is_gone() {
                 &stop_rx,
                 &tx,
                 &alive,
-            )
+            );
         })
     };
     batch_tx

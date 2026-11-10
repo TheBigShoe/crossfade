@@ -15,7 +15,17 @@ pub mod settings;
 pub mod theme;
 
 pub use atomic::write_atomic;
+pub use config_watch::{ConfigEvent, ConfigWatcher, WatchSpec};
+pub use keymap::{ActionRef, KeyBinding, Keymap, KeymapError, load_keymap};
 pub use paths::{AppIdentity, ConfigPaths, Platform};
+pub use settings::{
+    EditError, FontFeatures, FontSpec, KeyChange, KeymapEditor, LineHeight, Loaded, SettingsEditor,
+    SettingsError, SettingsLayer, SettingsWarning, ThemeMode, ThemeSelection, load_files,
+    load_layers,
+};
+pub use theme::{
+    Appearance, Rgba, Theme, ThemeDefaults, ThemeError, ThemeFamily, ThemeRegistry, ThemeWarning,
+};
 
 #[cfg(test)]
 mod test_util;
