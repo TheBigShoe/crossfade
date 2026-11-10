@@ -1,6 +1,8 @@
 //! The Crossfade desktop app. Nothing in the engine depends on this crate.
 #![forbid(unsafe_code)]
 
+pub mod icons;
+
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports
     //! `crate::prelude::*`.
