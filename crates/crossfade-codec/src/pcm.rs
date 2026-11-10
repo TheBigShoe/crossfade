@@ -1,21 +1,29 @@
-//! Little-endian PCM: bytes to samples and back, one sample format per codec.
+//! PCM, little- and big-endian: bytes to samples and back, one sample format per codec.
 
 use crossfade_core::{
     AudioFrame, AudioSpec, ChannelLayout, CodecId, Decoder, Encoder, Error, Packet, SampleFormat,
     Samples, StreamInfo,
 };
 
-fn pcm_format(codec: CodecId) -> Result<SampleFormat, Error> {
-    // The byte order is fixed little-endian below; refuse the rest instead of misreading it.
-    if codec.is_pcm()
-        && CodecId::pcm_for(codec.pcm_sample_format().unwrap_or(SampleFormat::U8)) != codec
-    {
-        return Err(Error::Unsupported {
-            what: format!("{} is not built yet", codec.name()),
-        });
-    }
-    codec.pcm_sample_format().ok_or_else(|| Error::Unsupported {
-        what: format!("{} is not a PCM codec", codec.name()),
+/// How a PCM codec lays its samples out: byte order, and 8-bit signedness.
+#[derive(Debug, Clone, Copy)]
+struct Kind {
+    format: SampleFormat,
+    big: bool,
+    /// Signed 8-bit; the engine's `U8` is the same byte plus 128.
+    signed8: bool,
+}
+
+fn pcm_kind(codec: CodecId) -> Result<Kind, Error> {
+    let format = codec
+        .pcm_sample_format()
+        .ok_or_else(|| Error::Unsupported {
+            what: format!("{} is not a PCM codec", codec.name()),
+        })?;
+    Ok(Kind {
+        format,
+        big: CodecId::pcm_for(format) != codec && codec != CodecId::PcmS8,
+        signed8: codec == CodecId::PcmS8,
     })
 }
 
@@ -24,29 +32,60 @@ fn s24_from_le(b: &[u8; 3]) -> i32 {
     i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8
 }
 
-fn decode_into(data: &[u8], out: &mut Samples) {
+fn s24_from_be(b: &[u8; 3]) -> i32 {
+    i32::from_be_bytes([b[0], b[1], b[2], 0]) >> 8
+}
+
+fn decode_into(data: &[u8], out: &mut Samples, kind: Kind) {
     // Each arm is a tight loop over fixed-size chunks; no per-sample format
     // branch. Callers guarantee whole samples, so the remainder is empty.
+    let big = kind.big;
     match out {
+        Samples::U8(v) if kind.signed8 => v.extend(data.iter().map(|b| b.wrapping_add(128))),
         Samples::U8(v) => v.extend_from_slice(data),
+        Samples::S16(v) if big => v.extend(
+            data.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_be_bytes(*c)),
+        ),
         Samples::S16(v) => v.extend(
             data.as_chunks::<2>()
                 .0
                 .iter()
                 .map(|c| i16::from_le_bytes(*c)),
         ),
+        Samples::S24(v) if big => v.extend(data.as_chunks::<3>().0.iter().map(s24_from_be)),
         Samples::S24(v) => v.extend(data.as_chunks::<3>().0.iter().map(s24_from_le)),
+        Samples::S32(v) if big => v.extend(
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| i32::from_be_bytes(*c)),
+        ),
         Samples::S32(v) => v.extend(
             data.as_chunks::<4>()
                 .0
                 .iter()
                 .map(|c| i32::from_le_bytes(*c)),
         ),
+        Samples::F32(v) if big => v.extend(
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_be_bytes(*c)),
+        ),
         Samples::F32(v) => v.extend(
             data.as_chunks::<4>()
                 .0
                 .iter()
                 .map(|c| f32::from_le_bytes(*c)),
+        ),
+        Samples::F64(v) if big => v.extend(
+            data.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| f64::from_be_bytes(*c)),
         ),
         Samples::F64(v) => v.extend(
             data.as_chunks::<8>()
@@ -57,17 +96,27 @@ fn decode_into(data: &[u8], out: &mut Samples) {
     }
 }
 
-fn encode_into(samples: &Samples, out: &mut Vec<u8>) {
+fn encode_into(samples: &Samples, out: &mut Vec<u8>, kind: Kind) {
+    let big = kind.big;
     match samples {
+        Samples::U8(v) if kind.signed8 => out.extend(v.iter().map(|b| b.wrapping_sub(128))),
         Samples::U8(v) => out.extend_from_slice(v),
+        Samples::S16(v) if big => out.extend(v.iter().flat_map(|x| x.to_be_bytes())),
         Samples::S16(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
         // Low three bytes; callers keep values within +-2^23.
+        Samples::S24(v) if big => out.extend(v.iter().flat_map(|x| {
+            let b = x.to_be_bytes();
+            [b[1], b[2], b[3]]
+        })),
         Samples::S24(v) => out.extend(v.iter().flat_map(|x| {
             let b = x.to_le_bytes();
             [b[0], b[1], b[2]]
         })),
+        Samples::S32(v) if big => out.extend(v.iter().flat_map(|x| x.to_be_bytes())),
         Samples::S32(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
+        Samples::F32(v) if big => out.extend(v.iter().flat_map(|x| x.to_be_bytes())),
         Samples::F32(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
+        Samples::F64(v) if big => out.extend(v.iter().flat_map(|x| x.to_be_bytes())),
         Samples::F64(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
     }
 }
@@ -76,6 +125,7 @@ fn encode_into(samples: &Samples, out: &mut Vec<u8>) {
 pub struct PcmDecoder {
     sample_rate: u32,
     layout: ChannelLayout,
+    kind: Kind,
     format: SampleFormat,
     bytes_per_frame: usize,
     pending: AudioFrame,
@@ -84,11 +134,13 @@ pub struct PcmDecoder {
 
 impl PcmDecoder {
     pub fn new(stream: &StreamInfo) -> Result<Self, Error> {
-        let format = pcm_format(stream.codec)?;
+        let kind = pcm_kind(stream.codec)?;
+        let format = kind.format;
         let layout = stream.audio.layout().clone();
         let spec = AudioSpec::new(stream.audio.sample_rate(), format, layout.clone())?;
         Ok(Self {
             sample_rate: spec.sample_rate(),
+            kind,
             format,
             bytes_per_frame: spec.bytes_per_frame(),
             layout,
@@ -121,7 +173,7 @@ impl Decoder for PcmDecoder {
         } else {
             self.pending.samples = Samples::new(self.format);
         }
-        decode_into(&packet.data, &mut self.pending.samples);
+        decode_into(&packet.data, &mut self.pending.samples, self.kind);
         self.pending.pts = packet.pts;
         self.has_pending = true;
         Ok(())
@@ -144,6 +196,7 @@ impl Decoder for PcmDecoder {
 
 #[derive(Debug)]
 pub struct PcmEncoder {
+    kind: Kind,
     format: SampleFormat,
     sample_rate: u32,
     channels: u16,
@@ -154,8 +207,10 @@ pub struct PcmEncoder {
 impl PcmEncoder {
     /// The codec decides the sample format; `spec` supplies rate and channels.
     pub fn new(codec: CodecId, spec: &AudioSpec) -> Result<Self, Error> {
+        let kind = pcm_kind(codec)?;
         Ok(Self {
-            format: pcm_format(codec)?,
+            kind,
+            format: kind.format,
             sample_rate: spec.sample_rate(),
             channels: spec.layout().channels(),
             pending: Packet::default(),
@@ -201,7 +256,7 @@ impl Encoder for PcmEncoder {
             });
         }
         self.pending.data.clear();
-        encode_into(&frame.samples, &mut self.pending.data);
+        encode_into(&frame.samples, &mut self.pending.data, self.kind);
         self.pending.stream = 0;
         self.pending.pts = frame.pts;
         self.pending.duration = (frame.samples.len() / channels) as u64;
