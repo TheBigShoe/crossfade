@@ -753,3 +753,85 @@ fn the_20_bit_flac_converts_to_24_bit_samples_shifted_left_by_four() {
         serde_json::Value::Null
     );
 }
+
+// ---- stream copy ---------------------------------------------------------------------------
+
+#[test]
+fn flac_to_flac_copy_keeps_streaminfo_and_every_frame_byte_identical() {
+    let d = Dir::new("copy-flac");
+    for file in [
+        "stereo-16bit.flac",
+        "surround-5.1.flac",
+        "block-16.flac",
+        "stereo-24bit.flac",
+    ] {
+        let source = fixture(&format!("flac/{file}"));
+        d.write("in.flac", &source);
+        d.ok(&[
+            "convert", "in.flac", "-o", "out.flac", "--codec", "copy", "--force",
+        ]);
+        let (a, b) = (parse_flac(&source), parse_flac(&d.read("out.flac")));
+        assert_eq!(a.streaminfo, b.streaminfo, "{file}");
+        assert!(a.audio == b.audio, "{file}: frames differ");
+    }
+}
+
+#[test]
+fn ogg_flac_copy_writes_the_frames_of_its_native_twin_and_the_same_audio() {
+    let d = Dir::new("copy-ogg");
+    for name in ["stereo16", "mono24", "tagged", "smallblock", "noise8"] {
+        d.write("in.oga", &fixture(&format!("ogg/{name}.oga")));
+        let twin = fixture(&format!("ogg/{name}.flac"));
+        d.ok(&[
+            "convert", "in.oga", "-o", "out.flac", "--codec", "copy", "--force",
+        ]);
+        let (want, got) = (parse_flac(&twin), parse_flac(&d.read("out.flac")));
+        assert!(
+            got.audio == want.audio,
+            "{name}: frames differ from the native twin"
+        );
+        // MD5 and total samples describe the audio, so they match whatever the block sizes.
+        assert_eq!(
+            got.streaminfo[18..],
+            want.streaminfo[18..],
+            "{name}: md5, total samples"
+        );
+        assert_eq!(
+            got.streaminfo[10..18],
+            want.streaminfo[10..18],
+            "{name}: format"
+        );
+
+        d.write("twin.flac", &twin);
+        d.ok(&["convert", "out.flac", "-o", "a.wav", "--force"]);
+        d.ok(&["convert", "twin.flac", "-o", "b.wav", "--force"]);
+        d.ok(&["convert", "in.oga", "-o", "c.wav", "--force"]);
+        let (a, b, c) = (d.read("a.wav"), d.read("b.wav"), d.read("c.wav"));
+        assert!(a == b && b == c, "{name}: decoded audio differs");
+    }
+}
+
+#[test]
+fn copy_never_needs_a_decoder() {
+    let d = Dir::new("copy-damaged");
+    let source = fixture("flac/stereo-16bit.flac");
+    let damaged = flac_with_damaged_audio(&source);
+    d.write("damaged.flac", &damaged);
+
+    // The frames still split and pass their CRCs, but the audio is no longer what STREAMINFO's
+    // MD5 was taken over.
+    let err = d.refused(&["convert", "damaged.flac", "-o", "out.wav"], "MD5");
+    assert!(err.contains("does not match the MD5"), "{err}");
+
+    d.ok(&[
+        "convert",
+        "damaged.flac",
+        "-o",
+        "out.flac",
+        "--codec",
+        "copy",
+    ]);
+    let (a, b) = (parse_flac(&damaged), parse_flac(&d.read("out.flac")));
+    assert!(a.audio == b.audio);
+    assert_eq!(a.streaminfo, b.streaminfo);
+}
