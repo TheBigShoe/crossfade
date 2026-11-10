@@ -240,10 +240,6 @@ mod tests {
             "writing flac is not built yet"
         );
         assert_eq!(
-            unsupported(mk(FormatId::Aiff)),
-            "writing aiff is not built yet"
-        );
-        assert_eq!(
             unsupported(mk(FormatId::Ogg)),
             "writing ogg is not built yet"
         );

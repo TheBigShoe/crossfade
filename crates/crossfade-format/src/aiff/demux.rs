@@ -1,4 +1,4 @@
-use super::{FRAMES_PER_PACKET, extended};
+use super::{FRAMES_PER_PACKET, TEXT_CAP, extended};
 use crate::wav::{fill, fill_exact, skip};
 use crossfade_core::{
     AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet, StreamInfo,
@@ -6,8 +6,6 @@ use crossfade_core::{
 };
 use std::io::SeekFrom;
 
-/// Text chunks are tags, not payload: larger ones are skipped rather than read.
-const TEXT_CAP: u64 = 64 * 1024;
 /// `COMM` fields: 18 bytes, plus the 4-byte compression type for AIFF-C.
 const COMM_PLAIN: usize = 18;
 const COMM_AIFC: usize = 22;
