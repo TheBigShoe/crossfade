@@ -45,6 +45,7 @@
 pub mod bits;
 pub mod crc;
 pub mod decode;
+pub mod encode;
 pub mod error;
 pub mod frame;
 pub mod md5;
@@ -52,4 +53,5 @@ pub mod streaminfo;
 mod subframe;
 
 pub use decode::{Block, Decoder, Verification};
+pub use encode::{Encoder, EncoderConfig};
 pub use error::{Error, Result};
