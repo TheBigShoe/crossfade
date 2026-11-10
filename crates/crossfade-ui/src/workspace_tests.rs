@@ -67,7 +67,7 @@ fn the_overflow_menu_opens_and_about_records_about(cx: &mut TestAppContext) {
     step(cx, 2);
     draw(cx, window);
     cx.update_window(window, |_, window, cx| {
-        window.within("popup-menu").click(0usize, cx)
+        window.within("popup-menu").click(0usize, cx);
     })
     .expect("the window is open");
     cx.run_until_parked();
