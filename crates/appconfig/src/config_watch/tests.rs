@@ -1,0 +1,944 @@
+//! Watcher tests. They have to hold on FSEvents (macOS), which delivers events late, in
+//! folded batches, and sometimes twice for one write, so they assert sets rather than
+//! sequences and counts:
+//!
+//! - an event that must arrive is waited for up to [`WAIT`], and returns as soon as it
+//!   has, so a fast machine pays nothing for the slack;
+//! - a quiet period is only asserted for a class of event the filter must suppress, in a
+//!   test that makes no legitimate change of that class, so a late duplicate of a real
+//!   event can never fail it.
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, TryRecvError, unbounded};
+use notify::event::{AccessKind, CreateKind, MetadataKind, ModifyKind, RemoveKind, RenameMode};
+use notify::{Event, EventKind};
+
+use crate::paths::ConfigPaths;
+use crate::test_util::TempDir;
+
+use super::*;
+
+/// How long an expected event has to show up in. FSEvents can take a second or more on a
+/// loaded machine; the debounce itself is 100 ms.
+const WAIT: Duration = Duration::from_secs(3);
+
+/// How long to keep listening after an expected event, to catch one that must not exist.
+const GRACE: Duration = Duration::from_millis(500);
+
+/// Time for the OS watcher to be ready before a test touches a file.
+const SETTLE: Duration = Duration::from_millis(200);
+
+use ConfigEvent::{Keymap, Settings, Themes};
+
+/// The app-declared folders of these tests, by index in [`specs`]: recursive Lua files,
+/// flat JSON files, and recursive plugin files.
+const SCRIPTS: ConfigEvent = ConfigEvent::Extra(0);
+const COMMANDS: ConfigEvent = ConfigEvent::Extra(1);
+const PLUGINS: ConfigEvent = ConfigEvent::Extra(2);
+
+fn specs(paths: &ConfigPaths) -> Vec<WatchSpec> {
+    vec![
+        WatchSpec::new(paths.dir.join("scripts"), true, &["lua"]),
+        WatchSpec::new(paths.dir.join("commands"), false, &["json"]),
+        WatchSpec::new(
+            paths.dir.join("plugins"),
+            true,
+            &["lua", "wasm", "toml", "json"],
+        ),
+    ]
+}
+
+struct Fixture {
+    _root: TempDir,
+    paths: ConfigPaths,
+    rx: Receiver<ConfigEvent>,
+    watcher: ConfigWatcher,
+}
+
+/// A config directory that does not exist yet, watched.
+fn watched() -> Fixture {
+    let root = TempDir::new("watch");
+    let paths = ConfigPaths::new(root.path().join("config"));
+    let (tx, rx) = unbounded();
+    let watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    assert!(watcher.is_active(), "the OS watcher did not start");
+    std::thread::sleep(SETTLE);
+    Fixture {
+        _root: root,
+        paths,
+        rx,
+        watcher,
+    }
+}
+
+/// Reads events until every kind in `wanted` has arrived, failing after [`WAIT`], then
+/// keeps reading for [`GRACE`]. Returns everything that arrived, as a set.
+fn expect(rx: &Receiver<ConfigEvent>, wanted: &[ConfigEvent]) -> BTreeSet<ConfigEvent> {
+    let mut seen = BTreeSet::new();
+    let deadline = Instant::now() + WAIT;
+    while !wanted.iter().all(|kind| seen.contains(kind)) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(event) => {
+                seen.insert(event);
+            }
+            Err(_) => panic!("waited {WAIT:?} for {wanted:?}, but only saw {seen:?}"),
+        }
+    }
+    let end = Instant::now() + GRACE;
+    while let Ok(event) = rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
+        seen.insert(event);
+    }
+    seen
+}
+
+/// Throws away whatever has arrived so far.
+fn drain(rx: &Receiver<ConfigEvent>) {
+    while rx.try_recv().is_ok() {}
+}
+
+fn set(kinds: &[ConfigEvent]) -> BTreeSet<ConfigEvent> {
+    kinds.iter().copied().collect()
+}
+
+// ---- Real file system events ----
+
+#[test]
+fn a_new_settings_file_is_noticed() {
+    let f = watched();
+    // The file does not exist when the watcher starts.
+    assert!(!f.paths.settings.exists());
+    fs::write(&f.paths.settings, "{ \"buffer_font_size\": 13 }").unwrap();
+    // Nothing but settings: the directories the watcher made at startup stay silent.
+    assert_eq!(expect(&f.rx, &[Settings]), set(&[Settings]));
+}
+
+#[test]
+fn creating_the_watcher_makes_no_event() {
+    let root = TempDir::new("watch-quiet");
+    let paths = ConfigPaths::new(root.path().join("a").join("b").join("app"));
+    let (tx, rx) = unbounded();
+    let watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    assert!(watcher.is_active());
+    // The watcher created both directories itself.
+    assert!(paths.dir.is_dir());
+    assert!(paths.themes.is_dir());
+    assert!(paths.dir.join("commands").is_dir());
+    // Long enough for FSEvents to have reported them, folded into a later batch.
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[test]
+fn editing_an_existing_settings_file_is_noticed() {
+    let root = TempDir::new("watch-edit");
+    let paths = ConfigPaths::new(root.path());
+    fs::write(&paths.settings, "{}").unwrap();
+    let (tx, rx) = unbounded();
+    let _watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    std::thread::sleep(SETTLE);
+    drain(&rx);
+
+    fs::write(&paths.settings, "{ \"local_echo\": true }").unwrap();
+    assert_eq!(expect(&rx, &[Settings]), set(&[Settings]));
+}
+
+#[test]
+fn a_file_saved_by_rename_is_noticed() {
+    let f = watched();
+    // Editors write a temp file and rename it over the target.
+    let temp = f.paths.dir.join(".settings.json.tmp");
+    fs::write(&temp, "{}").unwrap();
+    fs::rename(&temp, &f.paths.settings).unwrap();
+    assert_eq!(expect(&f.rx, &[Settings]), set(&[Settings]));
+}
+
+#[test]
+fn deleting_a_settings_file_is_noticed() {
+    let root = TempDir::new("watch-delete");
+    let paths = ConfigPaths::new(root.path());
+    fs::write(&paths.settings, "{}").unwrap();
+    let (tx, rx) = unbounded();
+    let _watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    std::thread::sleep(SETTLE);
+    drain(&rx);
+
+    fs::remove_file(&paths.settings).unwrap();
+    assert_eq!(expect(&rx, &[Settings]), set(&[Settings]));
+}
+
+#[test]
+fn a_new_keymap_file_is_noticed() {
+    let f = watched();
+    fs::write(&f.paths.keymap, "[]").unwrap();
+    assert_eq!(expect(&f.rx, &[Keymap]), set(&[Keymap]));
+}
+
+#[test]
+fn a_theme_file_is_noticed() {
+    let f = watched();
+    // The themes folder was made by the watcher and is already watched.
+    fs::write(f.paths.themes.join("mine.json"), "{}").unwrap();
+    assert_eq!(expect(&f.rx, &[Themes]), set(&[Themes]));
+}
+
+#[test]
+fn a_commands_file_is_noticed() {
+    let f = watched();
+    // The commands folder was made by the watcher and is already watched.
+    assert!(f.paths.dir.join("commands").is_dir());
+    fs::write(f.paths.dir.join("commands").join("mine.json"), "{}").unwrap();
+    assert_eq!(expect(&f.rx, &[COMMANDS]), set(&[COMMANDS]));
+}
+
+#[test]
+fn a_script_file_is_noticed_at_any_depth() {
+    let f = watched();
+    // The scripts folder was made by the watcher and is already watched, recursively.
+    assert!(f.paths.dir.join("scripts").is_dir());
+    fs::write(f.paths.dir.join("scripts").join("probe.lua"), "print(1)").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+    let lib = f.paths.dir.join("scripts").join("lib");
+    fs::create_dir(&lib).unwrap();
+    std::thread::sleep(SETTLE);
+    fs::write(lib.join("util.lua"), "return {}").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+}
+
+#[test]
+fn a_plugin_file_is_noticed_and_a_plugin_folder_copied_in_whole_too() {
+    let f = watched();
+    // The plugins folder was made by the watcher and is already watched, recursively.
+    assert!(f.paths.dir.join("plugins").is_dir());
+    let race = f.paths.dir.join("plugins").join("race");
+    fs::create_dir(&race).unwrap();
+    std::thread::sleep(SETTLE);
+    drain(&f.rx);
+    fs::write(race.join("plugin.lua"), "return {}").unwrap();
+    assert_eq!(expect(&f.rx, &[PLUGINS]), set(&[PLUGINS]));
+    // A folder made and filled at once, as copying a plugin in does.
+    let other = f.paths.dir.join("plugins").join("other");
+    fs::create_dir(&other).unwrap();
+    fs::write(other.join("plugin.lua"), "return {}").unwrap();
+    assert_eq!(expect(&f.rx, &[PLUGINS]), set(&[PLUGINS]));
+}
+
+/// Whether the backend's watches belong to directories, so a folder that comes back is
+/// re-watched and reported for sure (see the module docs). FSEvents may fold a quick
+/// delete and re-create of one path into nothing, and needs no re-watch.
+fn rewatches() -> bool {
+    watches_follow_directories()
+}
+
+/// Let the events of what a test just did arrive, then forget them.
+fn settle_and_drain(rx: &Receiver<ConfigEvent>) {
+    std::thread::sleep(GRACE);
+    drain(rx);
+}
+
+#[test]
+fn a_script_subfolder_made_and_filled_at_once_is_noticed() {
+    let f = watched();
+    // No pause between the folder and the file: on Linux the file can land before the
+    // new folder has a watch, and only the folder's own event says anything happened.
+    let lib = f.paths.dir.join("scripts").join("lib");
+    fs::create_dir(&lib).unwrap();
+    fs::write(lib.join("util.lua"), "return {}").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+}
+
+#[test]
+fn a_scripts_folder_made_after_the_old_one_went_is_watched_again() {
+    let f = watched();
+    let scripts = f.paths.dir.join("scripts");
+    // Move the watched folder away: on Linux and Windows its watch goes with it.
+    let old = f.paths.dir.join("scripts-old");
+    fs::rename(&scripts, &old).unwrap();
+    if rewatches() {
+        assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+    } else {
+        settle_and_drain(&f.rx);
+    }
+
+    // A new folder, filled at once, as "Open scripts folder" does: reported even though
+    // the file may land before the new watch.
+    fs::create_dir(&scripts).unwrap();
+    fs::write(scripts.join("probe.lua"), "print(1)").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+
+    // The new folder is watched: a later file in it is noticed by its own event.
+    fs::write(scripts.join("second.lua"), "print(2)").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+    // And in a subfolder of it, which only a recursive watch sees.
+    let lib = scripts.join("lib");
+    fs::create_dir(&lib).unwrap();
+    std::thread::sleep(SETTLE);
+    drain(&f.rx);
+    fs::write(lib.join("util.lua"), "return {}").unwrap();
+    assert_eq!(expect(&f.rx, &[SCRIPTS]), set(&[SCRIPTS]));
+}
+
+/// Deleting a watched folder is not portable to test: Windows keeps a directory with an
+/// open handle (the watch's) in a pending-delete state, so the name cannot be reused
+/// until the watch lets go. The rename test above covers Windows.
+#[cfg(not(windows))]
+#[test]
+fn a_commands_folder_deleted_and_made_again_is_watched_again() {
+    let f = watched();
+    let commands = f.paths.dir.join("commands");
+    fs::remove_dir(&commands).unwrap();
+    if rewatches() {
+        assert_eq!(expect(&f.rx, &[COMMANDS]), set(&[COMMANDS]));
+    } else {
+        settle_and_drain(&f.rx);
+    }
+    fs::create_dir(&commands).unwrap();
+    if rewatches() {
+        // Reported once the new watch is in place.
+        assert_eq!(expect(&f.rx, &[COMMANDS]), set(&[COMMANDS]));
+    } else {
+        settle_and_drain(&f.rx);
+    }
+    // The folder there now is watched.
+    fs::write(commands.join("mine.json"), "{}").unwrap();
+    assert_eq!(expect(&f.rx, &[COMMANDS]), set(&[COMMANDS]));
+}
+
+#[test]
+fn a_theme_file_in_a_subfolder_is_noticed() {
+    let f = watched();
+    let pack = f.paths.themes.join("pack");
+    fs::create_dir(&pack).unwrap();
+    // Let the recursive watch pick the new folder up before the file lands in it.
+    std::thread::sleep(SETTLE);
+    fs::write(pack.join("dark.json"), "{}").unwrap();
+    assert_eq!(expect(&f.rx, &[Themes]), set(&[Themes]));
+}
+
+#[test]
+fn files_that_are_not_config_and_directories_are_ignored() {
+    let f = watched();
+    let themes = &f.paths.themes;
+    let dir = &f.paths.dir;
+    // None of these may produce an event.
+    let commands = f.paths.dir.join("commands");
+    fs::write(commands.join("notes.txt"), "hi").unwrap();
+    fs::create_dir(commands.join("sub")).unwrap();
+    fs::create_dir(commands.join("looks-like-a-collection.json")).unwrap();
+    fs::write(commands.join(".mine.json.1-0.tmp"), "x").unwrap();
+    fs::write(themes.join("notes.txt"), "hi").unwrap();
+    fs::write(themes.join("readme.md"), "hi").unwrap();
+    fs::create_dir(themes.join("pack")).unwrap();
+    fs::create_dir(themes.join("looks-like-a-theme.json")).unwrap();
+    fs::write(dir.join("other.json"), "{}").unwrap();
+    fs::write(dir.join("settings.json.swp"), "x").unwrap();
+    fs::write(dir.join(".keymap.json.tmp"), "x").unwrap();
+    fs::create_dir(dir.join("settings.json.d")).unwrap();
+    // The one real change, last, so that by the time it is reported the rest would have
+    // been. No settings or theme file is written here, so any such event is a leak.
+    fs::write(&f.paths.keymap, "[]").unwrap();
+    assert_eq!(expect(&f.rx, &[Keymap]), set(&[Keymap]));
+}
+
+#[test]
+fn changes_to_several_files_are_all_reported() {
+    let f = watched();
+    for round in 0..3 {
+        fs::write(
+            &f.paths.settings,
+            format!("{{ \"default_baud\": {} }}", 9600 + round),
+        )
+        .unwrap();
+        fs::write(&f.paths.keymap, "[]").unwrap();
+        fs::write(
+            f.paths.themes.join("t.json"),
+            format!("{{ \"round\": {round} }}"),
+        )
+        .unwrap();
+        fs::write(
+            f.paths.dir.join("commands").join("c.json"),
+            format!("{{ \"name\": \"round {round}\" }}"),
+        )
+        .unwrap();
+    }
+    // How many of each is up to the OS, so this checks the set.
+    assert_eq!(
+        expect(&f.rx, &[Settings, Keymap, Themes, COMMANDS]),
+        set(&[Settings, Keymap, Themes, COMMANDS])
+    );
+}
+
+#[test]
+fn a_missing_config_directory_is_created_so_files_can_appear_later() {
+    let root = TempDir::new("watch-missing");
+    let paths = ConfigPaths::new(root.path().join("a").join("b").join("app"));
+    assert!(!paths.dir.exists());
+    let (tx, rx) = unbounded();
+    let watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    assert!(watcher.is_active());
+    assert!(paths.dir.is_dir());
+    assert!(paths.themes.is_dir());
+    std::thread::sleep(SETTLE);
+    fs::write(&paths.settings, "{}").unwrap();
+    // The first event is the settings file, not the directories made at startup.
+    assert_eq!(expect(&rx, &[Settings]), set(&[Settings]));
+}
+
+#[test]
+fn the_project_settings_file_is_watched_too() {
+    let root = TempDir::new("watch-project");
+    let project_file = root.write("repo/.testapp/settings.json", "{}");
+    let paths =
+        ConfigPaths::new(root.path().join("config")).with_project_from(&root.path().join("repo"));
+    assert_eq!(
+        paths.project_settings.as_deref(),
+        Some(project_file.as_path())
+    );
+    let (tx, rx) = unbounded();
+    let _watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    std::thread::sleep(SETTLE);
+    drain(&rx);
+
+    fs::write(&project_file, "{ \"local_echo\": true }").unwrap();
+    assert_eq!(expect(&rx, &[Settings]), set(&[Settings]));
+}
+
+// ---- Shutdown ----
+
+#[test]
+fn dropping_the_watcher_is_synchronous() {
+    let f = watched();
+    let Fixture {
+        _root,
+        paths,
+        rx,
+        watcher,
+    } = f;
+    drop(watcher);
+
+    // Anything sent before the drop can still be read; after that the channel is
+    // disconnected, because the forwarding thread that owned the sender has been joined.
+    let end = loop {
+        match rx.try_recv() {
+            Ok(_) => continue,
+            Err(err) => break err,
+        }
+    };
+    assert_eq!(end, TryRecvError::Disconnected);
+
+    // Changes made now go nowhere.
+    fs::write(&paths.settings, "{}").unwrap();
+    fs::write(&paths.keymap, "[]").unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+}
+
+#[test]
+fn a_watcher_that_cannot_start_is_inert_and_lets_go_of_the_sender() {
+    let root = TempDir::new("watch-inert");
+    // A directory cannot be made inside a file.
+    let blocker = root.write("blocker", "not a directory");
+    let paths = ConfigPaths::new(blocker.join("config"));
+    let (tx, rx) = unbounded();
+    let watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    assert!(!watcher.is_active());
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+    drop(watcher);
+}
+
+#[test]
+fn a_watcher_whose_receiver_is_gone_keeps_running_quietly() {
+    let root = TempDir::new("watch-orphan");
+    let paths = ConfigPaths::new(root.path());
+    let (tx, rx) = unbounded();
+    let watcher = ConfigWatcher::spawn(&paths, &specs(&paths), tx);
+    drop(rx);
+    std::thread::sleep(SETTLE);
+    fs::write(&paths.settings, "{}").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    // The forwarder gave up when the send failed; dropping still joins cleanly.
+    drop(watcher);
+}
+
+#[test]
+fn the_forwarder_sends_each_kind_once_per_batch_and_stops_when_asked() {
+    let (batch_tx, batch_rx) = unbounded();
+    let (stop_tx, stop_rx) = unbounded();
+    let (tx, rx) = unbounded();
+    let alive = Arc::new(AtomicBool::new(true));
+    let forwarder = {
+        let alive = Arc::clone(&alive);
+        std::thread::spawn(move || {
+            forward(
+                &targets(),
+                &mut OwnFolders::default(),
+                &batch_rx,
+                &stop_rx,
+                &tx,
+                &alive,
+            )
+        })
+    };
+
+    let modify = EventKind::Modify(ModifyKind::Any);
+    batch_tx
+        .send(vec![
+            event(modify, &["/cfg/settings.json"]),
+            event(modify, &["/cfg/settings.json"]),
+            event(modify, &["/cfg/keymap.json"]),
+        ])
+        .unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(Settings));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(Keymap));
+
+    drop(stop_tx);
+    forwarder.join().unwrap();
+    // The forwarder owned the sender, so the channel closes with it and stays empty.
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+}
+
+#[test]
+fn the_forwarder_sends_nothing_once_the_watcher_is_not_alive() {
+    let (batch_tx, batch_rx) = unbounded();
+    let (stop_tx, stop_rx) = unbounded();
+    let (tx, rx) = unbounded();
+    let alive = Arc::new(AtomicBool::new(false));
+    let forwarder = {
+        let alive = Arc::clone(&alive);
+        std::thread::spawn(move || {
+            forward(
+                &targets(),
+                &mut OwnFolders::default(),
+                &batch_rx,
+                &stop_rx,
+                &tx,
+                &alive,
+            )
+        })
+    };
+    batch_tx
+        .send(vec![event(
+            EventKind::Modify(ModifyKind::Any),
+            &["/cfg/settings.json"],
+        )])
+        .unwrap();
+    // Whichever of the batch and the stop it sees first, it must not send.
+    drop(stop_tx);
+    forwarder.join().unwrap();
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+}
+
+#[test]
+fn the_forwarder_ends_when_the_receiver_is_gone() {
+    let (batch_tx, batch_rx) = unbounded();
+    let (_stop_tx, stop_rx) = unbounded::<()>();
+    let (tx, rx) = unbounded();
+    let alive = Arc::new(AtomicBool::new(true));
+    drop(rx);
+    let forwarder = {
+        let alive = Arc::clone(&alive);
+        std::thread::spawn(move || {
+            forward(
+                &targets(),
+                &mut OwnFolders::default(),
+                &batch_rx,
+                &stop_rx,
+                &tx,
+                &alive,
+            )
+        })
+    };
+    batch_tx
+        .send(vec![event(
+            EventKind::Modify(ModifyKind::Any),
+            &["/cfg/settings.json"],
+        )])
+        .unwrap();
+    // No stop signal is sent: a failed send is what ends it.
+    forwarder.join().unwrap();
+}
+
+// ---- Classification, which needs no OS events ----
+
+fn targets() -> Targets {
+    Targets {
+        settings: vec![
+            PathBuf::from("/cfg/settings.json"),
+            PathBuf::from("/proj/.testapp/settings.json"),
+        ],
+        keymap: PathBuf::from("/cfg/keymap.json"),
+        themes: PathBuf::from("/cfg/themes"),
+        extras: vec![
+            Extra::new("/cfg/scripts", true, &["lua"]),
+            Extra::new("/cfg/commands", false, &["json"]),
+            Extra::new("/cfg/plugins", true, &["lua", "wasm", "toml", "json"]),
+        ],
+    }
+}
+
+fn event(kind: EventKind, paths: &[&str]) -> DebouncedEvent {
+    let mut event = Event::new(kind);
+    for path in paths {
+        event = event.add_path(PathBuf::from(path));
+    }
+    DebouncedEvent::new(event, Instant::now())
+}
+
+#[test]
+fn a_batch_maps_to_distinct_events_in_a_fixed_order() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let batch = [
+        event(modify, &["/cfg/themes/b.json"]),
+        event(modify, &["/cfg/keymap.json"]),
+        event(modify, &["/cfg/settings.json"]),
+        event(modify, &["/cfg/themes/a.json"]),
+        event(EventKind::Create(CreateKind::File), &["/cfg/settings.json"]),
+        event(modify, &["/proj/.testapp/settings.json"]),
+        event(EventKind::Remove(RemoveKind::File), &["/cfg/themes/c.JSON"]),
+    ];
+    assert_eq!(
+        targets().events(&batch),
+        vec![Settings, Keymap, Themes],
+        "each kind once, settings first"
+    );
+}
+
+#[test]
+fn theme_files_count_at_any_depth() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    for path in [
+        "/cfg/themes/a.json",
+        "/cfg/themes/pack/a.json",
+        "/cfg/themes/pack/deep/er/a.JSON",
+    ] {
+        assert_eq!(targets().events(&[event(modify, &[path])]), vec![Themes]);
+    }
+}
+
+#[test]
+fn command_files_count_directly_in_the_commands_folder() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    for path in ["/cfg/commands/a.json", "/cfg/commands/B.JSON"] {
+        assert_eq!(targets().events(&[event(modify, &[path])]), vec![COMMANDS]);
+    }
+    for path in [
+        "/cfg/commands",
+        "/cfg/commands/sub/a.json",
+        "/cfg/commands/a.txt",
+        // The dot-named temp file `write_atomic` writes before it renames.
+        "/cfg/commands/.a.json.123-0.tmp",
+        "/cfg/commands.json",
+        "/proj/commands.json",
+    ] {
+        assert!(
+            targets().events(&[event(modify, &[path])]).is_empty(),
+            "{path}"
+        );
+    }
+    let batch = [
+        event(modify, &["/cfg/commands/a.json"]),
+        event(modify, &["/cfg/themes/a.json"]),
+        event(modify, &["/cfg/keymap.json"]),
+        event(modify, &["/cfg/settings.json"]),
+    ];
+    assert_eq!(
+        targets().events(&batch),
+        vec![Settings, Keymap, Themes, COMMANDS]
+    );
+}
+
+#[test]
+fn script_files_count_at_any_depth() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    for path in [
+        "/cfg/scripts/probe.lua",
+        "/cfg/scripts/lib/util.LUA",
+        "/cfg/scripts/a/b/c.lua",
+    ] {
+        assert_eq!(targets().events(&[event(modify, &[path])]), vec![SCRIPTS]);
+    }
+    for path in [
+        "/cfg/scripts",
+        "/cfg/scripts/notes.txt",
+        "/cfg/scripts.lua",
+        "/cfg/probe.lua",
+        "/cfg/themes/probe.lua",
+    ] {
+        assert!(
+            targets().events(&[event(modify, &[path])]).is_empty(),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn plugin_files_and_folders_count_as_plugins() {
+    let targets = targets();
+    let one = |kind: EventKind, path: &str| targets.events(&[event(kind, &[path])]);
+    let modify = EventKind::Modify(ModifyKind::Any);
+    for path in [
+        "/cfg/plugins/race/plugin.lua",
+        "/cfg/plugins/race/lib/frames.LUA",
+        "/cfg/plugins/proto/plugin.wasm",
+        "/cfg/plugins/proto/manifest.json",
+    ] {
+        assert_eq!(one(modify, path), vec![PLUGINS], "{path}");
+    }
+    for path in [
+        "/cfg/plugins",
+        "/cfg/plugins/race/README.md",
+        "/cfg/plugins.lua",
+    ] {
+        assert!(one(modify, path).is_empty(), "{path}");
+    }
+    for kind in [
+        EventKind::Create(CreateKind::Folder),
+        EventKind::Remove(RemoveKind::Folder),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+    ] {
+        assert_eq!(one(kind, "/cfg/plugins/race"), vec![PLUGINS], "{kind:?}");
+    }
+    assert!(one(EventKind::Create(CreateKind::Folder), "/cfg/plugins").is_empty());
+    // A Lua file under scripts/ is a script, not a plugin, and the other way round.
+    assert_eq!(one(modify, "/cfg/scripts/plugin.lua"), vec![SCRIPTS]);
+    let batch = [
+        event(modify, &["/cfg/plugins/race/plugin.lua"]),
+        event(modify, &["/cfg/scripts/probe.lua"]),
+        event(modify, &["/cfg/settings.json"]),
+    ];
+    assert_eq!(targets.events(&batch), vec![Settings, SCRIPTS, PLUGINS]);
+}
+
+#[test]
+fn folders_inside_the_scripts_folder_count_as_scripts() {
+    let targets = targets();
+    let one = |kind: EventKind, path: &str| targets.events(&[event(kind, &[path])]);
+    for kind in [
+        EventKind::Create(CreateKind::Folder),
+        EventKind::Remove(RemoveKind::Folder),
+        EventKind::Remove(RemoveKind::Any),
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+    ] {
+        assert_eq!(one(kind, "/cfg/scripts/lib"), vec![SCRIPTS], "{kind:?}");
+    }
+    // The folder itself is the watcher's business (see `folder_changes`), and folders
+    // elsewhere stay quiet.
+    assert!(one(EventKind::Create(CreateKind::Folder), "/cfg/scripts").is_empty());
+    assert!(one(EventKind::Create(CreateKind::Folder), "/cfg/scripts-old").is_empty());
+    assert!(one(EventKind::Create(CreateKind::Folder), "/cfg/themes/pack").is_empty());
+    assert!(one(EventKind::Access(AccessKind::Any), "/cfg/scripts/lib").is_empty());
+    assert!(one(EventKind::Modify(ModifyKind::Any), "/cfg/scripts/lib").is_empty());
+}
+
+#[test]
+fn own_folders_are_rewatched_when_they_come_back() {
+    let folders = [
+        PathBuf::from("/cfg/themes"),
+        PathBuf::from("/cfg/commands"),
+        PathBuf::from("/cfg/scripts"),
+    ];
+    let changes = |batch: &[DebouncedEvent]| folder_changes(&folders, batch);
+    let create = EventKind::Create(CreateKind::Folder);
+    let remove = EventKind::Remove(RemoveKind::Folder);
+    // Deleted and made again in one batch: removed at some point.
+    assert_eq!(
+        changes(&[
+            event(remove, &["/cfg/scripts"]),
+            event(create, &["/cfg/scripts"])
+        ]),
+        [(2, true)]
+    );
+    assert_eq!(changes(&[event(create, &["/cfg/themes"])]), [(0, false)]);
+    // Renamed away, then another renamed into place.
+    let both = EventKind::Modify(ModifyKind::Name(RenameMode::Both));
+    assert_eq!(
+        changes(&[event(both, &["/cfg/commands", "/cfg/commands-old"])]),
+        [(1, true)]
+    );
+    assert_eq!(
+        changes(&[event(both, &["/cfg/new", "/cfg/commands"])]),
+        [(1, false)]
+    );
+    // Events inside a folder, and access, are not about the folder.
+    assert!(
+        changes(&[
+            event(create, &["/cfg/scripts/lib"]),
+            event(EventKind::Access(AccessKind::Any), &["/cfg/themes"]),
+        ])
+        .is_empty()
+    );
+    // Any other event on its path is: FSEvents may report a folder deleted soon after
+    // it was made as only a metadata change, and the disk decides.
+    let metadata = EventKind::Modify(ModifyKind::Metadata(MetadataKind::Extended));
+    assert_eq!(changes(&[event(metadata, &["/cfg/scripts"])]), [(2, false)]);
+
+    // Re-watch a folder that is there and was removed or is not watched; drop the
+    // watch of one that is gone; leave a watched folder that never went (a late
+    // FSEvents create for a folder `spawn` made).
+    assert_eq!(folder_action(true, true, true), FolderAction::Rewatch);
+    assert_eq!(folder_action(true, false, false), FolderAction::Rewatch);
+    assert_eq!(folder_action(true, true, false), FolderAction::Rewatch);
+    assert_eq!(folder_action(false, true, true), FolderAction::Unwatch);
+    assert_eq!(folder_action(false, false, true), FolderAction::Unwatch);
+    assert_eq!(folder_action(true, false, true), FolderAction::Keep);
+    assert_eq!(folder_action(false, true, false), FolderAction::Keep);
+}
+
+#[test]
+fn unrelated_and_access_events_are_ignored() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let access = EventKind::Access(AccessKind::Any);
+    let batch = [
+        event(modify, &["/cfg/settings.json.swp"]),
+        event(modify, &["/cfg/.settings.json.tmp"]),
+        event(modify, &["/cfg/notes.txt"]),
+        event(modify, &["/cfg/other.json"]),
+        event(modify, &["/cfg/themes/readme.md"]),
+        event(modify, &["/cfg/themes/sub"]),
+        event(modify, &["/other/settings.json"]),
+        event(modify, &["/cfg/settings.json/child"]),
+        event(access, &["/cfg/settings.json"]),
+        event(access, &["/cfg/keymap.json"]),
+        event(access, &["/cfg/themes/a.json"]),
+    ];
+    assert!(targets().events(&batch).is_empty());
+    assert!(targets().events(&[]).is_empty());
+}
+
+#[test]
+fn the_config_and_themes_directories_produce_no_events() {
+    // What FSEvents reports, late, for the directories the watcher creates.
+    let batch = [
+        event(EventKind::Create(CreateKind::Folder), &["/cfg"]),
+        event(EventKind::Create(CreateKind::Folder), &["/cfg/themes"]),
+        event(EventKind::Create(CreateKind::Any), &["/cfg/themes"]),
+        event(EventKind::Modify(ModifyKind::Any), &["/cfg/themes"]),
+        event(EventKind::Modify(ModifyKind::Any), &["/cfg"]),
+        event(EventKind::Remove(RemoveKind::Folder), &["/cfg/themes"]),
+        event(EventKind::Create(CreateKind::Folder), &["/cfg/themes/pack"]),
+        // A folder event is dropped whatever its name.
+        event(
+            EventKind::Create(CreateKind::Folder),
+            &["/cfg/themes/x.json"],
+        ),
+        event(EventKind::Remove(RemoveKind::Folder), &["/cfg/keymap.json"]),
+    ];
+    assert!(targets().events(&batch).is_empty(), "{batch:?}");
+}
+
+#[test]
+fn a_rename_counts_when_either_end_is_a_config_file() {
+    let rename = EventKind::Modify(ModifyKind::Name(RenameMode::Both));
+    let batch = [event(
+        rename,
+        &["/cfg/.keymap.json.tmp", "/cfg/keymap.json"],
+    )];
+    assert_eq!(targets().events(&batch), vec![Keymap]);
+    let batch = [event(
+        rename,
+        &["/cfg/settings.json", "/cfg/settings.json.bak"],
+    )];
+    assert_eq!(targets().events(&batch), vec![Settings]);
+}
+
+#[test]
+fn a_directory_with_a_config_files_name_is_not_one() {
+    let root = TempDir::new("classify");
+    // The paths the OS would report, so the targets match them as they are.
+    let paths = ConfigPaths::new(fs::canonicalize(root.path()).unwrap());
+    fs::create_dir_all(paths.themes.join("pack.json")).unwrap();
+    fs::create_dir(&paths.settings).unwrap();
+    fs::write(&paths.keymap, "[]").unwrap();
+    fs::write(paths.themes.join("real.json"), "{}").unwrap();
+    let targets = Targets::new(&paths, &[]);
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let on = |path: &Path| targets.events(&[event(modify, &[path.to_str().unwrap()])]);
+
+    // On disk these are directories, even though the names fit.
+    assert!(on(&paths.settings).is_empty());
+    assert!(on(&paths.themes).is_empty());
+    assert!(on(&paths.themes.join("pack.json")).is_empty());
+    // The files are files.
+    assert_eq!(on(&paths.keymap), vec![Keymap]);
+    assert_eq!(on(&paths.themes.join("real.json")), vec![Themes]);
+    // A file that has been deleted is not a directory, so its removal counts.
+    assert_eq!(on(&paths.themes.join("gone.json")), vec![Themes]);
+}
+
+#[test]
+fn canonical_resolves_through_missing_files() {
+    let dir = TempDir::new("canonical");
+    let real = fs::canonicalize(dir.path()).unwrap();
+    assert_eq!(
+        canonical(&dir.path().join("missing.json")),
+        real.join("missing.json")
+    );
+    assert_eq!(canonical(dir.path()), real);
+    let absent = dir.path().join("no-such-dir").join("file.json");
+    assert_eq!(canonical(&absent), absent);
+}
+
+// ---- App-declared folders ----
+
+#[test]
+fn a_spec_without_extensions_takes_any_file() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let any = Targets {
+        extras: vec![Extra::new("/cfg/data", false, &[])],
+        ..targets()
+    };
+    for path in ["/cfg/data/a.json", "/cfg/data/a.bin", "/cfg/data/noext"] {
+        assert_eq!(
+            any.events(&[event(modify, &[path])]),
+            vec![ConfigEvent::Extra(0)],
+            "{path}"
+        );
+    }
+    assert!(
+        any.events(&[event(modify, &["/cfg/data/sub/a.json"])])
+            .is_empty()
+    );
+}
+
+#[test]
+fn extra_events_are_ordered_by_index_after_the_built_in_ones() {
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let batch = [
+        event(modify, &["/cfg/plugins/p/plugin.lua"]),
+        event(modify, &["/cfg/commands/a.json"]),
+        event(modify, &["/cfg/themes/a.json"]),
+        event(modify, &["/cfg/scripts/a.lua"]),
+        event(modify, &["/cfg/keymap.json"]),
+    ];
+    assert_eq!(
+        targets().events(&batch),
+        vec![Keymap, Themes, SCRIPTS, COMMANDS, PLUGINS]
+    );
+}
+
+#[test]
+fn an_extra_folder_is_made_if_missing_and_watched() {
+    let root = TempDir::new("watch-extra");
+    let paths = ConfigPaths::new(root.path().join("config"));
+    let extras = [WatchSpec::new(
+        paths.dir.join("deep").join("data"),
+        false,
+        &["txt"],
+    )];
+    let (tx, rx) = unbounded();
+    let _watcher = ConfigWatcher::spawn(&paths, &extras, tx);
+    assert!(paths.dir.join("deep").join("data").is_dir());
+    std::thread::sleep(SETTLE);
+    fs::write(paths.dir.join("deep").join("data").join("a.txt"), "x").unwrap();
+    assert_eq!(
+        expect(&rx, &[ConfigEvent::Extra(0)]),
+        set(&[ConfigEvent::Extra(0)])
+    );
+}
