@@ -102,7 +102,7 @@ pub struct Violation {
 
 /// Walks the dependency closure of each root and reports every package that
 /// breaks the pure-Rust rule, once, with the first path that reaches it.
-pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec<Violation> {
+pub fn audit(metadata: &Metadata, roots: &[&str], allowlist: &[Allowed]) -> Vec<Violation> {
     let packages: HashMap<&str, &Package> =
         metadata.packages.iter().map(|p| (p.id.as_str(), p)).collect();
     let edges: HashMap<&str, Vec<&str>> = metadata
@@ -141,7 +141,9 @@ pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec
         seen.insert(root_id);
         while let Some(id) = queue.pop_front() {
             let package = packages[id];
-            if let Some(reason) = classify(package) {
+            let allowed = allowlist.iter().any(|a| a.package == package.name);
+            // An allowed package's own dependencies are still audited.
+            if let Some(reason) = classify(package).filter(|_| !allowed) {
                 let mut path = vec![package.name.clone()];
                 let mut cursor = id;
                 while let Some(&up) = parent.get(cursor) {
