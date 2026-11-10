@@ -11,6 +11,7 @@ use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Ta
 use crossfade_flac::crc::crc16_update;
 use crossfade_flac::frame::{self, FrameHeader, HeaderError};
 use crossfade_flac::streaminfo::StreamInfoBlock;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 
 /// A frame header is at most 16 bytes: sync, two flag bytes, a 7-byte number, two 2-byte
@@ -40,6 +41,17 @@ fn crc_steps(crc: u16, data: &[u8]) -> u16 {
     crc16_update(crc, data)
 }
 
+/// The blocking strategy rides on the top bit of a remembered frame number.
+const VARIABLE: u64 = 1 << 63;
+
+/// How far the scan for the end of a frame has got: the next place to look for a sync code and
+/// the CRC-16 of everything from the frame's start up to `crc_pos` (absolute stream offsets).
+struct Scan {
+    from: u64,
+    crc_pos: u64,
+    crc: u16,
+}
+
 struct FlacDemuxer {
     source: Box<dyn MediaSource>,
     /// Bytes taken from the source so far.
@@ -54,6 +66,13 @@ struct FlacDemuxer {
     done: bool,
     /// Set by the first frame: blocking strategy and block size of a fixed-size stream.
     first: Option<(bool, u32)>,
+    /// Stream offset of `buf[0]`.
+    base: u64,
+    scan: Option<Scan>,
+    /// CRC-valid headers past the scan's frame that did not carry the expected number, by
+    /// offset (value: number, top bit set for variable block size) and by number.
+    ahead: BTreeMap<u64, u64>,
+    ahead_num: BTreeSet<(u64, u64)>,
 }
 
 fn malformed(what: &str) -> Error {
@@ -281,45 +300,124 @@ impl FlacDemuxer {
         self.max_packet.min(stream_max)
     }
 
+    /// Takes `n` bytes off the front of the buffer and forgets remembered boundaries behind it.
+    fn consume(&mut self, n: usize) {
+        self.buf.drain(..n);
+        self.base += n as u64;
+        while let Some((&p, &key)) = self.ahead.first_key_value() {
+            if p >= self.base {
+                break;
+            }
+            self.ahead.remove(&p);
+            self.ahead_num.remove(&(key, p));
+        }
+    }
+
+    /// Drops the scan state when `buf` no longer starts at a frame boundary.
+    fn reset_scan(&mut self) {
+        self.scan = None;
+        self.ahead.clear();
+        self.ahead_num.clear();
+    }
+
+    /// The first remembered boundary inside `window` that is in the frame's blocking strategy.
+    fn first_remembered(&self, window: (u64, u64), flag: u64) -> Option<usize> {
+        let (&p, _) = self
+            .ahead
+            .range(window.0..=window.1)
+            .find(|(_, key)| **key & VARIABLE == flag)?;
+        Some((p - self.base) as usize)
+    }
+
     /// Where the frame at the start of `buf` ends, and whether the input ended with it (any
     /// bytes after that point are not audio).
+    ///
+    /// A boundary is a header that parses with a CRC-16 of zero over what precedes it, and that
+    /// carries the number the next frame should have. The CRC-16 is zero after any whole frame,
+    /// so after a boundary it stays valid at every later boundary, and a header-looking pattern
+    /// inside audio after a chance zero is not told from a boundary by the CRC alone. So a
+    /// candidate with another number is remembered and the scan goes on, up to the longest
+    /// legal frame, for one that fits; none found, the first remembered one stands, which is how
+    /// streams with irregular numbering have always been read. The scan state (the running CRC
+    /// and the remembered boundaries) lives across frames, so each byte is checksummed once.
     fn frame_end(&mut self, h: &FrameHeader) -> Result<(usize, bool), Error> {
         let cap = self.frame_cap(h);
         let too_long = || malformed(&format!("frame longer than {cap} bytes"));
         let min_end = h.header_len + MIN_AFTER_HEADER;
-        let mut crc = 0u16;
-        let mut crc_pos = 0usize;
-        let mut from = h.header_len + 1;
+        let start = self.base;
+        let flag = if h.variable_block_size { VARIABLE } else { 0 };
+        let expected = flag
+            | if h.variable_block_size {
+                h.number + u64::from(h.block_size)
+            } else {
+                h.number + 1
+            };
+        let window = (start + min_end as u64, start + cap as u64);
+        let wanted = (expected, window.0)..=(expected, window.1);
+        if let Some(&(_, p)) = self.ahead_num.range(wanted).next() {
+            return Ok(((p - start) as usize, false));
+        }
+        let first_from = start + h.header_len as u64 + 1;
+        let mut sc = match self.scan.take() {
+            Some(s) if s.crc_pos >= start => s,
+            _ => Scan {
+                from: first_from,
+                crc_pos: start,
+                crc: 0,
+            },
+        };
+        sc.from = sc.from.max(first_from);
         loop {
+            let from = (sc.from - self.base) as usize;
             match find_sync(&self.buf, from) {
                 Some(j) => {
                     if j > cap {
                         // Past the longest legal frame: only trailing data can be here.
-                        from = j + 1;
-                        if from > cap + TRAILING_SLACK {
+                        if let Some(f) = self.first_remembered(window, flag) {
+                            self.scan = Some(sc);
+                            return Ok((f, false));
+                        }
+                        sc.from = self.base + j as u64 + 1;
+                        if j + 1 > cap + TRAILING_SLACK {
                             return Err(too_long());
                         }
-                        self.ensure(from + MAX_HEADER)?;
+                        self.ensure(j + 1 + MAX_HEADER)?;
                         continue;
                     }
                     self.ensure(j + MAX_HEADER)?;
                     let next = frame::parse_header(&self.buf[j..]);
-                    from = j + 1;
+                    sc.from = self.base + j as u64 + 1;
                     let Ok(next) = next else {
                         continue;
                     };
                     if next.variable_block_size != h.variable_block_size || j < min_end {
                         continue;
                     }
-                    crc = crc_steps(crc, &self.buf[crc_pos..j]);
-                    crc_pos = j;
-                    if crc == 0 {
-                        return Ok((j, false));
+                    let behind = (sc.crc_pos - self.base) as usize;
+                    sc.crc = crc_steps(sc.crc, &self.buf[behind..j]);
+                    sc.crc_pos = self.base + j as u64;
+                    if sc.crc == 0 {
+                        let key = flag | next.number;
+                        if key == expected {
+                            // The scan stopped here with a zero CRC: the next frame starts
+                            // from scratch, as if nothing had been remembered.
+                            self.reset_scan();
+                            return Ok((j, false));
+                        }
+                        if self.ahead.insert(sc.crc_pos, key).is_none() {
+                            self.ahead_num.insert((key, sc.crc_pos));
+                        }
                     }
                 }
                 None => {
-                    from = from.max(self.buf.len().saturating_sub(1));
-                    if from > cap + TRAILING_SLACK {
+                    sc.from = sc
+                        .from
+                        .max(self.base + self.buf.len().saturating_sub(1) as u64);
+                    if (sc.from - self.base) as usize > cap + TRAILING_SLACK {
+                        if let Some(f) = self.first_remembered(window, flag) {
+                            self.scan = Some(sc);
+                            return Ok((f, false));
+                        }
                         return Err(too_long());
                     }
                     if !self.read_more()? {
@@ -328,6 +426,20 @@ impl FlacDemuxer {
                 }
             }
         }
+        // The input ended before a boundary with the expected number. The first remembered
+        // boundary is the answer, as it always was, unless its header disagrees with this
+        // frame's on channels, depth or rate: with no later frame to confirm it, a stranger is
+        // more likely audio that looks like a header.
+        if let Some(f) = self.first_remembered(window, flag)
+            && let Ok(next) = frame::parse_header(&self.buf[f..])
+            && next.channels.channels() == h.channels.channels()
+            && next.bits_per_sample == h.bits_per_sample
+            && next.sample_rate == h.sample_rate
+        {
+            self.scan = Some(sc);
+            return Ok((f, false));
+        }
+        self.reset_scan();
         // The input has ended: this is the last frame, followed perhaps by a tag or padding.
         // Prefer the last span whose CRC-16 holds, so a chance zero inside the frame cannot cut
         // it short. A frame whose CRC ends in a zero byte also has a zero CRC one byte early, and
@@ -390,7 +502,8 @@ impl FlacDemuxer {
                 .unwrap_or(self.buf.len().max(1) - 1)
                 .max(1);
             skipped += step;
-            self.buf.drain(..step.min(self.buf.len()));
+            self.reset_scan();
+            self.consume(step.min(self.buf.len()));
             if skipped > MAX_LEADING_JUNK {
                 return Err(malformed(
                     "no frame found within the first 64 KiB after the metadata",
@@ -435,7 +548,7 @@ impl Demuxer for FlacDemuxer {
         out.duration = u64::from(header.block_size);
         out.data.clear();
         out.data.extend_from_slice(&self.buf[..end]);
-        self.buf.drain(..end);
+        self.consume(end);
         self.done = last;
         Ok(true)
     }
@@ -457,6 +570,10 @@ pub fn open(mut source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn
         eof: false,
         done: false,
         first: None,
+        base: 0,
+        scan: None,
+        ahead: BTreeMap::new(),
+        ahead_num: BTreeSet::new(),
     }))
 }
 
