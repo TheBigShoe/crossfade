@@ -21,7 +21,13 @@ pub struct CurlDownloader;
 impl Downloader for CurlDownloader {
     fn download(&mut self, url: &str, dest: &Path) -> Result<(), String> {
         let out = Command::new("curl")
-            .args(["--fail", "--location", "--silent", "--show-error", "--output"])
+            .args([
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--output",
+            ])
             .arg(dest)
             .arg(url)
             .output()
@@ -29,7 +35,10 @@ impl Downloader for CurlDownloader {
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!("curl: {}", String::from_utf8_lossy(&out.stderr).trim()))
+            Err(format!(
+                "curl: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 }
@@ -69,9 +78,10 @@ impl Summary {
         match outcome {
             Outcome::Skipped => self.skipped += 1,
             Outcome::Fetched => self.fetched += 1,
-            Outcome::Failed(reason) => self
-                .failed
-                .push(Failure { id: entry.id.clone(), reason: reason.clone() }),
+            Outcome::Failed(reason) => self.failed.push(Failure {
+                id: entry.id.clone(),
+                reason: reason.clone(),
+            }),
         }
     }
 }
@@ -124,8 +134,13 @@ pub fn fetch(
 }
 
 fn index_tree(dir: &Path, out: &mut HashMap<(String, String), PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    let parent = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let parent = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for item in rd.flatten() {
         let path = item.path();
         if path.is_dir() {
@@ -153,7 +168,9 @@ pub fn seed(manifest: &Manifest, cache: &Cache, from: &Path) -> Summary {
             match index.get(&(group, entry.name.clone())) {
                 None => Outcome::Failed(format!("not found under {}", from.display())),
                 Some(src) => match install(cache, entry, |tmp| {
-                    std::fs::copy(src, tmp).map(|_| ()).map_err(|e| e.to_string())
+                    std::fs::copy(src, tmp)
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
                 }) {
                     Ok(()) => Outcome::Fetched,
                     Err(e) => Outcome::Failed(e),
@@ -204,9 +221,7 @@ mod tests {
         Fake {
             bodies: items
                 .iter()
-                .map(|(e, r)| {
-                    (e.url.clone(), r.map(<[u8]>::to_vec).map_err(str::to_string))
-                })
+                .map(|(e, r)| (e.url.clone(), r.map(<[u8]>::to_vec).map_err(str::to_string)))
                 .collect(),
             calls: vec![],
         }
@@ -259,7 +274,11 @@ mod tests {
         assert_eq!(s.fetched, 0);
         assert_eq!(s.failed.len(), 1);
         assert_eq!(s.failed[0].id, "flac/subset/01");
-        assert!(s.failed[0].reason.contains("sha256"), "{}", s.failed[0].reason);
+        assert!(
+            s.failed[0].reason.contains("sha256"),
+            "{}",
+            s.failed[0].reason
+        );
         assert!(!s.is_ok());
         assert!(!cache.path(&a).exists() && !cache.temp_path(&a).exists());
     }
@@ -293,7 +312,13 @@ mod tests {
         let b = entry("flac/faulty/01", "b.flac", b"bbb");
         let cache = Cache::new(temp_dir("fetch-only"));
         let mut dl = fake(&[(&a, Ok(b"aaa")), (&b, Ok(b"bbb"))]);
-        let s = fetch(&manifest(&[&a, &b]), &cache, &mut dl, Some("flac/faulty"), &mut quiet);
+        let s = fetch(
+            &manifest(&[&a, &b]),
+            &cache,
+            &mut dl,
+            Some("flac/faulty"),
+            &mut quiet,
+        );
         assert_eq!(s.fetched, 1);
         assert_eq!(dl.calls, vec![b.url.clone()]);
     }
@@ -366,7 +391,8 @@ mod tests {
         std::fs::write(&src, b"payload").unwrap();
         let dest = dir.join("out.bin");
         let mut dl = CurlDownloader;
-        dl.download(&format!("file://{}", src.display()), &dest).unwrap();
+        dl.download(&format!("file://{}", src.display()), &dest)
+            .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"payload");
         let err = dl
             .download(&format!("file://{}", dir.join("nope").display()), &dest)

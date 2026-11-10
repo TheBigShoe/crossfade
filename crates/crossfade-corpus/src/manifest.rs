@@ -47,9 +47,15 @@ pub struct Entry {
 
 #[derive(Debug)]
 pub enum ManifestError {
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     Syntax(String),
-    Invalid { id: String, reason: String },
+    Invalid {
+        id: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for ManifestError {
@@ -98,7 +104,10 @@ fn is_hex(s: &str, len: usize) -> bool {
 fn convert(raw: RawEntry, index: usize) -> Result<Entry, ManifestError> {
     let id = raw.id.clone().filter(|s| !s.is_empty());
     let label = id.clone().unwrap_or_else(|| format!("#{index}"));
-    let bad = |reason: String| ManifestError::Invalid { id: label.clone(), reason };
+    let bad = |reason: String| ManifestError::Invalid {
+        id: label.clone(),
+        reason,
+    };
     let id = id.ok_or_else(|| bad("missing or empty key `id`".into()))?;
     let need = |v: Option<String>, key: &str| {
         v.filter(|s| !s.is_empty())
@@ -140,8 +149,10 @@ fn convert(raw: RawEntry, index: usize) -> Result<Entry, ManifestError> {
 
 impl Manifest {
     pub fn load(path: &Path) -> Result<Self, ManifestError> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|source| ManifestError::Io { path: path.to_path_buf(), source })?;
+        let text = std::fs::read_to_string(path).map_err(|source| ManifestError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
         Self::parse(&text)
     }
 
@@ -230,7 +241,10 @@ mod tests {
     #[test]
     fn duplicate_ids_name_the_entry() {
         let e = err(&format!("{}{}", entry(""), entry("")));
-        assert!(e.contains("flac/subset/01") && e.contains("duplicate"), "{e}");
+        assert!(
+            e.contains("flac/subset/01") && e.contains("duplicate"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -275,7 +289,11 @@ mod tests {
     #[test]
     fn load_reports_a_missing_file() {
         let e = Manifest::load(std::path::Path::new("/nonexistent/corpus.toml"));
-        assert!(e.unwrap_err().to_string().contains("/nonexistent/corpus.toml"));
+        assert!(
+            e.unwrap_err()
+                .to_string()
+                .contains("/nonexistent/corpus.toml")
+        );
     }
 
     #[test]

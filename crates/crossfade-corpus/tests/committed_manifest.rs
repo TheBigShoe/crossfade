@@ -32,7 +32,10 @@ fn has_86_entries_split_64_11_11() {
     let m = load();
     let n = |p: &str| m.entries().iter().filter(|e| e.id.starts_with(p)).count();
     assert_eq!(m.entries().len(), 86);
-    assert_eq!((n("flac/subset/"), n("flac/uncommon/"), n("flac/faulty/")), (64, 11, 11));
+    assert_eq!(
+        (n("flac/subset/"), n("flac/uncommon/"), n("flac/faulty/")),
+        (64, 11, 11)
+    );
 }
 
 #[test]
@@ -50,7 +53,10 @@ fn ids_and_names_are_unique_per_directory() {
 #[test]
 fn urls_are_pinned_and_decode_to_the_name() {
     for e in load().entries() {
-        let rest = e.url.strip_prefix(PREFIX).unwrap_or_else(|| panic!("{}", e.url));
+        let rest = e
+            .url
+            .strip_prefix(PREFIX)
+            .unwrap_or_else(|| panic!("{}", e.url));
         let dir = e.id.split('/').nth(1).unwrap();
         let path = percent_decode(rest);
         assert_eq!(path, format!("{dir}/{}", e.name), "{}", e.id);

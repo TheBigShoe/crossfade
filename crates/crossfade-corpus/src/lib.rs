@@ -12,8 +12,8 @@ mod require;
 mod testutil;
 
 pub use cache::{Cache, Problem};
-pub use cli::{run, Defaults};
-pub use fetch::{fetch, seed, CurlDownloader, Downloader, Event, Failure, Outcome, Summary};
+pub use cli::{Defaults, run};
+pub use fetch::{CurlDownloader, Downloader, Event, Failure, Outcome, Summary, fetch, seed};
 
-pub use require::{require, require_from, try_require, workspace_root, RequireError};
 pub use manifest::{Entry, Expect, Manifest, ManifestError};
+pub use require::{RequireError, require, require_from, try_require, workspace_root};
