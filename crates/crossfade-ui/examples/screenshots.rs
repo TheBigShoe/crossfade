@@ -212,8 +212,9 @@ const SCENES: &[Scene] = &[
         size: WINDOW,
         drive: |stage| {
             stage.set_theme(ThemeMode::Dark);
-            let wide = fixtures::wav(192_000, 2, SampleFormat::S24, 192_000 * 2);
-            stage.add_bytes(&[("hi-res-capture.wav", wide)]);
+            // The engine reads nine channels; FLAC holds eight.
+            let wide = fixtures::wav(48_000, 9, SampleFormat::S16, 48_000 * 2);
+            stage.add_bytes(&[("surround-9ch-capture.wav", wide)]);
             stage.convert();
             stage.choose("sheet-container", 1);
         },

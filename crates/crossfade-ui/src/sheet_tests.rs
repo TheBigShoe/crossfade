@@ -434,8 +434,8 @@ fn the_container_select_rewrites_the_extension_and_filters_the_formats(cx: &mut 
 
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
     assert_eq!(sheet_output(cx, &rig), rig.dir.path("in.flac"));
-    // FLAC holds whole numbers up to 24 bits.
-    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..4]);
+    // FLAC holds whole numbers up to 32 bits.
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..5]);
 
     // A typed path keeps its folder and stem; only the extension follows.
     let mine = rig.dir.path("my take.v2.flac");
@@ -447,7 +447,7 @@ fn the_container_select_rewrites_the_extension_and_filters_the_formats(cx: &mut 
     // And typing an extension switches the select.
     type_output(cx, &rig, &rig.dir.path("again.flac"));
     assert_eq!(dialog(cx, &rig, |d, cx| d.container_label(cx)), "FLAC");
-    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..4]);
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..5]);
 }
 
 #[gpui_test]
@@ -461,13 +461,13 @@ fn a_float_source_into_flac_shows_the_hint_and_is_saved_as_24_bit(cx: &mut TestA
     let hint = dialog(cx, &rig, |d, _| d.hint());
     assert_eq!(
         hint.as_deref(),
-        Some("FLAC stores whole-number samples up to 24-bit, so this will be saved as 24-bit.")
+        Some("FLAC stores whole-number samples, so this will be saved as 24-bit.")
     );
     assert_eq!(
         dialog(cx, &rig, |d, cx| d.format_label(cx)),
         "24-bit integer"
     );
-    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[1..4]);
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[1..5]);
     assert!(!disabled(cx, rig.window, "dialog-ok"));
 
     click(cx, rig.window, "dialog-ok");
@@ -484,9 +484,9 @@ fn a_float_source_into_flac_shows_the_hint_and_is_saved_as_24_bit(cx: &mut TestA
 }
 
 #[gpui_test]
-fn a_192_khz_source_cannot_be_queued_as_flac(cx: &mut TestAppContext) {
-    let wav = fixtures::wav(192_000, 1, SampleFormat::S24, 480);
-    let rig = rig_with_file(cx, "hi.wav", &wav);
+fn a_source_with_more_than_8_channels_cannot_be_queued_as_flac(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(8_000, 9, SampleFormat::S16, 480);
+    let rig = rig_with_file(cx, "wide.wav", &wav);
     open_sheet(cx, &rig);
     assert!(!disabled(cx, rig.window, "dialog-ok"));
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
@@ -495,7 +495,7 @@ fn a_192_khz_source_cannot_be_queued_as_flac(cx: &mut TestAppContext) {
     let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
     assert_eq!(
         problems,
-        ["FLAC output is limited to 96 kHz for now; this file is 192 kHz."]
+        ["FLAC can store up to 8 channels; this file has 9."]
     );
     assert!(problems.iter().all(|p| !p.contains("--")));
     assert!(!has(cx, rig.window, "sheet-hint"));
@@ -715,6 +715,27 @@ fn wav_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
     run_intents(cx, "in.wav", &wav, WAV_INTENTS);
 }
 
+const S32_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Container("FLAC")],
+        cli: &["-o", "@in.flac"],
+    },
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Level(1)],
+        cli: &["-o", "@in.flac", "--compression-level", "0"],
+    },
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Format("32-bit integer")],
+        cli: &["-o", "@in-s32.flac", "--sample-format", "s32"],
+    },
+];
+
+#[gpui_test]
+fn s32_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(96_000, 2, SampleFormat::S32, 480);
+    run_intents(cx, "in.wav", &wav, S32_INTENTS);
+}
+
 #[gpui_test]
 fn flac_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
     let flac = fixtures::flac(44_100, 2, SampleFormat::S16, 4_410);
@@ -728,7 +749,7 @@ fn level_and_format_are_disabled_when_the_source_cannot_be_saved_as_the_containe
     let rig = open_rig(cx);
     let input = rig
         .dir
-        .write("hi.wav", &fixtures::wav(192_000, 2, SampleFormat::S24, 480));
+        .write("wide.wav", &fixtures::wav(8_000, 9, SampleFormat::S16, 480));
     add_paths(cx, &rig, &[&input]);
     open_sheet(cx, &rig);
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
