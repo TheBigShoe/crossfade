@@ -1,6 +1,9 @@
 //! Ogg container.
 
 mod crc;
+mod page;
+#[cfg(test)]
+mod testutil;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSource};
 
