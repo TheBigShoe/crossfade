@@ -61,10 +61,7 @@ fn flac_is_routed_to_stubs_that_say_so() {
     let opts = EncodeOptions {
         compression_level: Some(5),
     };
-    assert_eq!(
-        unsupported_what(encoder_for(CodecId::Flac, &audio, &opts)),
-        "flac encoding is not built yet"
-    );
+    assert!(encoder_for(CodecId::Flac, &audio, &opts).is_ok());
 }
 
 #[test]
