@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::process::Command;
 
 use serde::Deserialize;
 
@@ -50,6 +51,19 @@ impl Metadata {
     }
 }
 
+/// The crates that must stay pure Rust under every feature.
+pub const ENGINE_CRATES: &[&str] = &[
+    "crossfade-core",
+    "crossfade-format",
+    "crossfade-codec",
+    "crossfade-dsp",
+    "crossfade-graph",
+];
+
+/// Exemptions from the purity gate. Every entry needs a reason a reviewer can
+/// check; keep it empty unless something genuinely cannot be avoided.
+pub const ALLOWLIST: &[Allowed] = &[];
+
 /// Crates whose only purpose is building or finding native code.
 pub const NATIVE_BUILD_HELPERS: &[&str] = &[
     "cc",
@@ -71,6 +85,33 @@ fn classify(package: &Package) -> Option<Reason> {
     } else {
         None
     }
+}
+
+/// Runs `cargo metadata` with all features on this workspace. Without
+/// `--filter-platform`, every target's dependencies are included.
+pub fn workspace_metadata() -> Result<Metadata, String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml");
+    let output = Command::new(&cargo)
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--all-features",
+            "--locked",
+        ])
+        .args(["--manifest-path", manifest])
+        .output()
+        .map_err(|e| format!("could not run {cargo}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let json = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    Metadata::from_json(&json).map_err(|e| format!("unexpected cargo metadata: {e}"))
 }
 
 /// A package exempted from the audit, with the reason it is acceptable.
@@ -103,8 +144,11 @@ pub struct Violation {
 /// Walks the dependency closure of each root and reports every package that
 /// breaks the pure-Rust rule, once, with the first path that reaches it.
 pub fn audit(metadata: &Metadata, roots: &[&str], allowlist: &[Allowed]) -> Vec<Violation> {
-    let packages: HashMap<&str, &Package> =
-        metadata.packages.iter().map(|p| (p.id.as_str(), p)).collect();
+    let packages: HashMap<&str, &Package> = metadata
+        .packages
+        .iter()
+        .map(|p| (p.id.as_str(), p))
+        .collect();
     let edges: HashMap<&str, Vec<&str>> = metadata
         .resolve
         .iter()
