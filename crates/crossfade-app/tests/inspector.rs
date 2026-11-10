@@ -1,5 +1,5 @@
 use crossfade_app::inspector::{Section, sections};
-use crossfade_graph::{ProbeDocument, ProbeStream};
+use crossfade_graph::{ProbeDocument, ProbeStream, ProbeTag};
 use std::collections::BTreeSet;
 
 fn stream(index: u32) -> ProbeStream {
@@ -8,6 +8,7 @@ fn stream(index: u32) -> ProbeStream {
         kind: "audio".into(),
         codec: "pcm_u8".into(),
         sample_format: "u8".into(),
+        bits_per_raw_sample: None,
         sample_rate: 8000,
         channels: 1,
         layout: "mono".into(),
@@ -22,6 +23,7 @@ fn doc(size: Option<u64>, streams: Vec<ProbeStream>) -> ProbeDocument {
         format: "wav".into(),
         size_bytes: size,
         streams,
+        tags: vec![],
     }
 }
 
@@ -39,6 +41,23 @@ fn stereo_s24_96k() -> ProbeDocument {
     s.frames = Some(6_000_000);
     s.duration_seconds = Some(62.5);
     doc(Some(36_000_044), vec![s])
+}
+
+fn tagged_20_bit() -> ProbeDocument {
+    let mut d = stereo_s24_96k();
+    d.streams[0].bits_per_raw_sample = Some(20);
+    d.tags = [
+        ("TITLE", "A Title"),
+        ("ARTIST", "One"),
+        ("ARTIST", "Two"),
+        ("TRACKNUMBER", "3"),
+    ]
+    .map(|(key, value)| ProbeTag {
+        key: key.into(),
+        value: value.into(),
+    })
+    .to_vec();
+    d
 }
 
 fn render(sections: &[Section]) -> String {
@@ -88,7 +107,59 @@ fn every_json_leaf_has_a_row_and_no_row_is_invented() {
     assert_eq!(fields(&shown[0]), file_keys);
 
     let stream_json = &json["streams"][0];
-    assert_eq!(fields(&shown[1]), keys(stream_json));
+    // A null raw-bits value has no row: the row appears only when the value is present.
+    let mut stream_keys = keys(stream_json);
+    stream_keys.remove("bits_per_raw_sample");
+    assert_eq!(fields(&shown[1]), stream_keys);
+    assert!(shown.iter().all(|s| s.title != "Tags"));
+}
+
+#[test]
+fn raw_bits_and_tags_each_have_a_row_when_present() {
+    let d = tagged_20_bit();
+    let json = serde_json::to_value(&d).unwrap();
+    let shown = sections(&d);
+    assert_eq!(shown.len(), 3);
+    // Every scalar stream key, including the raw bits now that it is set.
+    assert_eq!(fields(&shown[1]), keys(&json["streams"][0]));
+    assert!(fields(&shown[1]).contains("bits_per_raw_sample"));
+    assert_eq!(value(&d, "bits_per_raw_sample"), "20-bit");
+    // The array key `tags` is shown as its own section, one row per entry.
+    assert!(json["tags"].is_array());
+    let tags = &shown[2];
+    assert_eq!(tags.title, "Tags");
+    assert!(tags.rows.iter().all(|r| r.field == "tags"));
+    let rows: Vec<(String, String)> = tags
+        .rows
+        .iter()
+        .map(|r| (r.label.to_string(), r.value.clone()))
+        .collect();
+    let want = [
+        ("Title", "A Title"),
+        ("Artist", "One"),
+        ("Artist", "Two"),
+        ("Tracknumber", "3"),
+    ]
+    .map(|(l, v)| (l.to_owned(), v.to_owned()));
+    assert_eq!(rows, want);
+}
+
+#[test]
+fn a_document_without_tags_or_raw_bits_shows_neither() {
+    let d = mono_u8_unknown_length();
+    let shown = sections(&d);
+    assert_eq!(shown.len(), 2);
+    assert!(
+        shown[1]
+            .rows
+            .iter()
+            .all(|r| r.field != "bits_per_raw_sample")
+    );
+}
+
+#[test]
+fn tagged_20_bit_snapshot() {
+    insta::assert_snapshot!(render(&sections(&tagged_20_bit())));
 }
 
 #[test]
