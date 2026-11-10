@@ -15,13 +15,7 @@ fn boxed_codecs_round_trip_for_every_pcm_codec() {
     ] {
         let audio = AudioSpec::new(8000, format, ChannelLayout::stereo()).unwrap();
         let codec = CodecId::pcm_for(format);
-        let info = StreamInfo {
-            index: 0,
-            codec,
-            audio: audio.clone(),
-            time_base: TimeBase::new(1, 8000).unwrap(),
-            frames: None,
-        };
+        let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 8000).unwrap());
         let mut dec = decoder_for(&info).unwrap();
         let mut enc = encoder_for(codec, &audio).unwrap();
         let bytes: Vec<u8> = (0..format.bytes_per_sample() * 6)

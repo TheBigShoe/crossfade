@@ -9,6 +9,25 @@ pub struct StreamInfo {
     pub time_base: TimeBase,
     /// Total sample frames, when the container knows.
     pub frames: Option<u64>,
+    /// The codec's header bytes (FLAC: the 34-byte STREAMINFO body). Empty for PCM.
+    pub extradata: Vec<u8>,
+    /// Significant bits per sample when fewer than `audio.format()` holds (e.g. 20 in S24).
+    /// Samples are left-justified in the format.
+    pub bits_per_raw_sample: Option<u8>,
+}
+
+impl StreamInfo {
+    pub fn new(index: u32, codec: CodecId, audio: AudioSpec, time_base: TimeBase) -> Self {
+        Self {
+            index,
+            codec,
+            audio,
+            time_base,
+            frames: None,
+            extradata: Vec::new(),
+            bits_per_raw_sample: None,
+        }
+    }
 }
 
 /// Reused across reads: a demuxer clears and refills `data`, so steady state

@@ -134,8 +134,14 @@ mod tests {
     #[test]
     fn pcm_codecs_map_to_sample_formats() {
         assert_eq!(CodecId::PcmS8.pcm_sample_format(), Some(SampleFormat::U8));
-        assert_eq!(CodecId::PcmS16Be.pcm_sample_format(), Some(SampleFormat::S16));
-        assert_eq!(CodecId::PcmF32Be.pcm_sample_format(), Some(SampleFormat::F32));
+        assert_eq!(
+            CodecId::PcmS16Be.pcm_sample_format(),
+            Some(SampleFormat::S16)
+        );
+        assert_eq!(
+            CodecId::PcmF32Be.pcm_sample_format(),
+            Some(SampleFormat::F32)
+        );
         assert_eq!(CodecId::Flac.pcm_sample_format(), None);
         assert!(!CodecId::Flac.is_pcm());
         assert!(ALL.iter().filter(|c| c.is_pcm()).count() == 12);

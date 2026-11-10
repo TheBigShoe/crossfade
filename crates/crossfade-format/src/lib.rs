@@ -75,13 +75,7 @@ mod tests {
 
     fn stream() -> StreamInfo {
         let audio = AudioSpec::new(8000, SampleFormat::S16, ChannelLayout::mono()).unwrap();
-        StreamInfo {
-            index: 0,
-            codec: CodecId::PcmS16Le,
-            audio,
-            time_base: TimeBase::new(1, 8000).unwrap(),
-            frames: None,
-        }
+        StreamInfo::new(0, CodecId::PcmS16Le, audio, TimeBase::new(1, 8000).unwrap())
     }
 
     fn wav_bytes() -> Vec<u8> {

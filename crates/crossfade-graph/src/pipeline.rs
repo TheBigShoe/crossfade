@@ -77,11 +77,13 @@ impl Pipeline {
         let out_format = output.audio.sample_format.unwrap_or(in_spec.format());
         let out_spec = AudioSpec::new(in_spec.sample_rate(), out_format, in_spec.layout().clone())?;
         let out_stream = StreamInfo {
-            index: 0,
-            codec: CodecId::pcm_for(out_format),
-            audio: out_spec.clone(),
-            time_base: stream.time_base,
             frames: stream.frames,
+            ..StreamInfo::new(
+                0,
+                CodecId::pcm_for(out_format),
+                out_spec.clone(),
+                stream.time_base,
+            )
         };
         let decoder = decoder_for(stream)?;
         let encoder = encoder_for(out_stream.codec, &out_spec)?;
