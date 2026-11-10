@@ -10,7 +10,11 @@ use crate::{Cache, Manifest, Problem};
 #[derive(Debug)]
 pub enum RequireError {
     UnknownId(String),
-    Unusable { id: String, path: PathBuf, problem: Problem },
+    Unusable {
+        id: String,
+        path: PathBuf,
+        problem: Problem,
+    },
 }
 
 impl fmt::Display for RequireError {
@@ -45,13 +49,17 @@ pub fn try_require(manifest: &Manifest, cache: &Cache, id: &str) -> Result<PathB
     let path = cache.path(entry);
     let key = (path.clone(), entry.sha256.clone());
     // A poisoned lock only means another test panicked; the set is still valid.
-    let mut done = VERIFIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut done = VERIFIED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !done.contains(&key) {
-        cache.verify(entry).map_err(|problem| RequireError::Unusable {
-            id: id.to_string(),
-            path: path.clone(),
-            problem,
-        })?;
+        cache
+            .verify(entry)
+            .map_err(|problem| RequireError::Unusable {
+                id: id.to_string(),
+                path: path.clone(),
+                problem,
+            })?;
         done.insert(key);
     }
     Ok(path)
@@ -69,15 +77,15 @@ pub fn require(id: &str) -> PathBuf {
     let root = workspace_root();
     let manifest = Manifest::load(&root.join("corpus.toml"))
         .unwrap_or_else(|e| panic!("{e}; run `just corpus` from a complete checkout"));
-    let dir = Cache::dir_from(std::env::var_os("CROSSFADE_CORPUS_DIR"), &root);
+    let dir = Cache::dir_from_env(&root);
     require_from(&manifest, &Cache::new(dir), id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{entry, temp_dir};
     use crate::Manifest;
+    use crate::testutil::{entry, temp_dir};
 
     fn setup(tag: &str, data: &[u8]) -> (Manifest, Cache, crate::Entry) {
         let e = entry("flac/subset/01", "a.flac", data);
@@ -113,15 +121,23 @@ mod tests {
     fn invalid_file_is_an_error_naming_the_problem() {
         let (m, c, e) = setup("req-bad", b"abc");
         place(&c, &e, b"xyz");
-        let msg = try_require(&m, &c, "flac/subset/01").unwrap_err().to_string();
-        assert!(msg.contains("just corpus") && msg.contains("sha256"), "{msg}");
+        let msg = try_require(&m, &c, "flac/subset/01")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("just corpus") && msg.contains("sha256"),
+            "{msg}"
+        );
     }
 
     #[test]
     fn unknown_id_is_an_error() {
         let (m, c, _) = setup("req-unknown", b"abc");
         let msg = try_require(&m, &c, "flac/nope/99").unwrap_err().to_string();
-        assert!(msg.contains("flac/nope/99") && msg.contains("corpus.toml"), "{msg}");
+        assert!(
+            msg.contains("flac/nope/99") && msg.contains("corpus.toml"),
+            "{msg}"
+        );
     }
 
     #[test]

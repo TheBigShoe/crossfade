@@ -46,7 +46,11 @@ pub(crate) fn sha256_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +75,11 @@ impl Cache {
         }
     }
 
+    /// The default cache directory for the workspace at `root`.
+    pub fn dir_from_env(root: &Path) -> PathBuf {
+        Self::dir_from(std::env::var_os("CROSSFADE_CORPUS_DIR"), root)
+    }
+
     pub fn path(&self, entry: &Entry) -> PathBuf {
         self.dir.join(&entry.id).join(&entry.name)
     }
@@ -78,7 +87,9 @@ impl Cache {
     /// Where a download is staged. Never the final name, so a half-written
     /// file cannot pass for a cached one.
     pub(crate) fn temp_path(&self, entry: &Entry) -> PathBuf {
-        self.dir.join(&entry.id).join(format!("{}.part", entry.name))
+        self.dir
+            .join(&entry.id)
+            .join(format!("{}.part", entry.name))
     }
 
     pub fn verify(&self, entry: &Entry) -> Result<(), Problem> {
@@ -93,11 +104,17 @@ pub(crate) fn verify_file(entry: &Entry, path: &Path) -> Result<(), Problem> {
         Err(e) => return Err(Problem::Unreadable(e.to_string())),
     };
     if meta.len() != entry.bytes {
-        return Err(Problem::WrongSize { expected: entry.bytes, actual: meta.len() });
+        return Err(Problem::WrongSize {
+            expected: entry.bytes,
+            actual: meta.len(),
+        });
     }
     let actual = sha256_file(path).map_err(|e| Problem::Unreadable(e.to_string()))?;
     if actual != entry.sha256 {
-        return Err(Problem::WrongHash { expected: entry.sha256.clone(), actual });
+        return Err(Problem::WrongHash {
+            expected: entry.sha256.clone(),
+            actual,
+        });
     }
     Ok(())
 }
@@ -117,7 +134,10 @@ mod tests {
     fn path_layout_is_dir_id_name() {
         let cache = Cache::new(PathBuf::from("/c"));
         let e = entry("flac/subset/01", "01 - a.flac", b"x");
-        assert_eq!(cache.path(&e), PathBuf::from("/c/flac/subset/01/01 - a.flac"));
+        assert_eq!(
+            cache.path(&e),
+            PathBuf::from("/c/flac/subset/01/01 - a.flac")
+        );
         assert_eq!(cache.dir(), Path::new("/c"));
     }
 
@@ -143,7 +163,10 @@ mod tests {
         put(&cache, &e, b"hello!");
         assert_eq!(
             cache.verify(&e),
-            Err(Problem::WrongSize { expected: 5, actual: 6 })
+            Err(Problem::WrongSize {
+                expected: 5,
+                actual: 6
+            })
         );
     }
 
@@ -175,9 +198,17 @@ mod tests {
     #[test]
     fn problems_read_clearly() {
         assert!(Problem::Missing.to_string().contains("missing"));
-        let s = Problem::WrongSize { expected: 1, actual: 2 }.to_string();
+        let s = Problem::WrongSize {
+            expected: 1,
+            actual: 2,
+        }
+        .to_string();
         assert!(s.contains('1') && s.contains('2'));
-        let h = Problem::WrongHash { expected: "aa".into(), actual: "bb".into() }.to_string();
+        let h = Problem::WrongHash {
+            expected: "aa".into(),
+            actual: "bb".into(),
+        }
+        .to_string();
         assert!(h.contains("aa") && h.contains("bb"));
     }
 
@@ -188,7 +219,13 @@ mod tests {
             Cache::dir_from(Some("/elsewhere".into()), root),
             PathBuf::from("/elsewhere")
         );
-        assert_eq!(Cache::dir_from(None, root), PathBuf::from("/ws/.corpus-cache"));
-        assert_eq!(Cache::dir_from(Some("".into()), root), PathBuf::from("/ws/.corpus-cache"));
+        assert_eq!(
+            Cache::dir_from(None, root),
+            PathBuf::from("/ws/.corpus-cache")
+        );
+        assert_eq!(
+            Cache::dir_from(Some("".into()), root),
+            PathBuf::from("/ws/.corpus-cache")
+        );
     }
 }
