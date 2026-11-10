@@ -7,5 +7,7 @@
 //! keymaps) as arguments. This code was extracted from Serialist at commit `aff6283`.
 #![forbid(unsafe_code)]
 
+pub mod atomic;
+
 #[cfg(test)]
 mod test_util;
