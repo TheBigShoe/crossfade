@@ -297,6 +297,9 @@ dependencies = [
  "crossfade-core",
  "crossfade-dsp",
  "crossfade-format",
+ "crossfade-testkit",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
