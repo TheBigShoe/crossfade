@@ -200,10 +200,18 @@ impl Encoder {
     /// The MD5 is over the samples as little-endian integers in the smallest whole number
     /// of bytes the depth fits.
     fn hash(&mut self, interleaved: &[i32]) {
-        let width = usize::from(self.config.bits_per_sample).div_ceil(8);
-        self.md5_bytes.clear();
-        for &s in interleaved {
-            self.md5_bytes.extend_from_slice(&s.to_le_bytes()[..width]);
+        fn pack<const W: usize>(out: &mut Vec<u8>, samples: &[i32]) {
+            out.clear();
+            out.resize(samples.len() * W, 0);
+            for (dst, &s) in out.as_chunks_mut::<W>().0.iter_mut().zip(samples) {
+                dst.copy_from_slice(&s.to_le_bytes()[..W]);
+            }
+        }
+        match self.config.bits_per_sample.div_ceil(8) {
+            1 => pack::<1>(&mut self.md5_bytes, interleaved),
+            2 => pack::<2>(&mut self.md5_bytes, interleaved),
+            3 => pack::<3>(&mut self.md5_bytes, interleaved),
+            _ => pack::<4>(&mut self.md5_bytes, interleaved),
         }
         self.md5.update(&self.md5_bytes);
     }

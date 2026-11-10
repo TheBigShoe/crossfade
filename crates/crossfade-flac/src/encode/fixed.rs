@@ -88,29 +88,42 @@ fn log2_q8(x: u64) -> u64 {
     u64::from(b) * 256 + frac
 }
 
-/// A rough size in 1/256 bits of the best fixed-order coding of `x`, from the mean absolute
-/// residual of each order. Only for ranking stereo modes before a full search.
-pub(super) fn estimate<T: Sample>(x: &[T]) -> u64 {
+/// Sums of absolute values of the order 0 to 4 residuals over `x[4..]`, the same samples for
+/// every order so the sums compare; for n < 5 only order 0 is meaningful.
+pub(super) fn abs_sums<T: Sample>(x: &[T]) -> [u64; 5] {
     let n = x.len();
     let mut sums = [0u64; 5];
     let g = |i: usize| -> i64 { x[i].into() };
     if n < 5 {
         sums[0] = (0..n).map(|i| g(i).unsigned_abs()).sum();
-    } else {
-        for i in 4..n {
-            let (a, b, c, d, e) = (g(i), g(i - 1), g(i - 2), g(i - 3), g(i - 4));
-            let d1 = a - b;
-            let d2 = d1 - (b - c);
-            let d3 = d2 - (b - c - (c - d));
-            let d4 = d3 - (b - c - (c - d) - (c - d - (d - e)));
-            for (sum, v) in sums.iter_mut().zip([a, d1, d2, d3, d4]) {
-                *sum += v.unsigned_abs();
-            }
+        return sums;
+    }
+    for i in 4..n {
+        let (a, b, c, d, e) = (g(i), g(i - 1), g(i - 2), g(i - 3), g(i - 4));
+        let d1 = a - b;
+        let d2 = d1 - (b - c);
+        let d3 = d2 - (b - c - (c - d));
+        let d4 = d3 - (b - c - (c - d) - (c - d - (d - e)));
+        for (sum, v) in sums.iter_mut().zip([a, d1, d2, d3, d4]) {
+            *sum += v.unsigned_abs();
         }
     }
-    let count = n as u64;
-    sums.iter()
-        .map(|&s| count * (log2_q8(s + count) - log2_q8(count)))
+    sums
+}
+
+/// A rough size in 1/256 bits of coding `count` values whose absolute values sum to `sum`.
+pub(super) fn rough_bits(sum: u64, count: u64) -> u64 {
+    count * (log2_q8(sum + count) - log2_q8(count))
+}
+
+/// A rough size in 1/256 bits of the best fixed-order coding of `x`, from the mean absolute
+/// residual of each order. Only for ranking: stereo modes before a full search, and which
+/// fixed orders deserve one.
+pub(super) fn estimate<T: Sample>(x: &[T]) -> u64 {
+    let count = x.len() as u64;
+    abs_sums(x)
+        .iter()
+        .map(|&s| rough_bits(s, count))
         .min()
         .unwrap_or(0)
 }

@@ -61,6 +61,8 @@ pub(super) struct Level {
     pub(super) stereo: Stereo,
     /// Largest Rice partition order tried.
     pub(super) rice_order: u32,
+    /// How many fixed orders, best by estimate first, get an exact search.
+    pub(super) fixed_tries: usize,
     /// Largest LPC order; 0 means fixed predictors only.
     pub(super) max_lpc: usize,
     /// How many LPC orders, best by estimate first, get an exact search.
@@ -84,6 +86,7 @@ impl Level {
                 5 => 5,
                 _ => 6,
             },
+            fixed_tries: if level <= 2 { 5 } else { 2 },
             max_lpc: match level {
                 0..=2 => 0,
                 3 => 6,
@@ -214,7 +217,17 @@ impl Analyzer {
         plan.bps = bps;
         plan.kind = Kind::Verbatim;
         plan.bits = head + n as u64 * u64::from(bps);
-        for order in 0..=4usize.min(n - 1) {
+        let top = 4usize.min(n - 1);
+        // Rank the orders by a one-pass estimate; the leaders are then coded exactly.
+        let mut rank = [0usize, 1, 2, 3, 4];
+        if self.level.fixed_tries <= top && n >= 5 {
+            let sums = fixed::abs_sums(x);
+            let count = (n - 4) as u64;
+            let est =
+                |o: usize| fixed::rough_bits(sums[o], count) + o as u64 * u64::from(bps) * 256;
+            rank[..=top].sort_by_key(|&o| est(o));
+        }
+        for &order in &rank[..self.level.fixed_tries.min(top + 1)] {
             if !fixed::residual(x, order, bps, &mut self.cand) {
                 continue;
             }
