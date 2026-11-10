@@ -1,4 +1,4 @@
-use crossfade_core::{AudioFrame, AudioSpec, ChannelLayout, SampleFormat, Samples};
+use crossfade_core::{AudioFrame, ChannelLayout, SampleFormat, Samples};
 use crossfade_dsp::convert::convert_format;
 use crossfade_testkit::pcm::{decode_le, encode_le};
 use proptest::prelude::*;
