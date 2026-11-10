@@ -1,14 +1,13 @@
 //! The `crossfade` command-line tool.
 #![forbid(unsafe_code)]
 
-mod fsio;
 mod probe_report;
 
 use clap::builder::PossibleValuesParser;
 use clap::{Parser, Subcommand};
 use crossfade_core::{JobIo, Limits, SampleFormat};
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, probe, run};
-use fsio::FsIo;
+use crossfade_app::FsIo;
 use std::path::Path;
 use std::process::ExitCode;
 

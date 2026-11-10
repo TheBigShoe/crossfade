@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 /// Output goes to a hidden temporary file beside the target; `commit` renames
 /// it into place, so a reader never sees a half-written file.
 #[derive(Default)]
-pub(crate) struct FsIo {
+pub struct FsIo {
     temps: HashMap<String, PathBuf>,
 }
 
@@ -32,7 +32,7 @@ fn temp_path(target: &Path) -> PathBuf {
 }
 
 impl FsIo {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 }
