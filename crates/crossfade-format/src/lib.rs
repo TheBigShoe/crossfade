@@ -6,6 +6,7 @@ pub mod aiff;
 pub mod flac;
 pub mod ogg;
 mod replay;
+pub mod vorbis_comment;
 pub mod wav;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
