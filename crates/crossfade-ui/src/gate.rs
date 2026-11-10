@@ -6,10 +6,13 @@ use std::time::Duration;
 
 use crate::prelude::*;
 use crate::test_support::{
-    FORMAT_LABELS, Rig, TempDir, add_paths, click, draw, has, open_in, open_sheet, pick, sample_at,
-    step, type_output,
+    CONTAINER_LABELS, FORMAT_LABELS, Rig, TempDir, add_paths, click, draw, has, open_in,
+    open_sheet, pick, sample_at, step, type_output,
 };
 use crate::workspace::{Workspace, WorkspaceOptions};
+use crossfade_codec::decoder_for;
+use crossfade_core::{AudioFrame, Limits, MediaSource, Packet, Samples};
+use crossfade_format::{FormatId, open_demuxer};
 
 /// Poll until `done` holds. Worker threads report through a channel that wakes the
 /// foreground task, so parking is allowed; the bound only stops a hang.
@@ -109,4 +112,78 @@ fn cancelling_a_running_conversion_leaves_no_output_and_no_temp_file(cx: &mut Te
     click(cx, rig.window, "queue-cancel-0");
     wait_until(cx, &rig.workspace, |w| w.queue_row_state(0) == "Cancelled");
     assert_eq!(rig.dir.listing(), ["big.wav"]);
+}
+
+/// A FLAC file's packets and, decoded by the engine, its 16-bit samples.
+fn flac_audio(path: &str) -> (Vec<Vec<u8>>, Vec<i16>, Option<u64>) {
+    let bytes = std::fs::read(path).expect("the file exists");
+    let source: Box<dyn MediaSource> = Box::new(std::io::Cursor::new(bytes));
+    let (format, mut demuxer) = open_demuxer(source, &Limits::default()).expect("a readable file");
+    assert_eq!(format, FormatId::Flac);
+    let stream = demuxer.streams()[0].clone();
+    let mut decoder = decoder_for(&stream).expect("a flac decoder");
+    let (mut packets, mut samples) = (Vec::new(), Vec::new());
+    let mut frame = AudioFrame::new(&stream.audio);
+    let mut packet = Packet::default();
+    let mut take = |decoder: &mut dyn crossfade_core::Decoder, samples: &mut Vec<i16>| {
+        while decoder.receive_frame(&mut frame).expect("decodes") {
+            let Samples::S16(chunk) = &frame.samples else {
+                panic!("expected 16-bit samples");
+            };
+            samples.extend_from_slice(chunk);
+        }
+    };
+    while demuxer.read_packet(&mut packet).expect("a packet") {
+        packets.push(packet.data.clone());
+        decoder.send_packet(&packet).expect("decodes");
+        take(&mut *decoder, &mut samples);
+    }
+    decoder.drain();
+    take(&mut *decoder, &mut samples);
+    (packets, samples, stream.frames)
+}
+
+#[gpui_test]
+fn a_wav_converted_to_flac_decodes_bit_exact_and_copies_without_touching_the_audio(
+    cx: &mut TestAppContext,
+) {
+    let rig = real_rig(cx);
+    let frames = 2_000;
+    let input = rig.dir.write_wav("in.wav", 48_000, 2, frames);
+    add_paths(cx, &rig, &[&input]);
+
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    wait_until(cx, &rig.workspace, |w| {
+        w.queue_row_state(0).starts_with("Done")
+    });
+    draw(cx, rig.window);
+
+    let flac = rig.dir.path("in.flac");
+    let (packets, samples, total) = flac_audio(&flac);
+    assert_eq!(total, Some(u64::from(frames)));
+    let want: Vec<i16> = (0..frames * 2).map(sample_at).collect();
+    assert_eq!(samples, want, "the FLAC decodes to the source samples");
+
+    // Stream copy that FLAC into a second one.
+    add_paths(cx, &rig, &[&flac]);
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    click(cx, rig.window, "sheet-copy");
+    draw(cx, rig.window);
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    wait_until(cx, &rig.workspace, |w| {
+        w.queue_row_state(1).starts_with("Done")
+    });
+    let (copied_packets, copied_samples, copied_total) = flac_audio(&rig.dir.path("in-copy.flac"));
+    assert_eq!(
+        copied_packets, packets,
+        "the audio frames are byte for byte the same"
+    );
+    assert_eq!(copied_samples, want);
+    assert_eq!(copied_total, total);
+    assert_eq!(rig.dir.listing(), ["in-copy.flac", "in.flac", "in.wav"]);
 }
