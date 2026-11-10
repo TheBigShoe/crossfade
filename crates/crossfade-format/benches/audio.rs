@@ -121,8 +121,7 @@ fn file(s: &Signal, format: FormatId, codec: CodecId) -> Vec<u8> {
     }
     mux.set_extradata(&extradata).unwrap();
     mux.finish().unwrap();
-    let bytes = sink.0.lock().unwrap().get_ref().clone();
-    bytes
+    sink.0.lock().unwrap().get_ref().clone()
 }
 
 /// Reader plus decoder over memory, to the end of the stream.

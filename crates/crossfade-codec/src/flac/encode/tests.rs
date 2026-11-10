@@ -407,7 +407,9 @@ fn hostile_24_bit_samples_never_code_larger_than_raw_samples() {
     ];
     for pcm in files {
         let samples: Vec<i32> = pcm
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| i32::from_le_bytes([c[0], c[1], c[2], 0]) << 8 >> 8)
             .collect();
         let spec = spec(11025, SampleFormat::S24, 1);

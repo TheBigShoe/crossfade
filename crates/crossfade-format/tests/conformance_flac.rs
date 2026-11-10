@@ -86,7 +86,8 @@ fn run(path: &Path) -> Run {
         let (mut a, mut b) = (Vec::new(), Vec::new());
         let mut take = |frame: &AudioFrame, r: &mut Run| {
             r.frames += frame.frames() as u64;
-            (a.clear(), b.clear());
+            a.clear();
+            b.clear();
             container_bytes(&frame.samples, &mut a);
             stream_bytes(&frame.samples, bits, &mut b);
             sha.update(&a);
