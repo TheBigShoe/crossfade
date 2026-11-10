@@ -2,3 +2,9 @@
 //! the I/O and clock seams every other engine crate builds on. Pure Rust,
 //! no native dependencies.
 #![forbid(unsafe_code)]
+
+mod error;
+mod rational;
+
+pub use error::Error;
+pub use rational::Rational;
