@@ -1,0 +1,26 @@
+[package]
+name = "crossfade-ui"
+description = "The Crossfade desktop app: GPUI shell, chrome and screenshot harness."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "crossfade-gui"
+path = "src/main.rs"
+
+[dependencies]
+# gpui-kit re-exports GPUI and its macros resolve through it, so GPUI is not listed
+# separately. Code reaches all of it through `prelude`.
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
