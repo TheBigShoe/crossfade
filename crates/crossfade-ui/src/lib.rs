@@ -12,7 +12,7 @@ mod test_support;
 #[cfg(test)]
 mod workspace_tests;
 
-pub use workspace::{Workspace, init};
+pub use workspace::{Workspace, init, open_main_window};
 
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports
@@ -24,6 +24,8 @@ pub mod prelude {
     pub use gpui_kit::prelude::*;
     pub use gpui_kit::*;
     pub use gpui_kit::{init as kit_init, open_window as kit_open_window};
+    // The app's icon set, to register with `Application::with_assets`.
+    pub use crate::icons::Assets;
     // The Lucide catalog's names. An icon draws only if the registered asset source has
     // its SVG, which is what `icons::Assets` is for.
     pub use gpui_kit::assets::{Assets as KitAssets, IconName, icon_assets};
