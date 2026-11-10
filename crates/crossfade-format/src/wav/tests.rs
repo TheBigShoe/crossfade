@@ -478,3 +478,116 @@ impl ConcatBytes for Vec<Got> {
         self.iter().flat_map(|p| p.2.clone()).collect()
     }
 }
+
+mod robustness {
+    use super::*;
+    use crossfade_core::MediaSource;
+    use crossfade_testkit::io::FaultySource;
+    use std::io::ErrorKind;
+
+    fn sample_file() -> (Vec<u8>, Vec<u8>) {
+        let fmt = Fmt::new(TAG_PCM, 2, 8000, 16);
+        let pcm = payload(4 * (FRAMES_PER_PACKET * 2 + 100));
+        let bytes = riff(&[
+            chunk(b"LIST", b"odd"),
+            chunk(b"fmt ", &fmt.body()),
+            chunk(b"data", &pcm),
+        ]);
+        (bytes, pcm)
+    }
+
+    fn demux(src: impl MediaSource + 'static) -> Result<WavDemuxer, Error> {
+        WavDemuxer::new(Box::new(src), &Limits::default())
+    }
+
+    #[test]
+    fn one_byte_reads_give_identical_packets() {
+        let (bytes, _) = sample_file();
+        let plain = drain(&mut open(bytes.clone()).unwrap());
+        let src = FaultySource::new(Cursor::new(bytes)).max_read(1);
+        assert_eq!(drain(&mut demux(src).unwrap()), plain);
+        assert_eq!(plain.0.len(), 3);
+    }
+
+    #[test]
+    fn works_on_a_non_seekable_source() {
+        let (bytes, pcm) = sample_file();
+        let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
+        let (packets, err) = drain(&mut demux(src).unwrap());
+        assert_eq!(err, None);
+        assert_eq!(packets.concat_bytes(), pcm);
+    }
+
+    #[test]
+    fn truncation_mid_data_gives_whole_frames_then_eof_at_the_cut() {
+        let (bytes, pcm) = sample_file();
+        let data_start = bytes.len() - pcm.len();
+        let packet_bytes = 4 * FRAMES_PER_PACKET;
+        // Cut inside the second packet, mid-frame.
+        let cut = data_start + packet_bytes + 4 * 10 + 3;
+        let src = FaultySource::new(Cursor::new(bytes)).truncate_at(cut as u64);
+        let (packets, err) = drain(&mut demux(src).unwrap());
+        let shape: Vec<_> = packets.iter().map(|p| (p.0, p.1)).collect();
+        assert_eq!(
+            shape,
+            [
+                (0, FRAMES_PER_PACKET as u64),
+                (FRAMES_PER_PACKET as i64, 10)
+            ]
+        );
+        assert_eq!(packets.concat_bytes(), pcm[..packet_bytes + 40]);
+        assert_eq!(err, Some(Error::UnexpectedEof { offset: cut as u64 }));
+    }
+
+    #[test]
+    fn truncation_on_a_packet_boundary_reports_that_offset() {
+        let (bytes, pcm) = sample_file();
+        let cut = (bytes.len() - pcm.len() + 4 * FRAMES_PER_PACKET) as u64;
+        let src = FaultySource::new(Cursor::new(bytes)).truncate_at(cut);
+        let (packets, err) = drain(&mut demux(src).unwrap());
+        assert_eq!(packets.len(), 1);
+        assert_eq!(err, Some(Error::UnexpectedEof { offset: cut }));
+    }
+
+    #[test]
+    fn truncation_inside_the_headers_is_an_eof_too() {
+        let (bytes, pcm) = sample_file();
+        let first_chunk_cut = 12 + 4;
+        let in_fmt = 12 + 8 + 4 + 8 + 5;
+        for cut in [first_chunk_cut, in_fmt] {
+            let src = FaultySource::new(Cursor::new(bytes.clone())).truncate_at(cut as u64);
+            assert_eq!(
+                demux(src).err(),
+                Some(Error::UnexpectedEof { offset: cut as u64 })
+            );
+        }
+        assert!(pcm.len() > 100);
+    }
+
+    #[test]
+    fn io_errors_surface_as_io_with_the_injected_kind() {
+        let (bytes, pcm) = sample_file();
+        let io = |kind| Error::Io {
+            kind,
+            message: std::io::Error::from(kind).to_string(),
+        };
+        // In the header.
+        let src = FaultySource::new(Cursor::new(bytes.clone())).fail_at(10, ErrorKind::BrokenPipe);
+        assert_eq!(demux(src).err(), Some(io(ErrorKind::BrokenPipe)));
+        // In the data.
+        let at = (bytes.len() - pcm.len() + 4 * FRAMES_PER_PACKET + 8) as u64;
+        let src = FaultySource::new(Cursor::new(bytes)).fail_at(at, ErrorKind::PermissionDenied);
+        let (packets, err) = drain(&mut demux(src).unwrap());
+        assert_eq!(packets.len(), 1);
+        assert_eq!(err, Some(io(ErrorKind::PermissionDenied)));
+    }
+
+    #[test]
+    fn after_the_end_further_reads_keep_saying_end() {
+        let (bytes, _) = sample_file();
+        let mut d = open(bytes).unwrap();
+        drain(&mut d);
+        let mut p = Packet::default();
+        assert!(!d.read_packet(&mut p).unwrap());
+    }
+}
