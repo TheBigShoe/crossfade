@@ -99,17 +99,15 @@ fn runner() -> (ThreadRunner, Receiver<(JobId, RunnerEvent)>) {
 
 const FRAMES: usize = 10_000;
 
-fn s16_input(d: &Dir) -> Vec<f64> {
+fn s16_input(d: &Dir) {
     let s = spec(8000, SampleFormat::S16, ChannelLayout::mono());
-    let (samples, wav) = sine_wav(&s, FRAMES);
-    d.write("in.wav", &wav);
-    samples
+    d.write("in.wav", &sine_wav(&s, FRAMES).1);
 }
 
 #[test]
 fn converts_s16_to_s24_and_the_output_holds_the_samples() {
     let d = Dir::new("convert");
-    let samples = s16_input(&d);
+    s16_input(&d);
     let (mut r, rx) = runner();
     let id = job_id();
     let req = request(
@@ -128,10 +126,11 @@ fn converts_s16_to_s24_and_the_output_holds_the_samples() {
         })
     );
     let out = std::fs::read(d.path("out.wav")).unwrap();
-    assert_eq!(
-        data_chunk(&out),
-        pcm::encode_le(&samples, SampleFormat::S24)
-    );
+    // The oracle: widen the s16 samples the input actually holds.
+    let input = std::fs::read(d.path("in.wav")).unwrap();
+    let held = pcm::decode_le(data_chunk(&input), SampleFormat::S16).unwrap();
+    assert_eq!(held.len(), FRAMES);
+    assert_eq!(data_chunk(&out), pcm::encode_le(&held, SampleFormat::S24));
     assert_eq!(d.listing(), ["in.wav", "out.wav"]);
 }
 
