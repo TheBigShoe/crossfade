@@ -103,8 +103,4 @@ fn tags_and_raw_bits_reach_the_document_in_order() {
     assert!(json.ends_with(r#""tags":[{"key":"ARTIST","value":"A"},{"key":"ARTIST","value":"B"},{"key":"TITLE","value":"T"}]}"#), "{json}");
     let back: crossfade_graph::ProbeDocument = serde_json::from_str(&json).unwrap();
     assert_eq!(back, doc);
-    let _ = ProbeTag {
-        key: String::new(),
-        value: String::new(),
-    };
 }
