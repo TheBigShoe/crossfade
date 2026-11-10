@@ -11,6 +11,17 @@ use crossfade_format::{FormatId, create_muxer};
 use crossfade_fuzz::{Pipe, SharedSink};
 use libfuzzer_sys::fuzz_target;
 
+/// Whether a split by sync scan and CRC-16 could cut `frame` short.
+fn ambiguous(frame: &[u8]) -> bool {
+    use crossfade_flac::crc::crc16;
+    use crossfade_flac::frame::parse_header;
+    let Ok(h) = parse_header(frame) else {
+        return false;
+    };
+    (h.header_len + 2..frame.len().saturating_sub(1))
+        .any(|i| crc16(&frame[..i]) == 0 && parse_header(&frame[i..]).is_ok())
+}
+
 const RATES: [u32; 8] = [8000, 11025, 44100, 48000, 96000, 192_000, 384_000, 1_048_575];
 /// Keeps one run fast; blocks are at most 4096 samples, so this still spans several.
 const MAX_FRAMES: usize = 20_000;
@@ -78,6 +89,11 @@ fuzz_target!(|data: &[u8]| {
     enc.send_frame(&frame).unwrap();
     enc.drain();
     while enc.receive_packet(&mut packet).unwrap() {
+        // Coded audio can hold a valid frame header after a prefix with a zero CRC-16 (about
+        // 2^-16 per false header), which a scanning demuxer takes for a frame boundary.
+        if ambiguous(&packet.data) {
+            return;
+        }
         mux.write_packet(&packet).unwrap();
     }
     mux.set_extradata(enc.extradata()).unwrap();
