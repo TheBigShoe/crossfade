@@ -1,6 +1,5 @@
 //! Reader tests. The builders here know nothing about the reader or the writer.
 
-use super::*;
 use crossfade_core::{
     AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, Packet, SampleFormat, TimeBase,
 };
@@ -282,12 +281,9 @@ fn offset_bytes_are_skipped_before_the_first_frame() {
 
 #[test]
 fn the_frame_count_comes_from_comm_not_the_chunk_size() {
-    let mut f = form(b"AIFF", &[comm(1, 2, 16)]);
-    f.extend_from_slice(&raw_chunk(b"SSND", 8, &{
-        let mut b = vec![0u8; 8];
-        b.extend_from_slice(&[9, 8, 7, 6]);
-        b
-    }));
+    let mut body = vec![0u8; 8];
+    body.extend_from_slice(&[9, 8, 7, 6]);
+    let f = form(b"AIFF", &[comm(1, 2, 16), raw_chunk(b"SSND", 8, &body)]);
     assert_eq!(all_data(open(f).unwrap().as_mut()), [9, 8, 7, 6]);
 }
 
@@ -426,6 +422,7 @@ fn an_oversized_text_chunk_is_skipped_not_read() {
 fn text_beyond_the_alloc_limit_is_skipped() {
     let limits = Limits {
         max_alloc_bytes: 8,
+        max_packet_bytes: 2,
         ..Limits::default()
     };
     let f = form(
@@ -597,4 +594,19 @@ fn a_small_packet_limit_shrinks_the_packets() {
     let (packets, err) = drain(d.as_mut());
     assert_eq!(err, None);
     assert_eq!(packets.iter().map(|p| p.1).collect::<Vec<_>>(), [4, 4, 2]);
+}
+
+#[test]
+fn open_demuxer_sniffs_aiff_and_aifc_even_on_a_pipe() {
+    let plain = aiff(1, 16, &[1, 2, 3, 4], 2);
+    let compressed = form(
+        b"AIFC",
+        &[comm_c(1, 2, 16, b"sowt", ""), ssnd(&[1, 2, 3, 4])],
+    );
+    for bytes in [plain, compressed] {
+        let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
+        let (id, mut d) = crate::open_demuxer(Box::new(src), &Limits::default()).unwrap();
+        assert_eq!(id, crate::FormatId::Aiff);
+        assert_eq!(all_data(d.as_mut()), [1, 2, 3, 4]);
+    }
 }

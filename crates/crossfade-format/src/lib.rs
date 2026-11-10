@@ -201,8 +201,6 @@ mod tests {
         for (bytes, want) in [
             (&b"fLaC\0\0\0\x22rest"[..], "reading flac is not built yet"),
             (b"ID3\x04\0\0\0\0\0\0", "reading flac is not built yet"),
-            (b"FORM\0\0\0\x10AIFFCOMM", "reading aiff is not built yet"),
-            (b"FORM\0\0\0\x10AIFCFVER", "reading aiff is not built yet"),
             (b"OggS\0\x02rest of page", "reading ogg is not built yet"),
         ] {
             assert_eq!(unsupported(open(bytes)), want, "{bytes:?}");

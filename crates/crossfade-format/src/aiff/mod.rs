@@ -4,12 +4,16 @@ mod extended;
 #[cfg(test)]
 mod tests;
 
+mod demux;
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
 
-pub fn open(_source: Box<dyn MediaSource>, _limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
-    Err(Error::Unsupported {
-        what: "reading aiff is not built yet".into(),
-    })
+pub use demux::AiffDemuxer;
+
+/// Whole frames per packet; the last packet of a stream may be shorter.
+pub const FRAMES_PER_PACKET: usize = 4096;
+
+pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
+    Ok(Box::new(AiffDemuxer::new(source, limits)?))
 }
 
 pub fn create(
