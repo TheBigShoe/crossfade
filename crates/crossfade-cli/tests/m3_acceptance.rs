@@ -550,3 +550,206 @@ fn probe_json_of_the_tagged_ogg_flac() {
     }
     "#);
 }
+
+// ---- WAV <-> FLAC --------------------------------------------------------------------------
+
+#[test]
+fn wav_to_flac_and_back_is_bit_exact_for_u8_s16_s24_in_mono_stereo_and_5_1() {
+    let d = Dir::new("wav-flac-wav");
+    for format in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24] {
+        for channels in [1u16, 2, 6] {
+            let data = tonal(48_000, channels, format, 6000);
+            d.write("in.wav", &wav(48_000, channels, format, &data));
+            d.ok(&["convert", "in.wav", "-o", "mid.flac", "--force"]);
+            d.ok(&["convert", "mid.flac", "-o", "out.wav", "--force"]);
+            let out = d.read("out.wav");
+            let case = format!("{format:?} x {channels}");
+            assert_eq!(wav_format(&out), (channels, 48_000, bits(format)), "{case}");
+            assert!(data_chunk(&out) == data, "{case}: samples differ");
+            // The FLAC file itself is what STREAMINFO says it is: 20 bits of rate, 3 of
+            // channels minus one, 5 of depth minus one.
+            let info = parse_flac(&d.read("mid.flac")).streaminfo;
+            let packed = u64::from_be_bytes(info[10..18].try_into().unwrap());
+            assert_eq!(packed >> 44, 48_000, "{case}");
+            assert_eq!(((packed >> 41) & 7) + 1, u64::from(channels), "{case}");
+            assert_eq!(((packed >> 36) & 31) + 1, u64::from(bits(format)), "{case}");
+            assert_eq!(packed & 0xF_FFFF_FFFF, 6000, "{case}");
+        }
+    }
+}
+
+#[test]
+fn every_compression_level_decodes_to_the_same_audio_and_level_8_is_not_larger_than_0() {
+    let d = Dir::new("levels");
+    for (format, channels) in [(SampleFormat::S16, 2u16), (SampleFormat::S24, 6)] {
+        let data = tonal(48_000, channels, format, 12_000);
+        d.write("in.wav", &wav(48_000, channels, format, &data));
+        let mut sizes = Vec::new();
+        for level in 0..=8 {
+            let level = level.to_string();
+            d.ok(&[
+                "convert",
+                "in.wav",
+                "-o",
+                "mid.flac",
+                "--compression-level",
+                &level,
+                "--force",
+            ]);
+            sizes.push(d.read("mid.flac").len());
+            d.ok(&["convert", "mid.flac", "-o", "out.wav", "--force"]);
+            assert!(
+                data_chunk(&d.read("out.wav")) == data,
+                "{format:?} x {channels}, level {level}"
+            );
+        }
+        assert!(sizes[8] <= sizes[0], "{format:?} x {channels}: {sizes:?}");
+    }
+}
+
+#[test]
+fn an_explicit_flac_codec_is_the_default_for_a_flac_output() {
+    let d = Dir::new("codec-flac");
+    d.write(
+        "in.wav",
+        &wav(
+            48_000,
+            2,
+            SampleFormat::S16,
+            &tonal(48_000, 2, SampleFormat::S16, 3000),
+        ),
+    );
+    d.ok(&["convert", "in.wav", "-o", "a.flac"]);
+    d.ok(&["convert", "in.wav", "-o", "b.flac", "--codec", "flac"]);
+    assert_eq!(d.read("a.flac"), d.read("b.flac"));
+}
+
+// ---- WAV <-> AIFF --------------------------------------------------------------------------
+
+#[test]
+fn wav_and_aiff_are_bit_exact_both_ways_for_all_six_sample_formats() {
+    let d = Dir::new("wav-aiff");
+    for format in FORMATS {
+        let data = tonal(44_100, 2, format, 3000);
+        d.write("in.wav", &wav(44_100, 2, format, &data));
+        d.ok(&["convert", "in.wav", "-o", "mid.aiff", "--force"]);
+        let aiff = parse_aiff(&d.read("mid.aiff"));
+        let case = format!("{format:?}");
+        let float = format.is_float();
+        // AIFF proper has no float samples: those go out as AIFF-C.
+        assert_eq!(&aiff.form, if float { b"AIFC" } else { b"AIFF" }, "{case}");
+        let name: Option<&[u8; 4]> = match format {
+            SampleFormat::F32 => Some(b"fl32"),
+            SampleFormat::F64 => Some(b"fl64"),
+            _ => None,
+        };
+        assert_eq!(aiff.compression.as_ref(), name, "{case}");
+        assert_eq!(aiff.channels, 2, "{case}");
+        assert_eq!(aiff.frames, 3000, "{case}");
+        assert_eq!(aiff.bits, bits(format), "{case}");
+        assert_eq!(aiff.rate, 44_100.0, "{case}");
+        assert!(
+            aiff.sound == aiff_sound_from_wav(&data, format),
+            "{case}: sound data"
+        );
+
+        d.ok(&["convert", "mid.aiff", "-o", "out.wav", "--force"]);
+        let out = d.read("out.wav");
+        assert_eq!(wav_format(&out), (2, 44_100, bits(format)), "{case}");
+        assert!(data_chunk(&out) == data, "{case}: back to WAV");
+    }
+}
+
+#[test]
+fn aiff_to_flac_and_back_keeps_the_integer_formats_flac_can_hold() {
+    let d = Dir::new("aiff-flac-aiff");
+    for format in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24] {
+        let data = tonal(44_100, 2, format, 3000);
+        d.write("in.wav", &wav(44_100, 2, format, &data));
+        d.ok(&["convert", "in.wav", "-o", "in.aiff", "--force"]);
+        let source = parse_aiff(&d.read("in.aiff"));
+        d.ok(&["convert", "in.aiff", "-o", "mid.flac", "--force"]);
+        d.ok(&["convert", "mid.flac", "-o", "out.aiff", "--force"]);
+        let out = parse_aiff(&d.read("out.aiff"));
+        let case = format!("{format:?}");
+        assert!(out.sound == source.sound, "{case}");
+        assert!(out.sound == aiff_sound_from_wav(&data, format), "{case}");
+        assert_eq!(
+            (out.channels, out.frames, out.bits),
+            (2, 3000, bits(format)),
+            "{case}"
+        );
+        assert_eq!(out.rate, 44_100.0, "{case}");
+    }
+}
+
+// ---- FLAC fixtures -------------------------------------------------------------------------
+
+/// The WAV data a fixture's signal should come out as: the decoder's output format is the
+/// smallest of u8/s16/s24/s32 that holds the depth, with the samples left-justified in it.
+fn expected_wav_data(signal: &signals::Signal) -> (SampleFormat, Vec<u8>) {
+    let format = match signal.bits {
+        1..=8 => SampleFormat::U8,
+        9..=16 => SampleFormat::S16,
+        17..=24 => SampleFormat::S24,
+        _ => SampleFormat::S32,
+    };
+    let shift = format.bits() as u32 - u32::from(signal.bits);
+    let mut out = Vec::new();
+    for &s in &signal.samples {
+        let v = i64::from(s) << shift;
+        if format == SampleFormat::U8 {
+            out.push((v + 128) as u8);
+        } else {
+            out.extend_from_slice(&v.to_le_bytes()[..format.bytes_per_sample()]);
+        }
+    }
+    (format, out)
+}
+
+#[test]
+fn every_flac_fixture_converts_to_a_wav_equal_to_its_regenerated_signal() {
+    let d = Dir::new("fixtures");
+    for &(file, name) in signals::FIXTURES {
+        let want = signals::signal(name);
+        let (format, data) = expected_wav_data(&want);
+        d.write("in.flac", &fixture(&format!("flac/{file}")));
+        d.ok(&["convert", "in.flac", "-o", "out.wav", "--force"]);
+        let out = d.read("out.wav");
+        let channels = u16::try_from(want.channels).unwrap();
+        assert_eq!(
+            wav_format(&out),
+            (channels, want.rate, bits(format)),
+            "{file}"
+        );
+        assert!(data_chunk(&out) == data, "{file}: samples differ");
+    }
+}
+
+#[test]
+fn the_20_bit_flac_converts_to_24_bit_samples_shifted_left_by_four() {
+    let d = Dir::new("twenty-bit");
+    d.write("in.flac", &fixture("flac/stereo-20bit.flac"));
+    let probe = d.ok(&["probe", "in.flac", "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&probe).unwrap();
+    assert_eq!(json["streams"][0]["sample_format"], "s24");
+    assert_eq!(json["streams"][0]["bits_per_raw_sample"], 20);
+
+    d.ok(&["convert", "in.flac", "-o", "out.wav"]);
+    let out = d.read("out.wav");
+    assert_eq!(wav_format(&out), (2, 48_000, 24));
+    let source = signals::signal("stereo20");
+    assert_eq!(source.bits, 20);
+    let mut want = Vec::new();
+    for s in &source.samples {
+        want.extend_from_slice(&(s << 4).to_le_bytes()[..3]);
+    }
+    assert!(data_chunk(&out) == want);
+    // The WAV has no notion of a 20-bit depth.
+    let again: serde_json::Value =
+        serde_json::from_str(&d.ok(&["probe", "out.wav", "--json"])).unwrap();
+    assert_eq!(
+        again["streams"][0]["bits_per_raw_sample"],
+        serde_json::Value::Null
+    );
+}
