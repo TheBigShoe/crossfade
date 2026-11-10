@@ -247,3 +247,154 @@ fn a_stream_shorter_than_one_block_keeps_the_block_size_in_streaminfo() {
     let out = encode(&spec, None, &samples, 10);
     check_stream(&spec, &samples, &out, 4096);
 }
+
+use proptest::prelude::*;
+
+fn flat(o: &Output) -> (Vec<(i64, u64, Vec<u8>)>, Vec<u8>) {
+    let packets = o
+        .packets
+        .iter()
+        .map(|p| (p.pts, p.duration, p.data.clone()))
+        .collect();
+    (packets, o.extradata.clone())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    #[test]
+    fn chunking_the_input_changes_no_byte(
+        format in prop::sample::select(vec![SampleFormat::U8, SampleFormat::S16, SampleFormat::S24]),
+        channels in 1u16..=3,
+        frames in 0usize..9000,
+        chunk in 1usize..5000,
+        seed in any::<u32>(),
+    ) {
+        let spec = spec(22050, format, channels);
+        let samples = signal(usize::from(channels), frames, bits(format), seed);
+        let whole = encode(&spec, Some(2), &samples, frames.max(1));
+        let pieces = encode(&spec, Some(2), &samples, chunk);
+        prop_assert_eq!(flat(&whole), flat(&pieces));
+    }
+}
+
+#[test]
+fn two_encoders_give_identical_bytes() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let samples = signal(2, 20_000, 16, 7);
+    assert_eq!(
+        flat(&encode(&spec, None, &samples, 3000)),
+        flat(&encode(&spec, None, &samples, 3000))
+    );
+}
+
+#[test]
+fn our_bytes_equal_flacenc_s_own_stream_for_the_same_settings() {
+    use flacenc::component::BitRepr;
+    use flacenc::source::MemSource;
+    for (channels, format) in [
+        (1u16, SampleFormat::S16),
+        (2, SampleFormat::S16),
+        (2, SampleFormat::S24),
+    ] {
+        let spec = spec(44100, format, channels);
+        let depth = bits(format) as usize;
+        let samples = signal(usize::from(channels), 4096 * 2 + 777, depth as u32, 3);
+        let ours = encode(&spec, Some(5), &samples, 5000);
+
+        let config = LEVELS[5].config().unwrap();
+        let source = MemSource::from_samples(&samples, usize::from(channels), depth, 44100);
+        let mut stream = flacenc::encode_with_fixed_block_size(&config, source, 4096).unwrap();
+        // The short tail lowers flacenc's minimum block size; the encoder pins both to 4096.
+        stream
+            .stream_info_mut()
+            .set_block_sizes(4096, 4096)
+            .unwrap();
+        let mut sink = MemSink::<u8>::new();
+        stream.write(&mut sink).unwrap();
+        let theirs = sink.into_inner();
+
+        assert_eq!(&theirs[..4], b"fLaC");
+        assert_eq!(&theirs[8..42], &ours.extradata[..], "{channels} {format:?}");
+        let frames: Vec<u8> = ours.packets.iter().flat_map(|p| p.data.clone()).collect();
+        assert_eq!(&theirs[42..], &frames[..], "{channels} {format:?}");
+    }
+}
+
+#[test]
+fn a_24_bit_sample_out_of_range_is_malformed() {
+    let spec = spec(44100, SampleFormat::S24, 1);
+    let mut e = encoder(&spec, &opts(None)).unwrap();
+    let mut f = AudioFrame::new(&spec);
+    f.samples = Samples::S24(vec![0, 1 << 23]);
+    assert!(matches!(e.send_frame(&f), Err(Error::Malformed { .. })));
+}
+
+#[test]
+fn a_partial_sample_frame_is_malformed_and_sending_after_drain_is_refused() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let mut e = encoder(&spec, &opts(None)).unwrap();
+    let mut f = AudioFrame::new(&spec);
+    f.samples = Samples::S16(vec![1, 2, 3]);
+    assert!(matches!(e.send_frame(&f), Err(Error::Malformed { .. })));
+    e.drain();
+    e.drain();
+    f.samples = Samples::S16(vec![1, 2]);
+    assert!(matches!(e.send_frame(&f), Err(Error::Unsupported { .. })));
+}
+
+#[test]
+fn at_most_one_block_is_held_back_and_packets_appear_as_blocks_fill() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let mut e = encoder(&spec, &opts(None)).unwrap();
+    let samples = signal(2, 4095, 16, 9);
+    let mut p = Packet::default();
+    e.send_frame(&audio_frame(&spec, &samples)).unwrap();
+    assert!(!e.receive_packet(&mut p).unwrap());
+    e.send_frame(&audio_frame(&spec, &samples[..2])).unwrap();
+    assert!(e.receive_packet(&mut p).unwrap());
+    assert_eq!((p.pts, p.duration), (0, 4096));
+    assert!(!e.receive_packet(&mut p).unwrap());
+}
+
+#[test]
+fn the_provisional_header_stays_until_drain_and_the_final_one_differs() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let mut e = encoder(&spec, &opts(None)).unwrap();
+    let before = e.extradata().to_vec();
+    e.send_frame(&audio_frame(&spec, &signal(2, 5000, 16, 4)))
+        .unwrap();
+    assert_eq!(e.extradata(), &before[..]);
+    e.drain();
+    assert_ne!(e.extradata(), &before[..]);
+}
+
+#[test]
+fn every_level_makes_a_valid_stream_and_more_effort_never_costs_bytes_on_a_tone() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let samples = signal(2, 44100, 16, 11);
+    let size = |level| {
+        let out = encode(&spec, Some(level), &samples, 4096);
+        let block = if level <= 2 { 1152 } else { 4096 };
+        check_stream(&spec, &samples, &out, block);
+        out.packets.iter().map(|p| p.data.len()).sum::<usize>()
+    };
+    let sizes: Vec<usize> = (0..=8).map(size).collect();
+    assert!(sizes[8] <= sizes[0], "{sizes:?}");
+    assert!(sizes[5] < samples.len() * 2, "{sizes:?}");
+    for w in sizes.windows(2) {
+        // Equal or better, with slack for the odd level that trades block size for speed.
+        assert!(w[1] <= w[0] + w[0] / 50, "{sizes:?}");
+    }
+}
+
+#[test]
+fn silence_is_a_tiny_constant_stream() {
+    let spec = spec(44100, SampleFormat::S16, 2);
+    let samples = vec![0i32; 2 * 44100];
+    let out = encode(&spec, None, &samples, 4096);
+    check_stream(&spec, &samples, &out, 4096);
+    let total: usize = out.packets.iter().map(|p| p.data.len()).sum();
+    // Raw would be 176 400 bytes; 11 frames of header plus two constant subframes.
+    assert!(total < 11 * 16, "{total}");
+}
