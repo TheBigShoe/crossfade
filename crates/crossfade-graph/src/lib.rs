@@ -10,5 +10,5 @@ mod run;
 pub use crossfade_core::JobIo;
 pub use job::{AudioSettings, Job, JobInput, JobOutput};
 pub use pipeline::{Pipeline, Plan, Step};
-pub use probe::{ProbeReport, probe};
+pub use probe::{ProbeDocument, ProbeReport, ProbeStream, probe};
 pub use run::{CancelToken, Event, run};

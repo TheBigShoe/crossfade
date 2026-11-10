@@ -43,3 +43,20 @@ fn missing_file_is_an_io_error() {
         })
     ));
 }
+
+#[test]
+fn document_serialises_the_schema_1_field_order() {
+    let s = spec(8000, SampleFormat::S16, ChannelLayout::mono());
+    let (_, wav) = sine_wav(&s, 100);
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", wav);
+    let doc = probe("a.wav", &mut io, &Limits::default())
+        .unwrap()
+        .document();
+    assert_eq!(doc.schema, 1);
+    let json = serde_json::to_string(&doc).unwrap();
+    assert_eq!(
+        json,
+        r#"{"schema":1,"format":"wav","size_bytes":244,"streams":[{"index":0,"type":"audio","codec":"pcm_s16le","sample_format":"s16","sample_rate":8000,"channels":1,"layout":"mono","frames":100,"duration_seconds":0.0125}]}"#
+    );
+}
