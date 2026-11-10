@@ -229,3 +229,106 @@ fn a_directory_of_nothing_still_shows_the_empty_state(cx: &mut TestAppContext) {
     assert!(!has(cx, window, "files-panel"));
     assert_eq!(workspace.read_with(cx, |w, _| w.status_text()), "Ready");
 }
+
+fn size_of(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    id: impl Into<ElementId>,
+) -> Size<Pixels> {
+    let id = id.into();
+    cx.update_window(window, |_, window, _| window.find(id).bounds().size)
+        .expect("the window is open")
+}
+
+#[gpui_test]
+fn file_rows_are_two_lines_with_the_full_width_for_the_name(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let long = rig
+        .dir
+        .write_wav("interview-take-one-with-a-long-name.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&long]);
+    let row = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-row", 0)).bounds()
+        })
+        .unwrap();
+    let summary = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-summary", 0)).bounds()
+        })
+        .unwrap();
+    // The second line keeps clear of the next row.
+    assert!(
+        row.bottom() - summary.bottom() >= px(4.),
+        "summary ends {:?} above the row's bottom",
+        row.bottom() - summary.bottom()
+    );
+    assert_eq!(summary.size.height, px(16.));
+    let name = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-name", 0)).bounds()
+        })
+        .unwrap();
+    let summary = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-summary", 0)).bounds()
+        })
+        .unwrap();
+    assert!(
+        summary.origin.y >= name.origin.y + name.size.height,
+        "the summary is the second line"
+    );
+    // The row is 260 wide; icon, padding and the gaps leave the rest to the name.
+    assert!(
+        name.size.width > px(150.),
+        "name width {:?}",
+        name.size.width
+    );
+    assert!(
+        summary.size.width >= name.size.width - px(1.),
+        "the summary has the same room"
+    );
+}
+
+#[gpui_test]
+fn inspector_rows_are_24_px_tall(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&a]);
+    let sections = rig.workspace.read_with(cx, |w, _| w.inspector_sections());
+    let row = &sections[0].rows[0];
+    let id: SharedString = format!("inspector-row-0-{}", row.field).into();
+    assert_eq!(size_of(cx, rig.window, id).height, px(24.));
+}
+
+#[gpui_test]
+fn a_selected_row_is_clearly_distinct_from_a_hovered_one_in_both_themes(cx: &mut TestAppContext) {
+    let _rig = open_rig(cx);
+    for dark in [true, false] {
+        cx.update(|cx| crate::config::set_appearance(dark, cx));
+        cx.update(|cx| {
+            let (selected, hover) = crate::files::row_colors(cx);
+            let background = cx.theme().background.to_rgb();
+            let flat = |top: Hsla| {
+                let top = top.to_rgb();
+                let mix = |t: f32, u: f32| t * top.a + u * (1.0 - top.a);
+                [
+                    mix(top.r, background.r),
+                    mix(top.g, background.g),
+                    mix(top.b, background.b),
+                ]
+            };
+            let (s, h) = (flat(selected), flat(hover));
+            let distance = s
+                .iter()
+                .zip(h)
+                .map(|(s, h)| (s - h).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            assert!(
+                distance > 0.08,
+                "dark={dark}: selected vs hover colour distance {distance}"
+            );
+        });
+    }
+}

@@ -476,3 +476,40 @@ fn the_watcher_reloads_a_saved_settings_file(cx: &mut TestAppContext) {
     assert!(changed, "the saved font size never reached the theme");
     assert_eq!(notice(cx), None);
 }
+
+fn args(list: &[&str]) -> impl Iterator<Item = String> {
+    list.iter()
+        .map(|a| (*a).to_owned())
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
+#[test]
+fn the_command_line_takes_an_optional_config_dir() {
+    assert_eq!(config::parse_args(args(&[])), Ok(None));
+    assert_eq!(
+        config::parse_args(args(&["--config-dir", "/tmp/x"])),
+        Ok(Some(std::path::PathBuf::from("/tmp/x")))
+    );
+    assert_eq!(
+        config::parse_args(args(&["--config-dir=/tmp/y"])),
+        Ok(Some(std::path::PathBuf::from("/tmp/y")))
+    );
+}
+
+#[test]
+fn a_bad_command_line_is_an_error_naming_the_usage() {
+    for bad in [
+        &["--config-dir"][..],
+        &["--wat"],
+        &["file.wav"],
+        &["--config-dir", ""],
+    ] {
+        let error = config::parse_args(args(bad)).expect_err("rejected");
+        assert!(
+            error.contains("usage: crossfade-gui [--config-dir <DIR>]"),
+            "{error}"
+        );
+        assert!(!error.contains('\n'), "one line: {error}");
+    }
+}

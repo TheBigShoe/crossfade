@@ -47,7 +47,7 @@ fn defaults_follow_the_system_with_the_bundled_themes() {
         }
     );
     assert_eq!(settings.ui_font_family, None);
-    assert_eq!(settings.ui_font_size, 14.0);
+    assert_eq!(settings.ui_font_size, 13.0);
     assert_eq!(
         settings.convert,
         ConvertDefaults {
@@ -103,7 +103,7 @@ fn ui_font_size_is_clamped_to_a_drawable_range() {
     assert_eq!(clamp_ui_font_size(14.0), 14.0);
     assert_eq!(clamp_ui_font_size(2.0), 10.0);
     assert_eq!(clamp_ui_font_size(90.0), 24.0);
-    assert_eq!(clamp_ui_font_size(f32::NAN), 14.0);
+    assert_eq!(clamp_ui_font_size(f32::NAN), 13.0);
 }
 
 #[test]

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use crate::config::{self, Config};
+use crate::config_test_support::TempDir as ConfigDir;
 use crate::prelude::*;
 use crate::scripted::Script;
 use crate::workspace::{Workspace, WorkspaceOptions, init};
@@ -102,22 +104,40 @@ pub(crate) fn wav_s16(rate: u32, channels: u16, frames: u32) -> Vec<u8> {
     v
 }
 
+/// The paths the app asked the platform to open, in order.
+#[derive(Clone, Default)]
+pub(crate) struct Opened(pub(crate) std::rc::Rc<std::cell::RefCell<Vec<PathBuf>>>);
+
+impl Global for Opened {}
+
+pub(crate) fn opened(cx: &mut TestAppContext) -> Vec<PathBuf> {
+    cx.update(|cx| cx.global::<Opened>().0.borrow().clone())
+}
+
 /// A window over a scripted runner and a scratch directory.
 pub(crate) struct Rig {
     pub(crate) window: AnyWindowHandle,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) script: Script,
     pub(crate) dir: TempDir,
+    /// The config directory the window's `Config` was loaded from.
+    pub(crate) config: ConfigDir,
 }
 
 pub(crate) fn open_rig(cx: &mut TestAppContext) -> Rig {
+    open_rig_in(cx, ConfigDir::new("rig-config"))
+}
+
+/// A rig whose configuration is whatever `config` holds when the window opens.
+pub(crate) fn open_rig_in(cx: &mut TestAppContext, config: ConfigDir) -> Rig {
     let (script, options) = Script::options();
-    let (window, workspace) = open_with(cx, options);
+    let (window, workspace) = open_in(cx, options, &config);
     Rig {
         window,
         workspace,
         script,
         dir: TempDir::new("rig"),
+        config,
     }
 }
 
@@ -127,11 +147,28 @@ pub(crate) fn open_with(
     cx: &mut TestAppContext,
     options: WorkspaceOptions,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
+    open_in(cx, options, &ConfigDir::new("window-config"))
+}
+
+/// [`open_with`] over the configuration in `config`: tests never read the real one.
+pub(crate) fn open_in(
+    cx: &mut TestAppContext,
+    options: WorkspaceOptions,
+    config: &ConfigDir,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    let paths = config.paths();
     cx.update(|cx| {
         // Animations run on the wall clock, not the test clock; with reduced motion
         // they show their end state from the first frame.
         cx.set_reduce_motion(true);
         init(cx);
+        let log = Opened::default();
+        let record = log.clone();
+        cx.set_global(log);
+        cx.set_global(config::Opener(std::rc::Rc::new(move |path, _| {
+            record.0.borrow_mut().push(path.to_path_buf());
+        })));
+        config::install(Config::load(&paths, true), cx);
         let bounds = Bounds {
             origin: Point::default(),
             size: size(px(TEST_WINDOW.0), px(TEST_WINDOW.1)),

@@ -20,7 +20,7 @@
   // Font family of the interface. null uses the system UI font.
   "ui_font_family": null,
   // Interface font size in points; values outside 10 to 24 are clamped.
-  "ui_font_size": 14.0,
+  "ui_font_size": 13.0,
 
   // What a new conversion starts from.
   "convert": {

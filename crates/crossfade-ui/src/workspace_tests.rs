@@ -60,21 +60,23 @@ fn clicking_the_queue_toggle_records_toggle_queue(cx: &mut TestAppContext) {
 }
 
 #[gpui_test]
-fn the_overflow_menu_opens_and_about_records_about(cx: &mut TestAppContext) {
+fn the_overflow_menu_opens_the_keymap_and_about(cx: &mut TestAppContext) {
     let (window, workspace) = open_test_window(cx);
-    draw(cx, window);
-    click(cx, window, "toolbar-overflow");
-    step(cx, 2);
-    draw(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        window.within("popup-menu").click(0usize, cx);
-    })
-    .expect("the window is open");
-    cx.run_until_parked();
-    assert_eq!(
-        workspace.read_with(cx, |w, _| w.last_action()),
-        Some(AppAction::About)
-    );
+    for (item, expected) in [(0usize, AppAction::OpenKeymap), (1, AppAction::About)] {
+        draw(cx, window);
+        click(cx, window, "toolbar-overflow");
+        step(cx, 2);
+        draw(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            window.within("popup-menu").click(item, cx);
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+        assert_eq!(
+            workspace.read_with(cx, |w, _| w.last_action()),
+            Some(expected)
+        );
+    }
 }
 
 #[gpui_test]

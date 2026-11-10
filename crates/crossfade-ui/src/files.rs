@@ -5,7 +5,11 @@ use crossfade_app::inputs::{InputEntry, InputState};
 use crossfade_app::inspector::{self, Section};
 use crossfade_graph::ProbeDocument;
 
-use crate::chrome::{LABEL_SIZE, ROW_HEIGHT, icon_button, panel_header, section_label};
+use crate::chrome::{
+    FILE_NAME_LINE, FILE_ROW_HEIGHT, INSPECTOR_ROW, LABEL_SIZE, TITLE_SIZE, icon_button,
+    panel_header, section_label,
+};
+use crate::config::Config;
 use crate::prelude::*;
 use crate::workspace::Workspace;
 
@@ -20,6 +24,17 @@ const OPEN_SHORTCUT: &str = if cfg!(target_os = "macos") {
 } else {
     "Ctrl+O"
 };
+
+/// The fills of a selected and a hovered row of a list: the selection is tinted with the
+/// theme's accent, the hover is a neutral wash, so the two never read alike.
+pub(crate) fn row_colors(cx: &App) -> (Hsla, Hsla) {
+    let theme = cx.theme();
+    let selected = cx
+        .try_global::<Config>()
+        .and_then(|config| config.color("element.selected"))
+        .unwrap_or(theme.list_active);
+    (selected, theme.list_hover)
+}
 
 /// `48 kHz`, `44.1 kHz`.
 fn kilohertz(rate: u32) -> String {
@@ -177,75 +192,90 @@ impl Workspace {
                 let failed = matches!(entry.state, InputState::Failed(_));
                 let is_selected = selected == Some(id);
                 let group: SharedString = format!("file-group-{n}").into();
-                let row_bg = if is_selected {
-                    theme.accent
-                } else {
-                    theme.background
-                };
+                let (selected_color, hover_color) = row_colors(cx);
                 h_flex()
                     .id(SharedString::from(format!("file-row-{n}")))
                     .test_support()
-                    .relative()
                     .group(group.clone())
                     .flex_none()
-                    .h(ROW_HEIGHT)
+                    .h(FILE_ROW_HEIGHT)
                     .px_3()
+                    .pt(px(2.))
                     .gap_2()
-                    .items_center()
+                    .items_start()
                     .cursor_pointer()
-                    .when(is_selected, |row| row.bg(theme.accent))
-                    .when(!is_selected, |row| {
-                        row.hover(|style| style.bg(theme.accent.opacity(0.5)))
-                    })
-                    .child(
-                        Icon::new(if failed {
-                            IconName::TriangleAlert
-                        } else {
-                            IconName::FileMusic
-                        })
-                        .size_4()
-                        .flex_none()
-                        .text_color(if failed {
-                            theme.warning
-                        } else {
-                            theme.muted_foreground
-                        }),
-                    )
+                    .when(is_selected, |row| row.bg(selected_color))
+                    .when(!is_selected, |row| row.hover(|style| style.bg(hover_color)))
+                    // The icon sits on the name's line.
                     .child(
                         div()
                             .flex_none()
-                            .max_w(px(110.))
-                            .truncate()
-                            .child(SharedString::from(entry.name.clone())),
+                            .h(FILE_NAME_LINE)
+                            .flex()
+                            .items_center()
+                            .child(
+                                Icon::new(if failed {
+                                    IconName::TriangleAlert
+                                } else {
+                                    IconName::FileMusic
+                                })
+                                .size_4()
+                                .text_color(if failed {
+                                    theme.warning
+                                } else {
+                                    theme.muted_foreground
+                                }),
+                            ),
                     )
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .text_size(LABEL_SIZE)
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(summary(entry))),
-                    )
-                    .child(
-                        icon_button(
-                            SharedString::from(format!("file-remove-{n}")),
-                            IconName::X,
-                            "Remove",
-                            cx,
-                        )
-                        // Over the summary's tail rather than beside it, so the row's text
-                        // keeps the room.
-                        .absolute()
-                        .top(px(2.))
-                        .right_1()
-                        .bg(row_bg)
-                        .invisible()
-                        .group_hover(group, |style| style.visible())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.inputs.remove(id);
-                            cx.notify();
-                        })),
+                            .child(
+                                h_flex()
+                                    .h(FILE_NAME_LINE)
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("file-name-{n}")))
+                                            .test_support()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(SharedString::from(entry.name.clone())),
+                                    )
+                                    // Hidden until hover but laid out, so the name never runs
+                                    // under it.
+                                    .child(
+                                        icon_button(
+                                            SharedString::from(format!("file-remove-{n}")),
+                                            IconName::X,
+                                            "Remove",
+                                            cx,
+                                        )
+                                        .flex_none()
+                                        .invisible()
+                                        .group_hover(group, |style| style.visible())
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.inputs.remove(id);
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("file-summary-{n}")))
+                                    .test_support()
+                                    .h(px(16.))
+                                    .line_height(px(16.))
+                                    .truncate()
+                                    .text_size(LABEL_SIZE)
+                                    .text_color(theme.muted_foreground)
+                                    .child(SharedString::from(summary(entry))),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.inputs.select(id);
@@ -317,7 +347,7 @@ impl Workspace {
                                             row.field
                                         )))
                                         .test_support()
-                                        .h(ROW_HEIGHT)
+                                        .h(INSPECTOR_ROW)
                                         .items_center()
                                         .gap_3()
                                         .child(
@@ -354,6 +384,7 @@ impl Workspace {
                     .child(
                         div()
                             .font_semibold()
+                            .text_size(TITLE_SIZE)
                             .truncate()
                             .child(SharedString::from(name.to_owned())),
                     )
