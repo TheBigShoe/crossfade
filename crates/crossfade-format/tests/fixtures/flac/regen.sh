@@ -20,7 +20,7 @@ flac -s -f --no-padding "$raw/stereo20.wav" -o "$out/stereo-20bit.flac"
 enc stereo24 96000 2 24 stereo-24bit.flac
 enc stereo32 48000 2 32 stereo-32bit.flac
 enc surround6 48000 6 16 surround-5.1.flac
-enc stereo16 44100 2 16 fixed-only.flac -l 0
+enc fixed-orders 48000 1 24 fixed-only.flac -l 0 -b 192 -r 4
 enc stereo16 44100 2 16 lpc-order-32.flac --lax -l 32 -b 4096
 enc noise16 44100 2 16 verbatim-noise.flac
 enc silence 44100 1 16 constant-silence.flac -b 4608
@@ -31,7 +31,7 @@ enc stereo-modes 44100 2 16 stereo-modes-none.flac --no-mid-side -b 1024 -l 0
 enc stereo16 44100 2 16 block-16.flac -b 16 --lax
 enc stereo16 44100 2 16 block-4608.flac -b 4608
 enc stereo16 44100 2 16 block-65535.flac --lax -b 65535
-enc stereo16 44100 2 16 block-1000-escape.flac -b 1000 -l 0 -r 8
+enc stereo16 44100 2 16 block-1000.flac -b 1000
 enc stereo16 44100 2 16 tagged.flac --padding=300 -S 4x -T TITLE=Fixture -T ARTIST=Crossfade \
   --picture="3|image/gif|front|1x1x8|$out/pixel.gif"
 # A 10-byte ID3v2.4 header (syncsafe size 11) and an 11-byte frame body, then the stream.

@@ -181,8 +181,50 @@ fn stereo_modes() -> Signal {
     }
 }
 
+/// Blocks of 192 mono 24-bit samples (the encoder is run with `-b 192`), five kinds twice over:
+/// each is a signal one fixed predictor order fits best, from white noise (order 0) to an exact
+/// cubic (order 4). Two more blocks have a quiet first half and a full-range noise second half,
+/// so their two partitions need very different Rice parameters.
+fn fixed_orders() -> Signal {
+    let mut rng = Rng::new(0xF1ED);
+    let mut samples = Vec::new();
+    for _ in 0..2 {
+        for _ in 0..192 {
+            samples.push(rng.noise(100_000) as i32);
+        }
+        for _ in 0..192 {
+            samples.push((4_000_000 + rng.noise(300)) as i32);
+        }
+        for n in 0..192i64 {
+            samples.push((40_000 * n - 3_800_000 + rng.noise(40)) as i32);
+        }
+        for n in 0..192i64 {
+            samples.push((200 * n * n - 3_700_000) as i32);
+        }
+        for n in 0..192i64 {
+            samples.push((n * n * n + 5 * n * n - 100 * n - 3_500_000) as i32);
+        }
+    }
+    for _ in 0..2 {
+        for i in 0..192 {
+            samples.push(if i < 96 {
+                rng.noise(2)
+            } else {
+                rng.noise(8_000_000)
+            } as i32);
+        }
+    }
+    Signal {
+        rate: 48000,
+        channels: 1,
+        bits: 24,
+        samples,
+    }
+}
+
 pub fn signal(name: &str) -> Signal {
     match name {
+        "fixed-orders" => fixed_orders(),
         "mono8" => tonal(8000, 1, 8, 6000, 8),
         "stereo12" => tonal(44100, 2, 12, 5000, 12),
         "stereo16" => tonal(44100, 2, 16, 5000, 16),
@@ -227,7 +269,7 @@ pub const FIXTURES: &[(&str, &str)] = &[
     ("stereo-24bit.flac", "stereo24"),
     ("stereo-32bit.flac", "stereo32"),
     ("surround-5.1.flac", "surround6"),
-    ("fixed-only.flac", "stereo16"),
+    ("fixed-only.flac", "fixed-orders"),
     ("lpc-order-32.flac", "stereo16"),
     ("verbatim-noise.flac", "noise16"),
     ("constant-silence.flac", "silence"),
@@ -238,7 +280,7 @@ pub const FIXTURES: &[(&str, &str)] = &[
     ("block-16.flac", "stereo16"),
     ("block-4608.flac", "stereo16"),
     ("block-65535.flac", "stereo16"),
-    ("block-1000-escape.flac", "stereo16"),
+    ("block-1000.flac", "stereo16"),
     ("tagged.flac", "stereo16"),
     ("id3v2-prefixed.flac", "stereo16"),
     ("unknown-total.flac", "stereo16"),
