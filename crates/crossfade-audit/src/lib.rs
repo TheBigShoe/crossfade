@@ -61,6 +61,8 @@ pub struct Allowed {
 pub enum Reason {
     /// Declares `links`, so it links a native library.
     Links(String),
+    /// A requested root is not a workspace member, so nothing was checked.
+    NotInWorkspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +102,11 @@ pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec
             .map(String::as_str)
             .find(|id| packages.get(id).is_some_and(|p| p.name == *root))
         else {
+            violations.push(Violation {
+                package: (*root).to_owned(),
+                reason: Reason::NotInWorkspace,
+                path: Vec::new(),
+            });
             continue;
         };
         let mut parent: HashMap<&str, &str> = HashMap::new();
