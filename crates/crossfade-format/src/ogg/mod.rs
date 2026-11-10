@@ -5,6 +5,8 @@ mod flac;
 mod packets;
 mod page;
 #[cfg(test)]
+mod tests;
+#[cfg(test)]
 mod testutil;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSource};
