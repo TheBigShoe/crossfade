@@ -1504,6 +1504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-corpus"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "sha2 0.10.9",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "crossfade-dsp"
 version = "0.0.0"
 dependencies = [

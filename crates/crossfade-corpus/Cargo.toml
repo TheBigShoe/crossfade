@@ -1,0 +1,23 @@
+[package]
+name = "crossfade-corpus"
+description = "Fetches and verifies the large conformance test files that are too big to commit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "crossfade_corpus"
+
+[[bin]]
+name = "crossfade-corpus"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
