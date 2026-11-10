@@ -3,7 +3,7 @@
 mod common;
 
 use common::{job, sine_wav, spec};
-use crossfade_core::{ChannelLayout, Error, Limits, SampleFormat};
+use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{
     AudioSettings, CancelToken, Pipeline, probe, run, validate, writable_extensions,
 };
