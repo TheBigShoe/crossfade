@@ -2,9 +2,13 @@
 
 use crossfade_core::{Error, JobIo, MediaSink, MediaSource};
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Tells apart two temp files of one process (the pid alone cannot).
+static TEMP_SERIAL: AtomicU64 = AtomicU64::new(0);
 
 /// Output goes to a hidden temporary file beside the target; `commit` renames
 /// it into place, so a reader never sees a half-written file.
@@ -20,11 +24,17 @@ fn io_error(path: &str, e: &std::io::Error) -> Error {
     }
 }
 
-fn temp_path(target: &Path) -> PathBuf {
+fn temp_path(target: &Path, serial: u64) -> PathBuf {
     let name = target
         .file_name()
         .map_or_else(|| "output".into(), |n| n.to_string_lossy());
-    let temp = format!(".{name}.{}.tmp", std::process::id());
+    let pid = std::process::id();
+    // The first one keeps the plain name; a clash only happens within a process.
+    let temp = if serial == 0 {
+        format!(".{name}.{pid}.tmp")
+    } else {
+        format!(".{name}.{pid}-{serial}.tmp")
+    };
     match target.parent() {
         Some(dir) => dir.join(temp),
         None => PathBuf::from(temp),
@@ -44,8 +54,19 @@ impl JobIo for FsIo {
     }
 
     fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, Error> {
-        let temp = temp_path(Path::new(path));
-        let file = File::create(&temp).map_err(|e| io_error(path, &e))?;
+        // `create_new` so a stale file from a recycled pid is never reused or
+        // truncated: take the next name instead.
+        let mut serial = 0;
+        let (temp, file) = loop {
+            let temp = temp_path(Path::new(path), serial);
+            match OpenOptions::new().write(true).create_new(true).open(&temp) {
+                Ok(file) => break (temp, file),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    serial = TEMP_SERIAL.fetch_add(1, Ordering::Relaxed) + 1;
+                }
+                Err(e) => return Err(io_error(path, &e)),
+            }
+        };
         self.temps.insert(path.to_owned(), temp);
         Ok(Box::new(file))
     }
