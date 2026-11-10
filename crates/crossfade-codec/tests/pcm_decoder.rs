@@ -23,13 +23,12 @@ fn stream(format: SampleFormat, channels: u16, rate: u32) -> StreamInfo {
     } else {
         ChannelLayout::unpositioned(channels).unwrap()
     };
-    StreamInfo {
-        index: 0,
-        codec: CodecId::pcm_for(format),
-        audio: AudioSpec::new(rate, format, layout).unwrap(),
-        time_base: TimeBase::new(1, i64::from(rate)).unwrap(),
-        frames: None,
-    }
+    StreamInfo::new(
+        0,
+        CodecId::pcm_for(format),
+        AudioSpec::new(rate, format, layout).unwrap(),
+        TimeBase::new(1, i64::from(rate)).unwrap(),
+    )
 }
 
 fn packet(pts: i64, data: &[u8]) -> Packet {

@@ -23,13 +23,12 @@ fn spec(format: SampleFormat, channels: u16) -> AudioSpec {
 }
 
 fn stream(format: SampleFormat, channels: u16) -> StreamInfo {
-    StreamInfo {
-        index: 0,
-        codec: CodecId::pcm_for(format),
-        audio: spec(format, channels),
-        time_base: TimeBase::new(1, 48_000).unwrap(),
-        frames: None,
-    }
+    StreamInfo::new(
+        0,
+        CodecId::pcm_for(format),
+        spec(format, channels),
+        TimeBase::new(1, 48_000).unwrap(),
+    )
 }
 
 fn frame(spec: &AudioSpec, pts: i64, samples: Samples) -> AudioFrame {

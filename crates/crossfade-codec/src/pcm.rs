@@ -6,6 +6,14 @@ use crossfade_core::{
 };
 
 fn pcm_format(codec: CodecId) -> Result<SampleFormat, Error> {
+    // The byte order is fixed little-endian below; refuse the rest instead of misreading it.
+    if codec.is_pcm()
+        && CodecId::pcm_for(codec.pcm_sample_format().unwrap_or(SampleFormat::U8)) != codec
+    {
+        return Err(Error::Unsupported {
+            what: format!("{} is not built yet", codec.name()),
+        });
+    }
     codec.pcm_sample_format().ok_or_else(|| Error::Unsupported {
         what: format!("{} is not a PCM codec", codec.name()),
     })

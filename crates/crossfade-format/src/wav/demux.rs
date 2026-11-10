@@ -228,11 +228,13 @@ impl WavDemuxer {
         let rate = audio.sample_rate();
         let format = audio.format();
         let stream = StreamInfo {
-            index: 0,
-            codec: CodecId::pcm_for(format),
-            audio: audio.clone(),
-            time_base: TimeBase::new(1, i64::from(rate))?,
             frames,
+            ..StreamInfo::new(
+                0,
+                CodecId::pcm_for(format),
+                audio.clone(),
+                TimeBase::new(1, i64::from(rate))?,
+            )
         };
         Ok(Self {
             source,

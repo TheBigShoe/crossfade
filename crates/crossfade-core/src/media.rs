@@ -9,6 +9,25 @@ pub struct StreamInfo {
     pub time_base: TimeBase,
     /// Total sample frames, when the container knows.
     pub frames: Option<u64>,
+    /// The codec's header bytes (FLAC: the 34-byte STREAMINFO body). Empty for PCM.
+    pub extradata: Vec<u8>,
+    /// Significant bits per sample when fewer than `audio.format()` holds (e.g. 20 in S24).
+    /// Samples are left-justified in the format.
+    pub bits_per_raw_sample: Option<u8>,
+}
+
+impl StreamInfo {
+    pub fn new(index: u32, codec: CodecId, audio: AudioSpec, time_base: TimeBase) -> Self {
+        Self {
+            index,
+            codec,
+            audio,
+            time_base,
+            frames: None,
+            extradata: Vec::new(),
+            bits_per_raw_sample: None,
+        }
+    }
 }
 
 /// Reused across reads: a demuxer clears and refills `data`, so steady state
@@ -111,5 +130,22 @@ impl AudioFrame {
         // A frame is built from a valid spec; the rate is never zero.
         AudioSpec::new(self.sample_rate, self.samples.format(), self.layout.clone())
             .expect("frame holds a valid spec")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_leaves_the_optional_fields_empty() {
+        let audio = AudioSpec::new(44100, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
+        let tb = TimeBase::new(1, 44100).unwrap();
+        let s = StreamInfo::new(2, CodecId::Flac, audio.clone(), tb);
+        assert_eq!((s.index, s.codec, s.time_base), (2, CodecId::Flac, tb));
+        assert_eq!(s.audio, audio);
+        assert_eq!(s.frames, None);
+        assert!(s.extradata.is_empty());
+        assert_eq!(s.bits_per_raw_sample, None);
     }
 }

@@ -134,13 +134,15 @@ fn probe_json_snapshot() {
           "type": "audio",
           "codec": "pcm_s16le",
           "sample_format": "s16",
+          "bits_per_raw_sample": null,
           "sample_rate": 48000,
           "channels": 2,
           "layout": "stereo",
           "frames": 48000,
           "duration_seconds": 1.0
         }
-      ]
+      ],
+      "tags": []
     }
     "#);
 }

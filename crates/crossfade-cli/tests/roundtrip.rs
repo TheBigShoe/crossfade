@@ -43,6 +43,7 @@ fn request() -> impl Strategy<Value = Request> {
                     path: output,
                     audio: AudioSettings {
                         sample_format: format,
+                        ..AudioSettings::default()
                     },
                 }],
             },

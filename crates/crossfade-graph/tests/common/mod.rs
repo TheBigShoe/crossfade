@@ -72,6 +72,7 @@ pub fn job(input: &str, output: &str, format: Option<SampleFormat>) -> Job {
             path: output.into(),
             audio: AudioSettings {
                 sample_format: format,
+                ..AudioSettings::default()
             },
         }],
     }

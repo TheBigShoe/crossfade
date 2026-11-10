@@ -41,6 +41,7 @@ fn bench(c: &mut Criterion) {
             path: "out.wav".into(),
             audio: AudioSettings {
                 sample_format: Some(SampleFormat::S24),
+                ..AudioSettings::default()
             },
         }],
     };

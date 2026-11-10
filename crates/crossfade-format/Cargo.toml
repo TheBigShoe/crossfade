@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 crossfade-core.workspace = true
+# Demuxers split packets with a codec's frame-header parser, as libavformat uses libavcodec's.
+crossfade-codec.workspace = true
 
 [lints]
 workspace = true

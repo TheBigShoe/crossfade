@@ -622,13 +622,12 @@ mod writer {
     }
 
     pub(super) fn info(rate: u32, format: SampleFormat, layout: ChannelLayout) -> StreamInfo {
-        StreamInfo {
-            index: 0,
-            codec: CodecId::pcm_for(format),
-            audio: spec(rate, format, layout),
-            time_base: TimeBase::new(1, i64::from(rate)).unwrap(),
-            frames: None,
-        }
+        StreamInfo::new(
+            0,
+            CodecId::pcm_for(format),
+            spec(rate, format, layout),
+            TimeBase::new(1, i64::from(rate)).unwrap(),
+        )
     }
 
     fn pkt(data: Vec<u8>) -> Packet {

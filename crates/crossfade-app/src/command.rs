@@ -30,6 +30,11 @@ pub fn convert_args(request: &Request) -> Result<Vec<String>, NotExpressible> {
     ) else {
         return Err(NotExpressible);
     };
+    // `--codec` and `--compression-level` flags arrive later; until then dropping them would
+    // make the command mean something else than the job.
+    if output.audio.codec.is_some() || output.audio.compression_level.is_some() {
+        return Err(NotExpressible);
+    }
     let (input, out_path) = (&input.path, &output.path);
     let dashed_input = input.starts_with('-');
     let mut args = vec!["convert".to_owned()];
@@ -91,6 +96,7 @@ mod tests {
                     path: output.into(),
                     audio: AudioSettings {
                         sample_format: format,
+                        ..AudioSettings::default()
                     },
                 }],
             },
@@ -184,5 +190,15 @@ mod tests {
             command_line(&request("", "x.wav", None, false)).unwrap(),
             "crossfade convert '' -o x.wav"
         );
+    }
+
+    #[test]
+    fn a_codec_or_compression_level_has_no_spelling_yet() {
+        let mut with_codec = request("a.wav", "b.flac", None, false);
+        with_codec.job.outputs[0].audio.codec = Some("flac".into());
+        assert_eq!(convert_args(&with_codec), Err(NotExpressible));
+        let mut with_level = request("a.wav", "b.flac", None, false);
+        with_level.job.outputs[0].audio.compression_level = Some(5);
+        assert_eq!(command_line(&with_level), Err(NotExpressible));
     }
 }

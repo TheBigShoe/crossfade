@@ -1478,6 +1478,7 @@ dependencies = [
  "clap",
  "crossfade-app",
  "crossfade-core",
+ "crossfade-format",
  "crossfade-graph",
  "crossfade-testkit",
  "insta",
@@ -1515,6 +1516,7 @@ dependencies = [
 name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
+ "crossfade-codec",
  "crossfade-core",
  "crossfade-testkit",
  "proptest",

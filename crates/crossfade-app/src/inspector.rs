@@ -13,16 +13,16 @@ pub struct Section {
 pub struct Row {
     /// The `probe --json` key this row shows.
     pub field: &'static str,
-    pub label: &'static str,
+    pub label: String,
     pub value: String,
 }
 
 const UNKNOWN: &str = "unknown";
 
-fn row(field: &'static str, label: &'static str, value: String) -> Row {
+fn row(field: &'static str, label: &str, value: String) -> Row {
     Row {
         field,
-        label,
+        label: label.to_owned(),
         value,
     }
 }
@@ -40,27 +40,56 @@ pub fn sections(doc: &ProbeDocument) -> Vec<Section> {
         ],
     }];
     out.extend(doc.streams.iter().map(stream_section));
+    if !doc.tags.is_empty() {
+        out.push(Section {
+            title: "Tags".into(),
+            rows: doc
+                .tags
+                .iter()
+                .map(|t| row("tags", &title_case(&t.key), t.value.clone()))
+                .collect(),
+        });
+    }
     out
 }
 
+/// `TRACKNUMBER` reads as `Tracknumber`; keys are ASCII by convention.
+fn title_case(key: &str) -> String {
+    let mut chars = key.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first
+            .to_uppercase()
+            .chain(chars.flat_map(char::to_lowercase))
+            .collect()
+    })
+}
+
 fn stream_section(s: &ProbeStream) -> Section {
+    let mut rows = vec![
+        row("index", "Index", s.index.to_string()),
+        row("type", "Type", s.kind.clone()),
+        row("codec", "Codec", s.codec.clone()),
+        row("sample_format", "Sample format", s.sample_format.clone()),
+        row("sample_rate", "Sample rate", rate(s.sample_rate)),
+        row("channels", "Channels", s.channels.to_string()),
+        row("layout", "Layout", s.layout.clone()),
+        row("frames", "Frames", or_unknown(s.frames, grouped)),
+        row(
+            "duration_seconds",
+            "Duration",
+            or_unknown(s.duration_seconds, duration),
+        ),
+    ];
+    if let Some(bits) = s.bits_per_raw_sample {
+        // Right after the sample format it qualifies.
+        rows.insert(
+            4,
+            row("bits_per_raw_sample", "Bit depth", format!("{bits}-bit")),
+        );
+    }
     Section {
         title: format!("Stream {}", s.index),
-        rows: vec![
-            row("index", "Index", s.index.to_string()),
-            row("type", "Type", s.kind.clone()),
-            row("codec", "Codec", s.codec.clone()),
-            row("sample_format", "Sample format", s.sample_format.clone()),
-            row("sample_rate", "Sample rate", rate(s.sample_rate)),
-            row("channels", "Channels", s.channels.to_string()),
-            row("layout", "Layout", s.layout.clone()),
-            row("frames", "Frames", or_unknown(s.frames, grouped)),
-            row(
-                "duration_seconds",
-                "Duration",
-                or_unknown(s.duration_seconds, duration),
-            ),
-        ],
+        rows,
     }
 }
 
