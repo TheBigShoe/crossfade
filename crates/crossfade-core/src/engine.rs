@@ -45,3 +45,45 @@ pub trait Encoder {
     /// finally `Ok(false)`.
     fn drain(&mut self);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Bare;
+
+    impl Demuxer for Bare {
+        fn streams(&self) -> &[StreamInfo] {
+            &[]
+        }
+        fn read_packet(&mut self, _: &mut Packet) -> Result<bool, Error> {
+            Ok(false)
+        }
+    }
+
+    impl Muxer for Bare {
+        fn write_packet(&mut self, _: &Packet) -> Result<(), Error> {
+            Ok(())
+        }
+        fn finish(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    impl Encoder for Bare {
+        fn send_frame(&mut self, _: &AudioFrame) -> Result<(), Error> {
+            Ok(())
+        }
+        fn receive_packet(&mut self, _: &mut Packet) -> Result<bool, Error> {
+            Ok(false)
+        }
+        fn drain(&mut self) {}
+    }
+
+    #[test]
+    fn the_new_seams_default_to_nothing() {
+        assert!(Demuxer::tags(&Bare).is_empty());
+        assert!(Encoder::extradata(&Bare).is_empty());
+        assert_eq!(Muxer::set_extradata(&mut Bare, &[1, 2]), Ok(()));
+    }
+}
