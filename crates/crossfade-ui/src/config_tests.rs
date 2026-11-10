@@ -134,9 +134,9 @@ fn a_broken_settings_file_keeps_the_last_good_settings_and_says_so(cx: &mut Test
         "the last good value stays"
     );
     assert_eq!(cx.update(|cx| cx.theme().font_size), px(18.));
-    let notice = after.notice().expect("a notice");
-    assert!(notice.contains("settings.json"), "{notice}");
-    assert!(!notice.contains('\n'), "one line: {notice}");
+    let line = after.notice().expect("a notice");
+    assert!(line.contains("settings.json"), "{line}");
+    assert!(!line.contains('\n'), "one line: {line}");
     assert_eq!(after.problems().len(), 1);
     assert_eq!(after.problems()[0].file, dir.path().join("settings.json"));
 
@@ -324,8 +324,8 @@ fn a_broken_keymap_keeps_the_last_good_bindings(cx: &mut TestAppContext) {
 
     dir.write("keymap.json", "[ { ");
     reload(cx, ConfigPiece::Keymap);
-    let notice = notice(cx).expect("a notice");
-    assert!(notice.contains("keymap.json"), "{notice}");
+    let line = notice(cx).expect("a notice");
+    assert!(line.contains("keymap.json"), "{line}");
     let bound = cx.update(|cx| {
         cx.all_bindings_for_input(&[Keystroke::parse("cmd-shift-j").unwrap()])
             .len()
