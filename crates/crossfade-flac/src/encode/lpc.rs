@@ -161,6 +161,20 @@ pub(super) struct Accumulators {
     wide: Vec<i64>,
 }
 
+impl Accumulators {
+    pub(super) fn with_capacity(narrow: usize, wide: usize) -> Self {
+        Self {
+            narrow: Vec::with_capacity(narrow),
+            wide: Vec::with_capacity(wide),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn capacities(&self) -> [usize; 2] {
+        [self.narrow.capacity(), self.wide.capacity()]
+    }
+}
+
 /// Fills `out` with the folded residuals of the quantised predictor over `x`
 /// (`x.len() - coefs.len()` of them). False when a residual would not fit 32 bits.
 ///

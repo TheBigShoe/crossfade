@@ -68,3 +68,107 @@ fn every_stereo_mode_round_trips_at_every_depth() {
         }
     }
 }
+
+use super::analyze::{Analyzer, Kind, Level, Plan};
+use super::rice::RAW;
+
+fn analyze16(level: u8, x: &[i32]) -> Plan {
+    let mut plan = Plan::new(4096);
+    Analyzer::new(Level::new(level), false).analyze(x, 16, &mut plan);
+    plan
+}
+
+#[test]
+fn each_subframe_kind_is_chosen_where_it_belongs() {
+    assert_eq!(analyze16(5, &[7; 100]).kind, Kind::Constant);
+    let noise = pseudo(16, 4096, 3);
+    assert_eq!(analyze16(5, &noise).kind, Kind::Verbatim);
+    let ramp: Vec<i32> = (0..4096).map(|i| i * 3).collect();
+    assert_eq!(analyze16(0, &ramp).kind, Kind::Fixed(2));
+    let tone: Vec<i32> = (0..4096)
+        .map(|i| {
+            (f64::from(i) * 0.07)
+                .sin()
+                .mul_add(9000.0, f64::from(i % 5)) as i32
+        })
+        .collect();
+    assert!(matches!(analyze16(5, &tone).kind, Kind::Lpc(_)));
+    // A wasted-bit signal keeps its shift and a smaller depth.
+    let shifted: Vec<i32> = pseudo(10, 512, 4).iter().map(|&v| v << 4).collect();
+    let plan = analyze16(5, &shifted);
+    assert!(plan.wasted >= 4 && plan.bps + plan.wasted == 16);
+}
+
+#[test]
+fn raw_partitions_are_used_when_cheaper() {
+    // Silence, then full-scale noise: the quiet half costs nothing, the loud half is better
+    // stored than Rice coded.
+    let mut x = vec![0; 2048];
+    x.extend(pseudo(16, 2048, 8));
+    let plan = analyze16(5, &x);
+    assert_eq!(plan.kind, Kind::Fixed(0));
+    assert!(plan.rice.params[..1 << plan.rice.order].contains(&RAW));
+    assert!(plan.bits < 4096 * 16 / 2 + 200, "{}", plan.bits);
+    // And the decoder reads it back.
+    let samples: Vec<i32> = x.iter().flat_map(|&v| [v, v]).collect();
+    let mut enc = Encoder::new(EncoderConfig::new(44_100, 2, 16)).unwrap();
+    let mut out = Vec::new();
+    enc.encode_block(&samples, &mut out).unwrap();
+    let info = enc.finish();
+    let mut dec = Decoder::new(&info).unwrap();
+    let mut back = Vec::new();
+    dec.decode_frame(&out).unwrap().interleave_i32(0, &mut back);
+    assert_eq!(back, samples);
+}
+
+#[test]
+fn large_residuals_get_five_bit_parameters() {
+    // 24-bit audio with a 20-bit noise floor: residuals need Rice parameters above 14.
+    let x: Vec<i32> = pseudo(21, 4096, 9)
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| v + (i as i32 % 64) * 100_000)
+        .collect();
+    let mut plan = Plan::new(4096);
+    Analyzer::new(Level::new(5), false).analyze(&x, 24, &mut plan);
+    assert!(plan.rice.method5, "{:?}", plan.kind);
+    assert!(
+        plan.rice.params[..1 << plan.rice.order]
+            .iter()
+            .any(|&k| k > 14 && k != RAW)
+    );
+}
+
+#[test]
+fn steady_state_does_not_grow_any_buffer() {
+    for (channels, bits, level) in [(2u8, 32u8, 8u8), (2, 24, 5), (3, 16, 6), (1, 16, 3)] {
+        let mut enc = Encoder::new(EncoderConfig {
+            sample_rate: 44_100,
+            channels,
+            bits_per_sample: bits,
+            level,
+        })
+        .unwrap();
+        let mut out = Vec::new();
+        let chunk = pseudo(bits, enc.block_size() * usize::from(channels) * 2 + 6, 1);
+        let snapshot = |e: &Encoder| {
+            let mut v = e.analyzer.capacities();
+            v.push(e.pending.capacity());
+            v.push(e.md5_bytes.capacity());
+            v.extend(e.planes.iter().map(Vec::capacity));
+            v.extend([e.mid.capacity(), e.side32.capacity(), e.side64.capacity()]);
+            v.extend(e.slots.iter().map(|s| s.res.capacity()));
+            v
+        };
+        enc.write(&chunk, &mut out).unwrap();
+        let before = snapshot(&enc);
+        for _ in 0..6 {
+            enc.write(&chunk, &mut out).unwrap();
+        }
+        assert_eq!(
+            snapshot(&enc),
+            before,
+            "{channels} ch {bits} bit level {level}"
+        );
+    }
+}

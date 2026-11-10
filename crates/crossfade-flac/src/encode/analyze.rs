@@ -161,18 +161,20 @@ pub(super) struct Analyzer {
 }
 
 impl Analyzer {
-    pub(super) fn new(level: Level) -> Self {
+    /// `wide`: samples may need `i64` (a 32-bit stereo stream's side channel).
+    pub(super) fn new(level: Level, wide: bool) -> Self {
+        let wide_cap = if wide { level.block } else { 0 };
         Self {
             level,
             cand: Vec::with_capacity(level.block),
             cand_rice: RicePlan::new(),
             rice: RiceSearch::new(),
             pool32: Vec::with_capacity(level.block),
-            pool64: Vec::with_capacity(level.block),
+            pool64: Vec::with_capacity(wide_cap),
             window: Vec::with_capacity(level.block),
             windowed: Vec::with_capacity(level.block),
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
-            acc: lpc::Accumulators::default(),
+            acc: lpc::Accumulators::with_capacity(level.block, wide_cap),
         }
     }
 
@@ -343,5 +345,21 @@ impl Analyzer {
                 std::mem::swap(&mut plan.rice, &mut self.cand_rice);
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl Analyzer {
+    /// Capacities of every scratch buffer, to check that steady state does not grow them.
+    pub(super) fn capacities(&self) -> Vec<usize> {
+        let mut v = vec![
+            self.cand.capacity(),
+            self.pool32.capacity(),
+            self.pool64.capacity(),
+            self.window.capacity(),
+            self.windowed.capacity(),
+        ];
+        v.extend(self.acc.capacities());
+        v
     }
 }

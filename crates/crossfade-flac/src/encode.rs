@@ -119,7 +119,7 @@ impl Encoder {
                 .map(|_| Plan::new(level.block))
                 .collect(),
             level,
-            analyzer: Analyzer::new(level),
+            analyzer: Analyzer::new(level, channels == 2 && config.bits_per_sample == 32),
             #[cfg(test)]
             force: None,
         })
@@ -155,7 +155,6 @@ impl Encoder {
             return Err(malformed("samples from write() are pending; flush() first"));
         }
         self.check_range(interleaved)?;
-        let bps = u32::from(self.config.bits_per_sample);
         if self.frame_number >= 1 << 31 || self.total + n as u64 >= 1 << 36 {
             return Err(unsupported("stream is longer than FLAC can number"));
         }
