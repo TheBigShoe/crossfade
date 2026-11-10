@@ -38,7 +38,7 @@ pub fn encode_le(samples: &[f64], format: SampleFormat) -> Vec<u8> {
 
 pub fn decode_le(bytes: &[u8], format: SampleFormat) -> Result<Vec<f64>, PcmError> {
     let size = format.bytes_per_sample();
-    if bytes.len() % size != 0 {
+    if !bytes.len().is_multiple_of(size) {
         return Err(PcmError::PartialSample {
             len: bytes.len(),
             sample_size: size,
