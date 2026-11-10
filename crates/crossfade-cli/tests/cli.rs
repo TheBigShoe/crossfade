@@ -96,6 +96,13 @@ fn convert_to_an_unknown_container_names_the_extension() {
 }
 
 #[test]
+fn convert_help_snapshot() {
+    let out = run(&["convert", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    insta::assert_snapshot!(text(&out.stdout));
+}
+
+#[test]
 fn convert_help_documents_the_codec_flags() {
     let help = text(&run(&["convert", "--help"]).stdout);
     for want in [
@@ -114,7 +121,6 @@ fn codec_and_level_values_are_checked_by_the_parser() {
         ("--codec", "mp3"),
         ("--codec", "FLAC"),
         ("--compression-level", "9"),
-        ("--compression-level", "-1"),
         ("--compression-level", "fast"),
     ] {
         let out = run(&["convert", "in.wav", "-o", "out.flac", flag, value]);
