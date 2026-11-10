@@ -51,6 +51,10 @@ impl PacketReader {
 
     /// Loads the next page of this stream; `Ok(false)` when the input ends.
     fn load_page(&mut self) -> Result<bool, Error> {
+        // Whatever the buffer holds next (a skipped stream's page, or nothing at the end of
+        // input) is not ours to read segments from until a page of this stream is accepted.
+        self.seg = usize::MAX;
+        self.off = 0;
         loop {
             if self.pending {
                 self.pending = false;

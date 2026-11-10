@@ -45,8 +45,6 @@ const MAX_LEVEL: u8 = 8;
 /// What flacenc's `StreamInfo::new` accepts.
 const MAX_RATE: u32 = 96_000;
 const MAX_CHANNELS: u16 = 8;
-/// A raw frame's header, CRC and subframe headers fit well inside this.
-const RAW_SLACK_BITS: usize = 512;
 
 fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
@@ -100,11 +98,10 @@ impl Level {
         }
     }
 
-    /// Raw samples only: the fallback for a block the real settings code worse than raw.
-    fn verbatim_config(&self) -> Result<Verified<config::Encoder>, Error> {
+    /// flacenc never turns verbatim coding off, so with everything else off it is all that is left.
+    fn verbatim_config() -> Result<Verified<config::Encoder>, Error> {
         use flacenc::error::Verify;
         let mut c = config::Encoder::default();
-        c.block_size = self.block;
         c.multithread = false;
         c.stereo_coding.use_leftside = false;
         c.stereo_coding.use_rightside = false;
@@ -161,7 +158,8 @@ struct FlacEncoder {
     bits: u8,
     block: usize,
     config: Verified<config::Encoder>,
-    verbatim: Verified<config::Encoder>,
+    /// Verbatim subframes only: always valid, for a block `config` mis-codes.
+    fallback: Verified<config::Encoder>,
     /// flacenc's own header record; it only has to agree with the frames it is asked to code.
     stream_info: flacenc::component::StreamInfo,
     framebuf: FrameBuf,
@@ -222,7 +220,7 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         bits,
         block: level.block,
         config: level.config()?,
-        verbatim: level.verbatim_config()?,
+        fallback: Level::verbatim_config()?,
         stream_info,
         framebuf,
         buf: Vec::with_capacity(level.block * usize::from(channels)),
@@ -289,29 +287,34 @@ impl FlacEncoder {
             .fill_interleaved(&self.buf)
             .map_err(|e| malformed("flac encoder input", e))?;
         self.buf.clear();
-        let mut frame = flacenc::encode_fixed_size_frame(
-            &self.config,
-            &self.framebuf,
-            self.next_frame,
-            &self.stream_info,
-        )
-        .map_err(|e| malformed("flac encoder", e))?;
-        // flacenc's approximate Rice-parameter choice can blow a noisy block up to hundreds of
-        // times its raw size (past STREAMINFO's 24-bit frame-size field); raw is the ceiling.
-        if frame.count_bits() > frames * channels * usize::from(self.bits) + RAW_SLACK_BITS {
-            frame = flacenc::encode_fixed_size_frame(
-                &self.verbatim,
+        // Raw samples (one more bit on a side channel) plus the headers bound any sane frame.
+        let limit = 16 + 2 + channels * (1 + (frames * (usize::from(self.bits) + 1)).div_ceil(8));
+        // `None`: the frame is over the limit, found from its size before any of it is written.
+        let code = |config: &Verified<config::Encoder>| -> Result<Option<Vec<u8>>, Error> {
+            let frame = flacenc::encode_fixed_size_frame(
+                config,
                 &self.framebuf,
                 self.next_frame,
                 &self.stream_info,
             )
             .map_err(|e| malformed("flac encoder", e))?;
-        }
-        let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
-        frame
-            .write(&mut sink)
-            .map_err(|e| malformed("flac frame", e))?;
-        let data = sink.into_inner();
+            if frame.count_bits().div_ceil(8) > limit {
+                return Ok(None);
+            }
+            let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
+            frame
+                .write(&mut sink)
+                .map_err(|e| malformed("flac frame", e))?;
+            Ok(Some(sink.into_inner()))
+        };
+        // flacenc picks a subframe by an estimated size and, with residuals near full scale, can
+        // write a Rice parameter above 14 as if it fitted: valid but enormous (hundreds of MB).
+        let data = match code(&self.config)? {
+            Some(data) => data,
+            None => code(&self.fallback)?.ok_or_else(|| Error::Malformed {
+                what: format!("flac encoder: a {frames}-sample frame came out over {limit} bytes"),
+            })?,
+        };
         let size = u32::try_from(data.len()).map_err(|_| Error::Overflow)?;
         self.min_frame_size = self.min_frame_size.min(size);
         self.max_frame_size = self.max_frame_size.max(size);

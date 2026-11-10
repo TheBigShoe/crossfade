@@ -428,3 +428,38 @@ fn full_scale_noise_never_codes_larger_than_its_raw_samples() {
         }
     }
 }
+
+/// Found by the `flac_roundtrip` fuzz target. flacenc picks a subframe by an estimated size and
+/// can write a Rice parameter above 14 as if it fitted, so these mono 24-bit samples (raw
+/// little-endian PCM) came out as a frame far larger than the samples themselves: 33 MB for the
+/// first file at levels 7 and 8, 2.8 kB for 64 samples in the second at level 1. STREAMINFO's
+/// 24-bit frame sizes cannot describe the first, and no frame should ever beat raw by that much.
+#[test]
+fn hostile_24_bit_samples_never_code_larger_than_raw_samples() {
+    let files: [&[u8]; 2] = [
+        include_bytes!("../../../tests/fixtures/rice-param-overflow-24bit.pcm"),
+        include_bytes!("../../../tests/fixtures/rice-param-overflow-24bit-64.pcm"),
+    ];
+    for pcm in files {
+        let samples: Vec<i32> = pcm
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| i32::from_le_bytes([c[0], c[1], c[2], 0]) << 8 >> 8)
+            .collect();
+        let spec = spec(11025, SampleFormat::S24, 1);
+        for level in 0..=8 {
+            let out = encode(&spec, Some(level), &samples, 100_000);
+            for p in &out.packets {
+                // Header, one verbatim subframe and the CRC-16, with slack for the header.
+                assert!(
+                    p.data.len() <= 16 + 1 + samples.len() * 3 + 2,
+                    "{} samples, level {level}: {} bytes",
+                    samples.len(),
+                    p.data.len()
+                );
+            }
+            check_stream(&spec, &samples, &out, if level <= 2 { 1152 } else { 4096 });
+        }
+    }
+}

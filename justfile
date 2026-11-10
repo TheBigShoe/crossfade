@@ -15,15 +15,24 @@ lint:
 test:
     cargo test --workspace
 
+# Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
+# crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
+# skips, without it. Release because the corpus is ~300 MB (about 3 s; debug takes ~40 s).
+# After a deliberate decoder change: CROSSFADE_BLESS=1 just conformance
+conformance:
+    cargo test --release -p crossfade-format --test conformance_flac -- --ignored
+
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
     for t in aarch64-apple-ios aarch64-linux-android; do \
         cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-dsp -p crossfade-graph; \
     done
 
-# First speed baseline: in-memory conversion through the engine.
+# Speed baselines: in-memory conversion through the engine, then FLAC decode/encode with
+# AIFF and WAV read+decode (crates/crossfade-format/benches).
 bench:
     cargo bench -p crossfade-graph
+    cargo bench -p crossfade-format
 
 # Download the conformance corpus into .corpus-cache (once; needs curl and the network).
 corpus:
@@ -56,13 +65,26 @@ screenshots *names:
     @ls -lh target/screenshots/*.png
 
 # Dependencies run in order and the first failure stops the recipe.
-ci: fmt-check lint test
+ci: fmt-check lint test conformance
 
-# Needs nightly and cargo-fuzz; not part of `ci`.
+# Needs cargo-fuzz. The default runs unsanitised on the pinned toolchain (RUSTC_BOOTSTRAP lets
+# it use libFuzzer's flags); with a nightly toolchain, `FUZZ_RUN="cargo +nightly fuzz run" just
+# fuzz <target>` adds AddressSanitizer. `fuzz/corpus` is git-ignored, so each target also reads
+# the committed fixtures as an extra corpus directory (the writable corpus is named first, so
+# libFuzzer writes new inputs only there): flac_demux and flac_decode -> tests/fixtures/flac,
+# aiff_demux -> tests/fixtures/aiff, ogg_demux -> tests/fixtures/ogg; the others start empty.
+fuzz_run := env_var_or_default("FUZZ_RUN", "RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none")
+fixtures := justfile_directory() / "crates/crossfade-format/tests/fixtures"
+
 fuzz target secs="60":
-    cargo +nightly fuzz run {{target}} -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256
+    seeds=""; \
+    case "{{target}}" in \
+        flac_demux|flac_decode) seeds="{{fixtures}}/flac" ;; \
+        aiff_demux) seeds="{{fixtures}}/aiff" ;; \
+        ogg_demux) seeds="{{fixtures}}/ogg" ;; \
+    esac; \
+    mkdir -p fuzz/corpus/{{target}}; \
+    cd fuzz && {{fuzz_run}} "{{target}}" corpus/{{target}} $seeds -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256
 
 fuzz-smoke:
-    for t in $(cargo +nightly fuzz list); do \
-        cargo +nightly fuzz run "$t" -- -max_total_time=30 -rss_limit_mb=2048 -malloc_limit_mb=256; \
-    done
+    for t in $(cd fuzz && cargo fuzz list); do just fuzz "$t" 30; done

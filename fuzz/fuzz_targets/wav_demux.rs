@@ -1,16 +1,13 @@
 #![no_main]
 
-use crossfade_core::{Demuxer, Limits, Packet};
+use crossfade_core::{Demuxer, Packet};
 use crossfade_format::wav::WavDemuxer;
+use crossfade_fuzz::{Pipe, decode_all, limits};
 use libfuzzer_sys::fuzz_target;
 use std::io::Cursor;
 
 fuzz_target!(|data: &[u8]| {
-    let limits = Limits {
-        max_alloc_bytes: 1 << 20,
-        max_nesting_depth: 8,
-        max_packet_bytes: 1 << 16,
-    };
+    let limits = limits();
     let Ok(mut demuxer) = WavDemuxer::new(Box::new(Cursor::new(data.to_vec())), &limits) else {
         return;
     };
@@ -25,8 +22,11 @@ fuzz_target!(|data: &[u8]| {
                 total += packet.data.len();
                 assert!(total <= data.len());
             }
-            _ => return,
+            _ => break,
         }
     }
-    panic!("read loop did not end");
+    // Decode from a second read, as a pipe this time.
+    if let Ok(mut again) = WavDemuxer::new(Box::new(Pipe::new(data)), &limits) {
+        let _ = decode_all(&mut again, data.len());
+    }
 });
