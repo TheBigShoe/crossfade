@@ -1,3 +1,83 @@
+//! The Vorbis comment block shared by FLAC (VORBIS_COMMENT metadata block) and Ogg readers
+//! and the FLAC writer: vendor string, then `NAME=value` fields, all little-endian length
+//! prefixed.
+
+use crossfade_core::{Error, Limits, Tags};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VorbisComment {
+    pub vendor: String,
+    pub tags: Tags,
+}
+
+fn malformed(what: &str) -> Error {
+    Error::Malformed {
+        what: format!("vorbis comment: {what}"),
+    }
+}
+
+/// Cursor over the block; every length is checked against what is left before it is used.
+struct Cursor<'a> {
+    rest: &'a [u8],
+    limits: &'a Limits,
+}
+
+impl<'a> Cursor<'a> {
+    fn u32(&mut self) -> Result<u32, Error> {
+        let (head, rest) = self
+            .rest
+            .split_first_chunk::<4>()
+            .ok_or_else(|| malformed("truncated length"))?;
+        self.rest = rest;
+        Ok(u32::from_le_bytes(*head))
+    }
+
+    /// A length-prefixed string; nothing is allocated before the length is proven to fit.
+    fn string(&mut self) -> Result<String, Error> {
+        let len = self.u32()? as usize;
+        if len > self.rest.len() {
+            return Err(malformed("length runs past the end of the block"));
+        }
+        self.limits.check_alloc(len)?;
+        let (bytes, rest) = self.rest.split_at(len);
+        self.rest = rest;
+        Ok(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+/// `body` is the block contents without any framing. Trailing bytes are ignored.
+pub fn parse(body: &[u8], limits: &Limits) -> Result<VorbisComment, Error> {
+    let mut c = Cursor { rest: body, limits };
+    let vendor = c.string()?;
+    let count = c.u32()? as usize;
+    // Each field costs at least its 4-byte length, so a bigger count cannot be honest.
+    if count > c.rest.len() / 4 {
+        return Err(malformed("field count exceeds the block"));
+    }
+    let mut tags = Tags::new();
+    for _ in 0..count {
+        let field = c.string()?;
+        if let Some((key, value)) = field.split_once('=') {
+            tags.push(key, value);
+        }
+    }
+    Ok(VorbisComment { vendor, tags })
+}
+
+fn put(out: &mut Vec<u8>, s: &str) {
+    // Lengths are u32 on disk; a tag over 4 GiB is not a tag.
+    out.extend(u32::try_from(s.len()).unwrap_or(u32::MAX).to_le_bytes());
+    out.extend(s.as_bytes());
+}
+
+pub fn write(vendor: &str, tags: &Tags, out: &mut Vec<u8>) {
+    put(out, vendor);
+    out.extend(u32::try_from(tags.len()).unwrap_or(u32::MAX).to_le_bytes());
+    for t in tags.iter() {
+        put(out, &format!("{}={}", t.key, t.value));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,7 +108,11 @@ mod tests {
         let c = parse_ok(&hand_built());
         assert_eq!(c.vendor, "vendor");
         // A field without '=' is skipped; the value keeps later '='; keys are as written.
-        let all: Vec<_> = c.tags.iter().map(|t| (t.key.as_str(), t.value.as_str())).collect();
+        let all: Vec<_> = c
+            .tags
+            .iter()
+            .map(|t| (t.key.as_str(), t.value.as_str()))
+            .collect();
         assert_eq!(all, [("ARTIST", "Someone"), ("title", "A=B")]);
         assert_eq!(c.tags.get("TITLE"), Some("A=B"));
     }
@@ -59,7 +143,10 @@ mod tests {
         let full = hand_built();
         for n in 0..full.len() {
             assert!(
-                matches!(parse(&full[..n], &Limits::default()), Err(Error::Malformed { .. })),
+                matches!(
+                    parse(&full[..n], &Limits::default()),
+                    Err(Error::Malformed { .. })
+                ),
                 "{n}"
             );
         }
