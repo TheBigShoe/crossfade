@@ -32,7 +32,10 @@ fn io() -> MemoryIo {
     }
     // The engine reads nine channels; FLAC cannot hold them.
     let nine = ChannelLayout::unpositioned(9).unwrap();
-    io.insert("wide.wav", sine_wav(&spec(8000, SampleFormat::S16, nine), 3000).1);
+    io.insert(
+        "wide.wav",
+        sine_wav(&spec(8000, SampleFormat::S16, nine), 3000).1,
+    );
     run(
         &job("s16.wav", "s16.flac", None),
         &mut io,
