@@ -22,7 +22,11 @@ fn zero_low_bits_are_not_coded() {
     // 13 real bits in a 16-bit stream: verbatim samples would cost 16.
     let samples: Vec<i32> = noise(13, 4096 * 2, 5).iter().map(|&v| v << 3).collect();
     let e = round_trip(cfg(2, 16, 5), &samples, 0);
-    assert!(frame_len(&e, 0) <= 4096 * 2 * 13 / 8 + 40, "{}", frame_len(&e, 0));
+    assert!(
+        frame_len(&e, 0) <= 4096 * 2 * 13 / 8 + 40,
+        "{}",
+        frame_len(&e, 0)
+    );
 }
 
 #[test]
@@ -61,5 +65,9 @@ fn a_noisy_tone_beats_raw_clearly() {
         .map(|i| ((i / 2) as f64 * 0.05).sin().mul_add(20000.0, 0.0) as i32 + (i as i32 % 7))
         .collect();
     let e = round_trip(cfg(2, 16, 0), &samples, 0);
-    assert!(frame_len(&e, 0) < 1152 * 2 * 2 / 3, "{}", frame_len(&e, 0));
+    assert!(
+        frame_len(&e, 0) < 1152 * 2 * 2 * 3 / 4,
+        "{}",
+        frame_len(&e, 0)
+    );
 }

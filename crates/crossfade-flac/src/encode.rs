@@ -2,6 +2,7 @@
 
 mod analyze;
 mod bitsink;
+mod fixed;
 mod rice;
 mod write;
 
@@ -10,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::frame::{self, ChannelAssignment, FrameHeader};
 use crate::md5::Md5;
 use crate::streaminfo::StreamInfoBlock;
-use analyze::{Analyzer, Plan};
+use analyze::{Analyzer, Level, Plan};
 use bitsink::BitSink;
 
 /// What to encode and how hard to try.
@@ -47,17 +48,6 @@ fn unsupported(what: &str) -> Error {
     Error::Unsupported(format!("flac encoder: {what}"))
 }
 
-/// Per-level settings.
-struct Level {
-    block: usize,
-}
-
-fn level_table(level: u8) -> Level {
-    Level {
-        block: if level <= 2 { 1152 } else { 4096 },
-    }
-}
-
 /// Fixed-block-size FLAC encoder; see the module documentation.
 pub struct Encoder {
     config: EncoderConfig,
@@ -91,7 +81,7 @@ impl Encoder {
         if config.level > 8 {
             return Err(unsupported("level must be 0 to 8"));
         }
-        let level = level_table(config.level);
+        let level = Level::new(config.level);
         let channels = usize::from(config.channels);
         Ok(Self {
             config,
@@ -106,8 +96,8 @@ impl Encoder {
             md5: Md5::new(),
             md5_bytes: Vec::with_capacity(level.block * channels * 4),
             planes: vec![vec![0; level.block]; channels],
-            slots: vec![Plan::new(); channels],
-            analyzer: Analyzer::new(level.block),
+            slots: (0..channels).map(|_| Plan::new(level.block)).collect(),
+            analyzer: Analyzer::new(level),
         })
     }
 

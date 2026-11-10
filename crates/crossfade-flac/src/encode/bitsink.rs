@@ -64,16 +64,16 @@ mod tests {
     #[test]
     fn matches_the_reference_bit_reader() {
         let fields: Vec<(i64, u32)> = vec![
-            (1, 1),
+            (-1, 1),
             (-1, 3),
             (0x1234_5678, 32),
             (-5, 7),
             (-(1 << 32), 33),
             ((1 << 32) - 1, 33),
             (0, 0),
-            (0x7FFF_FFFF, 31),
+            (0x3FFF_FFFF, 31),
             (-2, 33),
-            (3, 2),
+            (1, 2),
         ];
         let mut out = Vec::new();
         let mut w = BitSink::new(&mut out);

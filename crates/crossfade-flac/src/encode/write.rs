@@ -2,19 +2,30 @@
 
 use super::analyze::{Kind, Plan, Sample};
 use super::bitsink::BitSink;
+use super::rice;
 
 pub(super) fn write_subframe<T: Sample>(sink: &mut BitSink, plan: &Plan, x: &[T]) {
-    sink.put(0, 1);
+    let kind = match plan.kind {
+        Kind::Constant => 0,
+        Kind::Verbatim => 1,
+        Kind::Fixed(order) => 8 + u64::from(order),
+    };
+    sink.put(kind, 7);
+    sink.put(u64::from(plan.wasted > 0), 1);
+    if plan.wasted > 0 {
+        sink.put_zeros(plan.wasted - 1);
+        sink.put(1, 1);
+    }
+    let shift = plan.wasted;
+    let bps = plan.bps;
+    let put = |sink: &mut BitSink, v: T| sink.put_signed(v.into() >> shift, bps);
     match plan.kind {
-        Kind::Constant => {
-            sink.put(0, 7);
-            sink.put_signed(x[0].into(), plan.bps);
-        }
-        Kind::Verbatim => {
-            sink.put(1 << 1, 7);
-            for &v in x {
-                sink.put_signed(v.into(), plan.bps);
-            }
+        Kind::Constant => put(sink, x[0]),
+        Kind::Verbatim => x.iter().for_each(|&v| put(sink, v)),
+        Kind::Fixed(order) => {
+            let order = usize::from(order);
+            x[..order].iter().for_each(|&v| put(sink, v));
+            rice::write(sink, &plan.rice, &plan.res, x.len(), order);
         }
     }
 }
