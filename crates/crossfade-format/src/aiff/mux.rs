@@ -19,8 +19,11 @@ fn unsupported(what: String) -> Error {
     Error::Unsupported { what }
 }
 
-/// (compression type and name for AIFF-C, bits per sample); `None` type is plain AIFF.
-fn describe(codec: CodecId) -> Result<(Option<(&'static [u8; 4], &'static str)>, u16), Error> {
+/// AIFF-C compression type and name.
+type Compression = (&'static [u8; 4], &'static str);
+
+/// The compression (`None`: plain AIFF) and bits per sample.
+fn describe(codec: CodecId) -> Result<(Option<Compression>, u16), Error> {
     Ok(match codec {
         CodecId::PcmS8 => (None, 8),
         CodecId::PcmS16Be => (None, 16),

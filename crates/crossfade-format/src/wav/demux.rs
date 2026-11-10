@@ -46,7 +46,11 @@ fn u32_at(b: &[u8], i: usize) -> u32 {
 }
 
 /// Fills `buf` unless the source ends first; returns the bytes read.
-pub(crate) fn fill(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Result<usize, Error> {
+pub(crate) fn fill(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    buf: &mut [u8],
+) -> Result<usize, Error> {
     let mut n = 0;
     while n < buf.len() {
         match source.read(&mut buf[n..]) {
@@ -60,7 +64,11 @@ pub(crate) fn fill(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) 
     Ok(n)
 }
 
-pub(crate) fn fill_exact(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Result<(), Error> {
+pub(crate) fn fill_exact(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    buf: &mut [u8],
+) -> Result<(), Error> {
     if fill(source, pos, buf)? < buf.len() {
         return Err(Error::UnexpectedEof { offset: *pos });
     }
