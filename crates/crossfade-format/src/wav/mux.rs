@@ -1,6 +1,6 @@
 use super::INFO_CAP;
 use crossfade_core::{
-    Channel, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags, tag_keys,
+    Channel, ChannelLayout, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags, tag_keys,
 };
 use std::io::SeekFrom;
 
@@ -125,34 +125,34 @@ impl WavMuxer {
         let bits = u16::try_from(format.bits()).map_err(|_| Error::Overflow)?;
         let float = format.is_float();
         let plain = !float && bits <= 16 && channels <= 2 && rate <= 48000;
+        // The tag-3 header has no channel mask; Microsoft requires the extensible form for more
+        // than two channels, and positions other than the mono/stereo defaults need the mask.
+        let layout = audio.layout();
+        let default_layout = layout == &ChannelLayout::mono() || layout == &ChannelLayout::stereo();
+        let ext_float =
+            float && (channels > 2 || (layout.positions().is_some() && !default_layout));
+        let extensible = !plain && (!float || ext_float);
 
         let mut h = Vec::with_capacity(80);
         h.extend_from_slice(b"RIFF\0\0\0\0WAVEfmt ");
         let tag = if float { FORMAT_FLOAT } else { FORMAT_PCM };
         let fmt_len: u32 = if plain {
             16
-        } else if float {
-            18
-        } else {
+        } else if extensible {
             40
+        } else {
+            18
         };
         h.extend_from_slice(&fmt_len.to_le_bytes());
-        h.extend_from_slice(
-            &(if plain || float {
-                tag
-            } else {
-                FORMAT_EXTENSIBLE
-            })
-            .to_le_bytes(),
-        );
+        h.extend_from_slice(&(if extensible { FORMAT_EXTENSIBLE } else { tag }).to_le_bytes());
         h.extend_from_slice(&channels.to_le_bytes());
         h.extend_from_slice(&rate.to_le_bytes());
         h.extend_from_slice(&byte_rate.to_le_bytes());
         h.extend_from_slice(&block_align.to_le_bytes());
         h.extend_from_slice(&bits.to_le_bytes());
-        if float {
+        if float && !extensible {
             h.extend_from_slice(&0u16.to_le_bytes());
-        } else if !plain {
+        } else if extensible {
             h.extend_from_slice(&22u16.to_le_bytes());
             h.extend_from_slice(&bits.to_le_bytes());
             h.extend_from_slice(&mask_for(audio.layout().positions()).to_le_bytes());
