@@ -36,7 +36,7 @@ desktop app later.
 | `crossfade-codec` | Decoders and encoders (stub) |
 | `crossfade-dsp` | Resampling, format/channel conversion, gain (stub) |
 | `crossfade-graph` | Wires the above into pipelines; the engine entry point (stub) |
-| `crossfade-testkit` | Signal generators, faulty I/O, metrics, manual clock (dev-only) |
+| `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-cli` | The `crossfade` binary |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
 
@@ -48,9 +48,21 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 ```sh
 just ci        # fmt-check + clippy -D warnings + cargo test --workspace
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
+just deny      # licences, advisories, sources (needs the network)
+just coverage  # line floors: 87% workspace, 90% crossfade-core
+just fuzz-smoke  # 30 s per target; needs nightly and cargo-fuzz
 ```
 
-`just ci` must pass before a branch is handed over.
+`just ci` must pass before a branch is handed over. Work happens on a task
+branch (`m<N>/<topic>`); the lead reviews and merges it into `main` with
+`--no-ff`, so `main`'s first-parent history is always green.
+
+`fuzz/` is its own workspace (libFuzzer is C++) with its own lockfile. Without
+nightly, a target still runs unsanitised on the pinned toolchain:
+`RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none <target>`.
+
+The purity test calls `cargo metadata`, which may fetch crate manifests for
+other platforms on its very first run.
 
 ## Test tiers
 
