@@ -243,19 +243,48 @@ impl Decoder {
     }
 
     /// Hashes the raw samples as the format defines it: interleaved, little-endian, in the
-    /// smallest whole number of bytes the depth fits.
+    /// smallest whole number of bytes the depth fits. Skipped when there is nothing to compare
+    /// the hash with.
     fn hash(&mut self, block: usize) {
-        let nch = self.planes.len();
+        if self.info.md5 == [0; 16] {
+            return;
+        }
         let width = usize::from(self.info.bits_per_sample).div_ceil(8);
-        self.md5_bytes.clear();
-        self.md5_bytes.resize(block * nch * width, 0);
-        for (c, plane) in self.planes.iter().enumerate() {
-            let slots = self.md5_bytes.chunks_exact_mut(width).skip(c).step_by(nch);
-            for (slot, &v) in slots.zip(plane) {
-                slot.copy_from_slice(&v.to_le_bytes()[..width]);
-            }
+        match width {
+            1 => pack::<1>(&self.planes, block, &mut self.md5_bytes),
+            2 => pack::<2>(&self.planes, block, &mut self.md5_bytes),
+            3 => pack::<3>(&self.planes, block, &mut self.md5_bytes),
+            _ => pack::<4>(&self.planes, block, &mut self.md5_bytes),
         }
         self.md5.update(&self.md5_bytes);
+    }
+}
+
+/// The planes as interleaved little-endian samples of `W` bytes each. With the width a constant
+/// each sample is a plain store, not a `memcpy` call.
+// `as_chunks_mut::<{ 2 * W }>` needs unstable const expressions.
+#[allow(clippy::chunks_exact_to_as_chunks)]
+fn pack<const W: usize>(planes: &[Vec<i32>], block: usize, bytes: &mut Vec<u8>) {
+    let nch = planes.len();
+    // Every byte is overwritten below, so a buffer of the right size is reused as it is.
+    bytes.resize(block * nch * W, 0);
+    if let [left, right] = planes {
+        for ((slot, &l), &r) in bytes.chunks_exact_mut(2 * W).zip(left).zip(right) {
+            slot[..W].copy_from_slice(&l.to_le_bytes()[..W]);
+            slot[W..].copy_from_slice(&r.to_le_bytes()[..W]);
+        }
+        return;
+    }
+    pack_any::<W>(planes, bytes);
+}
+
+fn pack_any<const W: usize>(planes: &[Vec<i32>], bytes: &mut [u8]) {
+    let nch = planes.len();
+    for (c, plane) in planes.iter().enumerate() {
+        let slots = bytes.as_chunks_mut::<W>().0.iter_mut().skip(c).step_by(nch);
+        for (slot, &v) in slots.zip(plane) {
+            slot.copy_from_slice(&v.to_le_bytes()[..W]);
+        }
     }
 }
 
@@ -307,10 +336,28 @@ fn interleave<T: Copy + Default>(
     f: impl Fn(i32) -> T,
 ) {
     let nch = planes.len();
-    out.clear();
+    // Every slot is overwritten below, so a buffer of the right size is reused as it is.
     out.resize(len * nch, T::default());
+    match planes {
+        [mono] => {
+            for (dst, &v) in out.iter_mut().zip(mono) {
+                *dst = f(v);
+            }
+        }
+        [left, right] => {
+            for ((dst, &l), &r) in out.as_chunks_mut::<2>().0.iter_mut().zip(left).zip(right) {
+                dst[0] = f(l);
+                dst[1] = f(r);
+            }
+        }
+        _ => interleave_any(planes, out, f),
+    }
+}
+
+fn interleave_any<T: Copy>(planes: &[Vec<i32>], out: &mut [T], f: impl Fn(i32) -> T) {
+    let nch = planes.len();
     for (c, plane) in planes.iter().enumerate() {
-        for (dst, &v) in out[c..].iter_mut().step_by(nch).zip(plane) {
+        for (dst, &v) in out.iter_mut().skip(c).step_by(nch).zip(plane) {
             *dst = f(v);
         }
     }

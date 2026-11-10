@@ -1001,3 +1001,43 @@ proptest! {
         prop_assert_eq!(narrow, want);
     }
 }
+
+proptest! {
+    // The mono and stereo fast paths must write what the generic strided loops write.
+    #[test]
+    fn interleaving_and_packing_equal_the_generic_loops(
+        nch in 1usize..=3,
+        len in 0usize..40,
+        seed in any::<u64>(),
+        stale in any::<u8>(),
+    ) {
+        let mut x = seed;
+        let planes: Vec<Vec<i32>> = (0..nch)
+            .map(|_| {
+                (0..len)
+                    .map(|_| {
+                        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                        (x >> 32) as i32
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut fast = vec![0i32; 3];
+        interleave(&planes, len, &mut fast, |v| v);
+        let mut slow = vec![0i32; len * nch];
+        interleave_any(&planes, &mut slow, |v| v);
+        prop_assert_eq!(&fast, &slow);
+
+        // A reused buffer of stale bytes must come out fully rewritten.
+        let mut bytes = vec![stale; len * nch * 3];
+        pack::<3>(&planes, len, &mut bytes);
+        let mut slow = vec![0u8; len * nch * 3];
+        pack_any::<3>(&planes, &mut slow);
+        prop_assert_eq!(bytes, slow);
+        let mut bytes = Vec::new();
+        pack::<2>(&planes, len, &mut bytes);
+        let mut slow = vec![0u8; len * nch * 2];
+        pack_any::<2>(&planes, &mut slow);
+        prop_assert_eq!(bytes, slow);
+    }
+}
