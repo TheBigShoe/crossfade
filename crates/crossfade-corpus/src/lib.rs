@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod cache;
+mod cli;
 mod fetch;
 mod manifest;
 mod require;
@@ -11,6 +12,7 @@ mod require;
 mod testutil;
 
 pub use cache::{Cache, Problem};
+pub use cli::{run, Defaults};
 pub use fetch::{fetch, seed, CurlDownloader, Downloader, Event, Failure, Outcome, Summary};
 
 pub use require::{require, require_from, try_require, workspace_root, RequireError};
