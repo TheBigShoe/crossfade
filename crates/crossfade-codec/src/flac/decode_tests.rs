@@ -288,6 +288,77 @@ fn mono_frame(x: &[i64], bps: u8, build: impl FnOnce(&mut BitWriter)) -> Vec<u8>
     )
 }
 
+// ---- sample width ----
+
+#[test]
+fn streams_up_to_24_bits_hold_samples_in_32_bits_and_wider_ones_in_64() {
+    for bits in 4..=24 {
+        assert_eq!(width_for(bits), Width::Narrow, "{bits} bits");
+    }
+    for bits in 25..=32 {
+        assert_eq!(width_for(bits), Width::Wide, "{bits} bits");
+    }
+}
+
+/// Linear-predictor frames over random valid signals decode alike on both widths: the narrow
+/// path may only ever be a faster way to the same samples.
+fn both_widths_agree(frame: &[u8], info: &StreamInfo) {
+    let run = |width| {
+        let mut d = decoder_with(info, width).unwrap();
+        d.send_packet(&Packet {
+            stream: 0,
+            pts: 0,
+            duration: 0,
+            data: frame.to_vec(),
+        })
+        .unwrap();
+        let mut out = AudioFrame::new(&info.audio);
+        assert!(d.receive_frame(&mut out).unwrap());
+        out
+    };
+    assert_eq!(run(Width::Narrow).samples, run(Width::Wide).samples);
+}
+
+proptest! {
+    #[test]
+    fn linear_predictors_decode_alike_on_both_widths(
+        bits in 4u32..=24,
+        order in 1usize..=32,
+        precision in 2u32..=15,
+        shift in 0u32..=15,
+        seed in any::<i64>(),
+        coef_seed in any::<u64>(),
+    ) {
+        let x = wave(160, bits, seed);
+        let max = (1i64 << (precision - 1)) - 1;
+        let mut s = coef_seed;
+        let coefs: Vec<i64> = (0..order)
+            .map(|_| {
+                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((s >> 33) as i64 % (2 * max + 1)) - max
+            })
+            .collect();
+        let res: Vec<i64> = (order..x.len())
+            .map(|i| x[i] - lpc_prediction(&coefs, shift, &x[..i]))
+            .collect();
+        // Escaped partitions hold 31-bit residuals; a stream needing more is not valid here.
+        prop_assume!(res.iter().all(|r| r.abs() < 1 << 30));
+        let f = mono_frame(&x, bits as u8, |w| {
+            sub_header(w, 31 + order as u64, 0);
+            for &v in &x[..order] {
+                w.write_signed(v, bits);
+            }
+            w.write_bits(u64::from(precision - 1), 4);
+            w.write_bits(u64::from(shift), 5);
+            for &c in &coefs {
+                w.write_signed(c, precision);
+            }
+            write_residual(w, false, 0, x.len(), order, &res, &[Part::Escape(31)]);
+        });
+        both_widths_agree(&f, &stream(44100, 1, bits as u8));
+    }
+}
+
 // ---- subframe types ----
 
 #[test]
