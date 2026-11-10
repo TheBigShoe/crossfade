@@ -104,3 +104,28 @@ fn correlated_channels_are_decorrelated_from_level_one_up() {
         }
     }
 }
+
+fn tone(frames: usize, channels: usize, amp: f64, noise_bits: u8) -> Vec<i32> {
+    let jitter = noise(noise_bits, frames * channels, 77);
+    (0..frames * channels)
+        .map(|i| {
+            let t = f64::from((i / channels) as u32);
+            let v = (t * 0.031).sin() * amp * 0.6 + (t * 0.0047).sin() * amp * 0.3;
+            v as i32 + jitter[i]
+        })
+        .collect()
+}
+
+#[test]
+fn linear_prediction_beats_fixed_predictors_on_a_tone() {
+    let samples = tone(4096 * 4, 1, 20000.0, 3);
+    let fixed_only = round_trip(cfg(1, 16, 0), &samples, 0);
+    let lpc = round_trip(cfg(1, 16, 3), &samples, 0);
+    let per_sample = |e: &Encoded| e.bytes.len() as f64 / samples.len() as f64;
+    assert!(
+        per_sample(&lpc) < per_sample(&fixed_only) * 0.85,
+        "{} vs {}",
+        per_sample(&lpc),
+        per_sample(&fixed_only)
+    );
+}
