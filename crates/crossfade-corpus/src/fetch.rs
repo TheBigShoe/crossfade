@@ -358,4 +358,19 @@ mod tests {
         let s = seed(&m, &cache, Path::new("/nonexistent-dir"));
         assert!(s.is_ok() && s.skipped == 1);
     }
+
+    #[test]
+    fn curl_downloader_copies_a_file_url_and_reports_failure() {
+        let dir = temp_dir("curl");
+        let src = dir.join("src.bin");
+        std::fs::write(&src, b"payload").unwrap();
+        let dest = dir.join("out.bin");
+        let mut dl = CurlDownloader;
+        dl.download(&format!("file://{}", src.display()), &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"payload");
+        let err = dl
+            .download(&format!("file://{}", dir.join("nope").display()), &dest)
+            .unwrap_err();
+        assert!(err.contains("curl"), "{err}");
+    }
 }
