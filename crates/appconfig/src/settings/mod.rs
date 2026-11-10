@@ -12,14 +12,21 @@
 //! key, so a user file may hold a single key. Unknown keys are ignored and reported as
 //! [`SettingsWarning`]s; a wrong type or bad syntax is a [`SettingsError`] naming the
 //! file, line and column.
+//!
+//! [`SettingsEditor`] and [`KeymapEditor`] change one key of a file and leave the rest
+//! of its text as the user wrote it.
 
 pub mod de;
+mod edit;
 #[cfg(test)]
 mod fixture;
 mod font;
+mod keymap_edit;
 mod load;
 mod theme_selection;
 
+pub use edit::{EditError, KeyChange, SettingsEditor};
 pub use font::{FontFeatures, FontSpec, LineHeight};
+pub use keymap_edit::KeymapEditor;
 pub use load::{Loaded, SettingsError, SettingsLayer, SettingsWarning, load_files, load_layers};
 pub use theme_selection::{ThemeMode, ThemeSelection};

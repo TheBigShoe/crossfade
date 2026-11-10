@@ -99,7 +99,11 @@ const DEFAULTS: &str = r#"// Demo defaults, bundled with the app (test fixture).
 
   // ---- Colors ----
 
-  "theme": { "mode": "system", "light": "Demo Light", "dark": "Demo Dark" },
+  "theme": {
+    "mode": "system",
+    "light": "Demo Light",
+    "dark": "Demo Dark"
+  },
 
   // ---- Display ----
 
@@ -115,7 +119,9 @@ const DEFAULTS: &str = r#"// Demo defaults, bundled with the app (test fixture).
   // ---- Sessions ----
 
   "default_baud": 115200,
-  "inline": { "escape_chord": "ctrl-]" },
+  "inline": {
+    "escape_chord": "ctrl-]"
+  },
 
   // Profiles are tried in order.
   "devices": []
