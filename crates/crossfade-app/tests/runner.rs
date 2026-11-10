@@ -54,6 +54,7 @@ fn request(input: &str, output: &str, format: Option<SampleFormat>, overwrite: b
                 path: output.into(),
                 audio: AudioSettings {
                     sample_format: format,
+                    ..AudioSettings::default()
                 },
             }],
         },

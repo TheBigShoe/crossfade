@@ -63,6 +63,7 @@ fn convert_job(input: String, output: String, sample_format: Option<&str>) -> Jo
             audio: AudioSettings {
                 // The parser only lets valid names through.
                 sample_format: sample_format.and_then(SampleFormat::from_name),
+                ..AudioSettings::default()
             },
         }],
     }

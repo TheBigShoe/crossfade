@@ -91,6 +91,7 @@ mod tests {
                     path: output.into(),
                     audio: AudioSettings {
                         sample_format: format,
+                        ..AudioSettings::default()
                     },
                 }],
             },

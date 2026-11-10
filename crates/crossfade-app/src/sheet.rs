@@ -174,6 +174,7 @@ impl ConvertSheet {
                             FormatChoice::SameAsSource => None,
                             FormatChoice::Format(f) => Some(f),
                         },
+                        ..AudioSettings::default()
                     },
                 }],
             },

@@ -11,6 +11,7 @@ fn job(format: Option<SampleFormat>) -> Job {
             path: "out.wav".into(),
             audio: AudioSettings {
                 sample_format: format,
+                ..AudioSettings::default()
             },
         }],
     }
@@ -116,4 +117,40 @@ fn other_versions_are_unsupported() {
             "{v}"
         );
     }
+}
+
+#[test]
+fn codec_and_compression_level_round_trip_and_keep_old_jobs_unchanged() {
+    let audio = AudioSettings {
+        sample_format: Some(SampleFormat::S16),
+        codec: Some("flac".into()),
+        compression_level: Some(8),
+    };
+    let mut j = job(None);
+    j.outputs[0].audio = audio;
+    let json = j.to_json_pretty();
+    assert!(json.contains("\"codec\": \"flac\""), "{json}");
+    assert!(json.contains("\"compression_level\": 8"), "{json}");
+    assert_eq!(Job::from_json(&json), Ok(j));
+    assert_eq!(Job::VERSION, 1);
+
+    // An M1 job has no new keys, so its bytes are as before.
+    let old = job(Some(SampleFormat::S24)).to_json_pretty();
+    assert!(
+        !old.contains("codec") && !old.contains("compression"),
+        "{old}"
+    );
+}
+
+#[test]
+fn a_job_written_before_the_new_fields_still_reads() {
+    let j = Job::from_json(
+        r#"{"version":1,"inputs":[{"path":"a"}],"outputs":[{"path":"b","audio":{"sample_format":"s16"}}]}"#,
+    )
+    .unwrap();
+    let audio = &j.outputs[0].audio;
+    assert_eq!(
+        (audio.codec.as_deref(), audio.compression_level),
+        (None, None)
+    );
 }

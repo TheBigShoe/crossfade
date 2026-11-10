@@ -145,7 +145,8 @@ fn build_makes_the_same_job_the_cli_would() {
             outputs: vec![JobOutput {
                 path: "out.wav".into(),
                 audio: AudioSettings {
-                    sample_format: Some(SampleFormat::S24)
+                    sample_format: Some(SampleFormat::S24),
+                    ..AudioSettings::default()
                 },
             }],
         }
