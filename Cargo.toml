@@ -38,6 +38,8 @@ clap = { version = "4", features = ["derive"] }
 insta = "1"
 assert_cmd = "2"
 criterion = { version = "0.5", default-features = false }
+# FLAC encoding. No default features: no threads, no serde.
+flacenc = { version = "=0.5.1", default-features = false }
 
 # GPUI through one facade (brings gpui-pre 0.3.12). Import it only via crossfade_ui::prelude.
 gpui-kit = "=0.9.1"
