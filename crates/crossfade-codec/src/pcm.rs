@@ -1,8 +1,8 @@
 //! Little-endian PCM: bytes to samples and back, one sample format per codec.
 
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, CodecId, Decoder, Error, Packet, SampleFormat, Samples,
-    StreamInfo,
+    AudioFrame, AudioSpec, ChannelLayout, CodecId, Decoder, Encoder, Error, Packet, SampleFormat,
+    Samples, StreamInfo,
 };
 
 fn pcm_format(codec: CodecId) -> Result<SampleFormat, Error> {
@@ -37,6 +37,21 @@ fn decode_into(data: &[u8], out: &mut Samples) {
             data.chunks_exact(8)
                 .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])),
         ),
+    }
+}
+
+fn encode_into(samples: &Samples, out: &mut Vec<u8>) {
+    match samples {
+        Samples::U8(v) => out.extend_from_slice(v),
+        Samples::S16(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
+        // Low three bytes; callers keep values within +-2^23.
+        Samples::S24(v) => out.extend(v.iter().flat_map(|x| {
+            let b = x.to_le_bytes();
+            [b[0], b[1], b[2]]
+        })),
+        Samples::S32(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
+        Samples::F32(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
+        Samples::F64(v) => out.extend(v.iter().flat_map(|x| x.to_le_bytes())),
     }
 }
 
@@ -103,6 +118,85 @@ impl Decoder for PcmDecoder {
         self.pending.sample_rate = self.sample_rate;
         self.pending.layout.clone_from(&self.layout);
         // Swap so the caller's old buffer becomes our next scratch.
+        std::mem::swap(out, &mut self.pending);
+        Ok(true)
+    }
+
+    fn drain(&mut self) {}
+}
+
+#[derive(Debug)]
+pub struct PcmEncoder {
+    format: SampleFormat,
+    sample_rate: u32,
+    channels: u16,
+    pending: Packet,
+    has_pending: bool,
+}
+
+impl PcmEncoder {
+    /// The codec decides the sample format; `spec` supplies rate and channels.
+    pub fn new(codec: CodecId, spec: &AudioSpec) -> Result<Self, Error> {
+        Ok(Self {
+            format: pcm_format(codec)?,
+            sample_rate: spec.sample_rate(),
+            channels: spec.layout().channels(),
+            pending: Packet::default(),
+            has_pending: false,
+        })
+    }
+}
+
+impl Encoder for PcmEncoder {
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        if self.has_pending {
+            return Err(Error::Unsupported {
+                what: "send_frame before the previous packet was received".into(),
+            });
+        }
+        if frame.samples.format() != self.format {
+            return Err(Error::Unsupported {
+                what: format!(
+                    "frame is {} but the codec takes {}; convert it first",
+                    frame.samples.format().name(),
+                    self.format.name()
+                ),
+            });
+        }
+        if frame.sample_rate != self.sample_rate || frame.layout.channels() != self.channels {
+            return Err(Error::Unsupported {
+                what: format!(
+                    "frame is {} Hz x {} ch but the encoder is {} Hz x {} ch",
+                    frame.sample_rate,
+                    frame.layout.channels(),
+                    self.sample_rate,
+                    self.channels
+                ),
+            });
+        }
+        let channels = usize::from(self.channels);
+        if frame.samples.len() % channels != 0 {
+            return Err(Error::Malformed {
+                what: format!(
+                    "{} samples is not a whole number of {channels}-channel frames",
+                    frame.samples.len()
+                ),
+            });
+        }
+        self.pending.data.clear();
+        encode_into(&frame.samples, &mut self.pending.data);
+        self.pending.stream = 0;
+        self.pending.pts = frame.pts;
+        self.pending.duration = (frame.samples.len() / channels) as u64;
+        self.has_pending = true;
+        Ok(())
+    }
+
+    fn receive_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        if !self.has_pending {
+            return Ok(false);
+        }
+        self.has_pending = false;
         std::mem::swap(out, &mut self.pending);
         Ok(true)
     }
