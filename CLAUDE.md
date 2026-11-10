@@ -31,13 +31,13 @@ desktop app later.
 
 | Crate | Role |
 |---|---|
-| `crossfade-core` | Time (`Rational`, `TimeBase`, `Timestamp`), audio description, `Limits`, I/O and clock seams |
-| `crossfade-format` | Container demuxers and muxers (stub) |
-| `crossfade-codec` | Decoders and encoders (stub) |
-| `crossfade-dsp` | Resampling, format/channel conversion, gain (stub) |
-| `crossfade-graph` | Wires the above into pipelines; the engine entry point (stub) |
+| `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
+| `crossfade-format` | Containers: WAV reader and writer; `open_demuxer` sniffs, `create_muxer` writes |
+| `crossfade-codec` | Codecs: PCM; `decoder_for` / `encoder_for` |
+| `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
+| `crossfade-graph` | `Job` (plain serialisable data), `Pipeline::step`, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
-| `crossfade-cli` | The `crossfade` binary |
+| `crossfade-cli` | The `crossfade` binary: `probe`, `convert`; file I/O (`FsIo`) lives here, never in the engine |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
 
 The purity gate lives in its own crate so its `serde_json` dependency and
@@ -51,6 +51,7 @@ just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-and
 just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
 just fuzz-smoke  # 30 s per target; needs nightly and cargo-fuzz
+just bench     # criterion; not part of the gate
 ```
 
 `just ci` must pass before a branch is handed over. Work happens on a task
