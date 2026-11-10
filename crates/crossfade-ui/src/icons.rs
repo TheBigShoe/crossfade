@@ -9,8 +9,10 @@ use crate::prelude::*;
 
 icon_assets!(pub AppIcons, [
     Check,
+    BrushCleaning,
     Copy,
     Ellipsis,
+    FileMusic,
     FolderOpen,
     PanelBottom,
     PanelLeft,
@@ -19,6 +21,7 @@ icon_assets!(pub AppIcons, [
     Plus,
     RotateCcw,
     Settings,
+    Square,
     TriangleAlert,
     X,
 ]);
@@ -65,6 +68,9 @@ mod tests {
             IconName::RotateCcw,
             IconName::Check,
             IconName::TriangleAlert,
+            IconName::FileMusic,
+            IconName::Square,
+            IconName::BrushCleaning,
         ] {
             let path = icon.path();
             let loaded = Assets.load(&path).expect("no load error");

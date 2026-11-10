@@ -4,9 +4,8 @@ use crossfade_app::inputs::InputState;
 use crossfade_app::inspector;
 
 use crate::prelude::*;
-use crate::test_support::{
-    add_paths, click, disabled, draw, has, open_rig, open_test_window,
-};
+use crate::test_support::{add_paths, click, disabled, draw, has, open_rig, open_test_window};
+use crate::workspace::Workspace;
 
 fn row_id(prefix: &str, n: usize) -> SharedString {
     format!("{prefix}-{n}").into()
@@ -29,10 +28,7 @@ fn adding_two_files_lists_both_and_selects_the_last(cx: &mut TestAppContext) {
     assert!(!has(cx, rig.window, row_id("file-row", 2)));
     assert!(!has(cx, rig.window, "empty-state"));
     assert_eq!(selected_name(cx, &rig.workspace).as_deref(), Some("b.wav"));
-    assert_eq!(
-        rig.workspace.read_with(cx, |w, _| w.status_text()),
-        "b.wav"
-    );
+    assert_eq!(rig.workspace.read_with(cx, |w, _| w.status_text()), "b.wav");
 }
 
 #[gpui_test]
@@ -73,7 +69,10 @@ fn a_failed_probe_shows_the_alert_row_and_the_error(cx: &mut TestAppContext) {
 
     assert!(has(cx, rig.window, "inspector-error"));
     assert!(has(cx, rig.window, row_id("file-row", 0)));
-    assert!(rig.workspace.read_with(cx, |w, _| w.inspector_error().is_some()));
+    assert!(
+        rig.workspace
+            .read_with(cx, |w, _| w.inspector_error().is_some())
+    );
     assert!(
         rig.workspace
             .read_with(cx, |w, _| w.inspector_sections().is_empty())
@@ -148,7 +147,11 @@ fn files_are_listed_in_the_order_given_and_a_repeat_does_not_duplicate(cx: &mut 
     let b = rig.dir.write_wav("b.wav", 48_000, 1, 100);
     add_paths(cx, &rig, &[&b, &a, &b]);
     let names: Vec<String> = rig.workspace.read_with(cx, |w, _| {
-        w.inputs().entries().iter().map(|e| e.name.clone()).collect()
+        w.inputs()
+            .entries()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect()
     });
     assert_eq!(names, ["b.wav", "a.wav"]);
     assert_eq!(selected_name(cx, &rig.workspace).as_deref(), Some("b.wav"));

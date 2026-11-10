@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use crossfade_ui::prelude::gpui_test::TestWindowExt;
 use crossfade_ui::prelude::*;
+use crossfade_ui::scripted::Script;
 use crossfade_ui::{Workspace, init};
 
 const WINDOW: (f32, f32) = (1180., 760.);
@@ -65,6 +66,7 @@ impl Stage {
             platform::current_headless_renderer,
         );
         let (width, height) = WINDOW;
+        let (_, options) = Script::options();
         let (window, workspace) = cx
             .update(|cx| {
                 init(cx);
@@ -80,7 +82,7 @@ impl Stage {
                         ..Default::default()
                     },
                     cx,
-                    |window, cx| cx.new(|cx| Workspace::new(window, cx)),
+                    |window, cx| cx.new(|cx| Workspace::new(options, window, cx)),
                 )
             })
             .expect("open the workspace window");

@@ -4,6 +4,7 @@
 pub mod actions;
 pub mod chrome;
 pub mod dialog_footer;
+pub mod files;
 pub mod icons;
 pub mod scripted;
 pub mod workspace;
@@ -52,6 +53,7 @@ pub mod prelude {
     pub use gpui_kit::component::dialog::{Cancel, Confirm, DialogFooter};
     pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
     pub use gpui_kit::component::{
-        ActiveTheme, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex, v_flex,
+        ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex,
+        v_flex,
     };
 }
