@@ -56,7 +56,7 @@ mod tests {
     use super::*;
     use crossfade_core::{
         AudioSpec, ChannelLayout, CodecId, Error, Limits, MediaSink, Packet, SampleFormat,
-        StreamInfo, TimeBase,
+        StreamInfo, Tags, TimeBase,
     };
     use crossfade_testkit::io::FaultySource;
     use std::io::{Cursor, SeekFrom};
@@ -84,7 +84,12 @@ mod tests {
 
     fn wav_bytes() -> Vec<u8> {
         let sink = Shared::default();
-        let mut m = create_muxer(FormatId::Wav, Box::new(sink.clone()), &stream()).unwrap();
+        let mut m = create_muxer(
+            FormatId::Wav,
+            Box::new(sink.clone()),
+            &stream(),
+            &Tags::new(),
+        ).unwrap();
         let p = Packet {
             data: vec![1, 0, 2, 0],
             ..Packet::default()
@@ -97,11 +102,18 @@ mod tests {
 
     #[test]
     fn names_and_extensions() {
-        assert_eq!(FormatId::Wav.name(), "wav");
-        for ext in ["wav", "WAV", "Wave", "wave"] {
-            assert_eq!(FormatId::from_extension(ext), Some(FormatId::Wav), "{ext}");
+        for (id, name, exts) in [
+            (FormatId::Wav, "wav", &["wav", "WAV", "Wave", "wave"][..]),
+            (FormatId::Flac, "flac", &["flac", "FLAC"][..]),
+            (FormatId::Aiff, "aiff", &["aiff", "aif", "aifc", "AIF"][..]),
+            (FormatId::Ogg, "ogg", &["ogg", "oga", "OGG"][..]),
+        ] {
+            assert_eq!(id.name(), name);
+            for ext in exts {
+                assert_eq!(FormatId::from_extension(ext), Some(id), "{ext}");
+            }
         }
-        for ext in ["", "mp3", "wav ", ".wav", "wavx"] {
+        for ext in ["", "mp3", "wav ", ".wav", "wavx", "flc", "ogv"] {
             assert_eq!(FormatId::from_extension(ext), None, "{ext:?}");
         }
     }
@@ -117,16 +129,57 @@ mod tests {
         assert_eq!(p.data, [1, 0, 2, 0]);
     }
 
+    fn unsupported(r: Result<impl Sized, Error>) -> String {
+        match r {
+            Err(Error::Unsupported { what }) => what,
+            Err(e) => panic!("wrong error {e:?}"),
+            Ok(_) => panic!("expected Unsupported"),
+        }
+    }
+
+    #[test]
+    fn magic_routes_to_the_right_demuxer() {
+        let open = |bytes: &[u8]| {
+            let src = FaultySource::new(Cursor::new(bytes.to_vec())).not_seekable();
+            open_demuxer(Box::new(src), &Limits::default()).map(|(id, _)| id)
+        };
+        for (bytes, want) in [
+            (&b"fLaC\0\0\0\x22rest"[..], "reading flac is not built yet"),
+            (b"ID3\x04\0\0\0\0\0\0", "reading flac is not built yet"),
+            (b"FORM\0\0\0\x10AIFFCOMM", "reading aiff is not built yet"),
+            (b"FORM\0\0\0\x10AIFCFVER", "reading aiff is not built yet"),
+            (b"OggS\0\x02rest of page", "reading ogg is not built yet"),
+        ] {
+            assert_eq!(unsupported(open(bytes)), want, "{bytes:?}");
+        }
+        let wav = wav_bytes();
+        assert_eq!(open(&wav).unwrap(), FormatId::Wav);
+    }
+
     #[test]
     fn unknown_input_is_unrecognised_and_rf64_is_unsupported() {
         let open = |bytes: Vec<u8>| open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default());
-        assert_eq!(
-            open(b"OggS....more".to_vec()).err(),
-            Some(Error::UnrecognisedFormat)
-        );
-        assert_eq!(open(Vec::new()).err(), Some(Error::UnrecognisedFormat));
+        for bytes in [
+            Vec::new(),
+            b"fLa".to_vec(),
+            b"FORM\0\0\0\x10" .to_vec(),
+            b"FORM\0\0\0\x108SVXVHDR".to_vec(),
+            b"ID".to_vec(),
+            b"hello world, not audio".to_vec(),
+        ] {
+            assert_eq!(open(bytes.clone()).err(), Some(Error::UnrecognisedFormat), "{bytes:?}");
+        }
         let mut rf64 = wav_bytes();
         rf64[..4].copy_from_slice(b"RF64");
         assert!(matches!(open(rf64).err(), Some(Error::Unsupported { .. })));
+    }
+
+    #[test]
+    fn muxers_exist_for_wav_only_so_far() {
+        let mk = |f| create_muxer(f, Box::new(Shared::default()), &stream(), &Tags::new());
+        assert!(mk(FormatId::Wav).is_ok());
+        assert_eq!(unsupported(mk(FormatId::Flac)), "writing flac is not built yet");
+        assert_eq!(unsupported(mk(FormatId::Aiff)), "writing aiff is not built yet");
+        assert_eq!(unsupported(mk(FormatId::Ogg)), "writing ogg is not built yet");
     }
 }
