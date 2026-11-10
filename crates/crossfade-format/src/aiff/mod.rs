@@ -1,4 +1,6 @@
-//! AIFF container.
+//! AIFF and AIFF-C containers.
+
+mod extended;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
 
