@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bits;
+pub mod md5;
 pub mod pcm;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
