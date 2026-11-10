@@ -50,6 +50,29 @@ impl Metadata {
     }
 }
 
+/// Crates whose only purpose is building or finding native code.
+pub const NATIVE_BUILD_HELPERS: &[&str] = &[
+    "cc",
+    "cmake",
+    "bindgen",
+    "pkg-config",
+    "nasm-rs",
+    "autotools",
+    "vcpkg",
+];
+
+fn classify(package: &Package) -> Option<Reason> {
+    if let Some(links) = &package.links {
+        Some(Reason::Links(links.clone()))
+    } else if NATIVE_BUILD_HELPERS.contains(&package.name.as_str()) {
+        Some(Reason::NativeBuildHelper)
+    } else if package.name.ends_with("-sys") {
+        Some(Reason::SysCrate)
+    } else {
+        None
+    }
+}
+
 /// A package exempted from the audit, with the reason it is acceptable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Allowed {
@@ -61,6 +84,10 @@ pub struct Allowed {
 pub enum Reason {
     /// Declares `links`, so it links a native library.
     Links(String),
+    /// A crate whose job is compiling or locating native code.
+    NativeBuildHelper,
+    /// Named `*-sys`, the convention for native-library bindings.
+    SysCrate,
     /// A requested root is not a workspace member, so nothing was checked.
     NotInWorkspace,
 }
@@ -114,7 +141,7 @@ pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec
         seen.insert(root_id);
         while let Some(id) = queue.pop_front() {
             let package = packages[id];
-            if let Some(links) = &package.links {
+            if let Some(reason) = classify(package) {
                 let mut path = vec![package.name.clone()];
                 let mut cursor = id;
                 while let Some(&up) = parent.get(cursor) {
@@ -124,7 +151,7 @@ pub fn audit(metadata: &Metadata, roots: &[&str], _allowlist: &[Allowed]) -> Vec
                 path.reverse();
                 violations.push(Violation {
                     package: package.name.clone(),
-                    reason: Reason::Links(links.clone()),
+                    reason,
                     path,
                 });
             }
