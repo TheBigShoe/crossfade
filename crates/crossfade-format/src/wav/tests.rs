@@ -262,6 +262,32 @@ fn extensible_float_uses_the_subformat_tag() {
 }
 
 #[test]
+fn extensible_float_reads_positions_at_both_widths() {
+    use crossfade_core::Channel::*;
+    for (bits, format) in [(32, SampleFormat::F32), (64, SampleFormat::F64)] {
+        let fmt = Fmt::new(0xFFFE, 4, 48000, bits);
+        let pcm = payload(4 * usize::from(bits / 8) * 2);
+        let d = open(ext_file(&fmt, bits, 0x33, TAG_FLOAT, &pcm)).unwrap();
+        let want = ChannelLayout::from_positions(vec![FrontLeft, FrontRight, BackLeft, BackRight])
+            .unwrap();
+        assert_eq!(d.streams()[0].audio.layout(), &want);
+        assert_eq!(d.streams()[0].audio.format(), format);
+    }
+}
+
+#[test]
+fn plain_multichannel_float_from_older_writers_is_unpositioned() {
+    // What Crossfade wrote before the extensible float header: tag 3, 18-byte fmt, no mask.
+    let fmt = Fmt::new(TAG_FLOAT, 6, 48000, 32);
+    let d = open(simple(&fmt, &payload(24))).unwrap();
+    assert_eq!(
+        d.streams()[0].audio.layout(),
+        &ChannelLayout::unpositioned(6).unwrap()
+    );
+    assert_eq!(d.streams()[0].audio.format(), SampleFormat::F32);
+}
+
+#[test]
 fn extensible_without_a_usable_mask_is_unpositioned() {
     let fmt = Fmt::new(TAG_PCM, 2, 48000, 16);
     for mask in [0u32, 1, 7, 1 << 20 | 1 << 21, 0x80000003] {
@@ -775,6 +801,93 @@ mod writer {
         assert_eq!(riff_size as usize, bytes.len() - 8);
     }
 
+    fn five_one() -> ChannelLayout {
+        use Channel::*;
+        ChannelLayout::from_positions(vec![
+            FrontLeft,
+            FrontRight,
+            FrontCenter,
+            Lfe,
+            SideLeft,
+            SideRight,
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn multichannel_float_keeps_its_positions_through_the_writer() {
+        use Channel::*;
+        let quad = ChannelLayout::from_positions(vec![FrontLeft, FrontRight, BackLeft, BackRight])
+            .unwrap();
+        for (format, layout, bytes) in [
+            (SampleFormat::F32, five_one(), 24),
+            (SampleFormat::F64, quad, 32),
+        ] {
+            let s = info(48000, format, layout.clone());
+            let d = open(write(&s, &[payload(bytes * 3)])).unwrap();
+            assert_eq!(d.streams()[0].audio.layout(), &layout, "{format:?}");
+            assert_eq!(d.streams()[0].audio.format(), format);
+        }
+    }
+
+    #[test]
+    fn five_one_float_header_is_extensible_with_the_float_subformat_and_fact() {
+        let s = info(48000, SampleFormat::F32, five_one());
+        let bytes = write(&s, &[payload(48)]);
+        let (riff_size, chunks) = parse(&bytes);
+        let ids: Vec<_> = chunks.iter().map(|c| c.0).collect();
+        assert_eq!(ids, [*b"fmt ", *b"fact", *b"data"]);
+        let want_fmt: Vec<u8> = [
+            &0xFFFEu16.to_le_bytes()[..],
+            &6u16.to_le_bytes(),
+            &48000u32.to_le_bytes(),
+            &(48000u32 * 24).to_le_bytes(),
+            &24u16.to_le_bytes(),
+            &32u16.to_le_bytes(),
+            &22u16.to_le_bytes(),
+            &32u16.to_le_bytes(),
+            &0x60Fu32.to_le_bytes(),
+            &3u16.to_le_bytes(),
+            &[0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71],
+        ]
+        .concat();
+        assert_eq!(chunks[0].1, want_fmt);
+        assert_eq!(u32_le(&chunks[1].1), 2);
+        assert_eq!(chunks[2].1, payload(48));
+        assert_eq!(riff_size as usize, bytes.len() - 8);
+    }
+
+    #[test]
+    fn multichannel_float_samples_round_trip() {
+        let s = info(48000, SampleFormat::F32, five_one());
+        let pcm = payload(24 * 5);
+        let mut d = open(write(&s, std::slice::from_ref(&pcm))).unwrap();
+        assert_eq!(d.streams()[0].frames, Some(5));
+        assert_eq!(drain(&mut d).0.concat_bytes(), pcm);
+    }
+
+    #[test]
+    fn unpositioned_multichannel_float_writes_a_zero_mask() {
+        let layout = ChannelLayout::unpositioned(3).unwrap();
+        let s = info(8000, SampleFormat::F32, layout.clone());
+        let bytes = write(&s, &[payload(12)]);
+        let (_, chunks) = parse(&bytes);
+        assert_eq!(u16_le(&chunks[0].1), 0xFFFE);
+        assert_eq!(u32_le(&chunks[0].1[20..]), 0);
+        assert_eq!(open(bytes).unwrap().streams()[0].audio.layout(), &layout);
+    }
+
+    #[test]
+    fn stereo_float_with_other_positions_is_extensible() {
+        use Channel::*;
+        let layout = ChannelLayout::from_positions(vec![SideLeft, SideRight]).unwrap();
+        let s = info(48000, SampleFormat::F32, layout.clone());
+        let bytes = write(&s, &[payload(16)]);
+        let (_, chunks) = parse(&bytes);
+        assert_eq!(u16_le(&chunks[0].1), 0xFFFE);
+        assert_eq!(open(bytes).unwrap().streams()[0].audio.layout(), &layout);
+    }
+
     #[test]
     fn odd_data_is_padded_but_the_size_stays_odd() {
         let s = info(8000, SampleFormat::U8, ChannelLayout::mono());
@@ -951,10 +1064,8 @@ mod props {
                 SideLeft,
                 SideRight,
             ];
-            // Plain headers cannot say "unpositioned" for 1 or 2 channels,
-            // and the float header has no mask, so positions need an integer
-            // format.
-            let positioned = positioned && !FORMATS[f].is_float();
+            // A plain header cannot say "unpositioned" for 1 or 2 channels; those collapse to
+            // the mono and stereo defaults.
             let layout = match (ch, positioned) {
                 (1, _) => ChannelLayout::mono(),
                 (2, _) => ChannelLayout::stereo(),
