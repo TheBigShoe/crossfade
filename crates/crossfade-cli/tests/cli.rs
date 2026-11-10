@@ -39,6 +39,19 @@ fn unknown_flag_exits_2_with_usage_on_stderr() {
     assert!(err.contains("Usage: crossfade"));
 }
 
+// On Windows the file is `crossfade.exe`; usage text must not follow the file name.
+#[test]
+fn usage_names_the_tool_not_the_file() {
+    let renamed =
+        std::env::temp_dir().join(format!("crossfade-renamed-{}.exe", std::process::id()));
+    std::fs::copy(env!("CARGO_BIN_EXE_crossfade"), &renamed).unwrap();
+    let out = Command::new(&renamed).output().unwrap();
+    std::fs::remove_file(&renamed).unwrap();
+    let err = text(&out.stderr);
+    assert!(err.contains("Usage: crossfade"), "{err}");
+    assert!(!err.contains(".exe"), "{err}");
+}
+
 #[test]
 fn no_arguments_prints_help_to_stderr_and_exits_2() {
     let out = run(&[]);
