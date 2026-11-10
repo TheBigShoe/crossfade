@@ -237,10 +237,8 @@ mod tests {
     fn muxers_exist_for_wav_only_so_far() {
         let mk = |f| create_muxer(f, Box::new(Shared::default()), &stream(), &Tags::new());
         assert!(mk(FormatId::Wav).is_ok());
-        assert_eq!(
-            unsupported(mk(FormatId::Flac)),
-            "writing flac is not built yet"
-        );
+        // The FLAC writer exists; this PCM stream is simply not one it can hold.
+        assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
         assert_eq!(
             unsupported(mk(FormatId::Aiff)),
             "writing aiff is not built yet"
