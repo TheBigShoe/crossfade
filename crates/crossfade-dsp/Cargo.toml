@@ -11,3 +11,7 @@ crossfade-core.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+crossfade-testkit.workspace = true
+proptest.workspace = true

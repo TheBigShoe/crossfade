@@ -28,6 +28,29 @@ impl SampleFormat {
     pub fn is_float(self) -> bool {
         matches!(self, Self::F32 | Self::F64)
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::U8 => "u8",
+            Self::S16 => "s16",
+            Self::S24 => "s24",
+            Self::S32 => "s32",
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "u8" => Self::U8,
+            "s16" => Self::S16,
+            "s24" => Self::S24,
+            "s32" => Self::S32,
+            "f32" => Self::F32,
+            "f64" => Self::F64,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

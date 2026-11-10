@@ -27,6 +27,7 @@ proptest = "1"
 clap = { version = "4", features = ["derive"] }
 insta = "1"
 assert_cmd = "2"
+criterion = { version = "0.5", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

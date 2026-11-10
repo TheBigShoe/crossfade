@@ -21,6 +21,10 @@ mobile:
         cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-dsp -p crossfade-graph; \
     done
 
+# First speed baseline: in-memory conversion through the engine.
+bench:
+    cargo bench -p crossfade-graph
+
 # Needs the network the first time (advisory database).
 deny:
     cargo deny check

@@ -4,7 +4,12 @@ expression: shown
 ---
 An FFmpeg-class audio/video tool in pure Rust
 
-Usage: crossfade
+Usage: crossfade <COMMAND>
+
+Commands:
+  probe    Show what a media file contains
+  convert  Convert a media file
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

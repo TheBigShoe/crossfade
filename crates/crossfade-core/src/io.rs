@@ -1,3 +1,4 @@
+use crate::Error;
 use std::fs::File;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
@@ -15,6 +16,20 @@ pub trait MediaSink {
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
     fn finish(&mut self) -> io::Result<()>;
+}
+
+/// How a job reaches its bytes: files, memory or anything else.
+pub trait JobIo {
+    fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, Error>;
+
+    /// May write somewhere temporary until `commit`.
+    fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, Error>;
+
+    /// Finished output becomes visible at `path`.
+    fn commit(&mut self, path: &str) -> Result<(), Error>;
+
+    /// Removes partial output; best effort.
+    fn discard(&mut self, path: &str);
 }
 
 impl MediaSource for Cursor<Vec<u8>> {
@@ -204,6 +219,37 @@ mod tests {
         MediaSink::write_all(&mut s, b"HEAD").unwrap();
         MediaSink::finish(&mut s).unwrap();
         assert_eq!(std::fs::read(tmp.path()).unwrap(), b"HEAD-body");
+    }
+
+    struct OneFile(Vec<String>);
+
+    impl crate::JobIo for OneFile {
+        fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, crate::Error> {
+            self.0.push(format!("open {path}"));
+            Ok(Box::new(Cursor::new(vec![1u8])))
+        }
+        fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, crate::Error> {
+            self.0.push(format!("create {path}"));
+            Ok(Box::new(Cursor::new(Vec::new())))
+        }
+        fn commit(&mut self, path: &str) -> Result<(), crate::Error> {
+            self.0.push(format!("commit {path}"));
+            Ok(())
+        }
+        fn discard(&mut self, path: &str) {
+            self.0.push(format!("discard {path}"));
+        }
+    }
+
+    #[test]
+    fn job_io_is_object_safe() {
+        let mut io = OneFile(Vec::new());
+        let dynamic: &mut dyn crate::JobIo = &mut io;
+        assert_eq!(dynamic.open_source("a").unwrap().byte_len(), Some(1));
+        dynamic.create_sink("b").unwrap();
+        dynamic.commit("b").unwrap();
+        dynamic.discard("b");
+        assert_eq!(io.0, ["open a", "create b", "commit b", "discard b"]);
     }
 
     #[test]

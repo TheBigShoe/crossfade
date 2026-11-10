@@ -11,6 +11,16 @@ crossfade-core.workspace = true
 crossfade-format.workspace = true
 crossfade-codec.workspace = true
 crossfade-dsp.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+crossfade-testkit.workspace = true
+criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "convert"
+harness = false

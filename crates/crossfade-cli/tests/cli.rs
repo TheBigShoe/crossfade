@@ -60,3 +60,36 @@ fn no_arguments_prints_help_to_stderr_and_exits_2() {
     let shown = text(&out.stderr).replace(env!("CARGO_PKG_VERSION"), "[version]");
     insta::assert_snapshot!(shown);
 }
+
+#[test]
+fn help_lists_the_subcommands() {
+    let out = run(&["--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = text(&out.stdout);
+    assert!(help.contains("probe"), "{help}");
+    assert!(help.contains("convert"), "{help}");
+}
+
+#[test]
+fn convert_to_an_unknown_container_names_the_extension() {
+    let dir = std::env::temp_dir().join(format!("crossfade-cli-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_crossfade"))
+        .args(["convert", "in.wav", "-o", "out.mp3"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let err = text(&out.stderr);
+    assert!(err.starts_with("crossfade: "), "{err}");
+    assert!(err.contains("mp3"), "{err}");
+}
+
+#[test]
+fn convert_requires_an_output() {
+    let out = run(&["convert", "in.wav"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("--output"));
+}

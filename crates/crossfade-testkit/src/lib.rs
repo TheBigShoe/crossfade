@@ -6,5 +6,6 @@ pub mod signal;
 
 pub mod clock;
 pub mod io;
+pub mod memory;
 pub mod metrics;
 pub mod pcm;
