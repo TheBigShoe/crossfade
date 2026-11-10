@@ -187,3 +187,20 @@ fn switching_the_theme_changes_the_workspace_background(cx: &mut TestAppContext)
     assert_ne!(dark, light);
     assert!(light.l > dark.l, "light {light:?} dark {dark:?}");
 }
+
+#[gpui_test]
+fn a_flac_preset_in_settings_opens_the_sheet_as_flac(cx: &mut TestAppContext) {
+    let config = ConfigDir::new("sheet-flac");
+    config.write("settings.json", r#"{ "convert": { "preset": "flac-24" } }"#);
+    let rig = open_rig_in(cx, config);
+    let input = rig.dir.write_wav("in.wav", 48_000, 1, 100);
+    add_paths(cx, &rig, &[&input]);
+    open_sheet(cx, &rig);
+    rig.workspace.read_with(cx, |w, cx| {
+        let dialog = w.convert_dialog().expect("the sheet is open").read(cx);
+        assert_eq!(dialog.preset_label(cx), Some("FLAC 24-bit"));
+        assert_eq!(dialog.container_label(cx), "FLAC");
+        assert_eq!(dialog.format_label(cx), "24-bit integer");
+        assert_eq!(dialog.output(cx), rig.dir.path("in-s24.flac"));
+    });
+}

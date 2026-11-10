@@ -33,6 +33,9 @@ async-channel.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 crossfade-cli.workspace = true
 crossfade-testkit.workspace = true
+# Fixtures are written by the engine's own muxers, so the tests read real FLAC and AIFF.
+crossfade-format.workspace = true
+crossfade-codec.workspace = true
 
 [lints]
 workspace = true

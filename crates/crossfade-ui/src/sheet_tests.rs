@@ -2,11 +2,13 @@
 
 use crossfade_app::Request;
 
+use crate::fixtures;
 use crate::prelude::*;
 use crate::test_support::{
-    FORMAT_LABELS, PRESET_LABELS, Rig, add_paths, click, disabled, draw, has, open_rig, open_sheet,
-    pick, step, type_output,
+    CONTAINER_LABELS, FORMAT_LABELS, LEVEL_LABELS, PRESET_LABELS, Rig, add_paths, click, disabled,
+    draw, has, open_rig, open_sheet, pick, pick_label, step, type_output,
 };
+use crossfade_core::SampleFormat;
 
 /// A rig with `in.wav` opened and selected.
 fn rig_with_input(cx: &mut TestAppContext) -> Rig {
@@ -41,18 +43,23 @@ fn convert_opens_a_sheet_titled_with_the_file_and_cancel_closes_it(cx: &mut Test
     open_sheet(cx, &rig);
     for id in [
         "sheet-preset",
+        "sheet-container",
         "sheet-format",
         "sheet-output",
         "sheet-browse",
         "sheet-overwrite",
         "sheet-command",
-        "sheet-copy",
+        "sheet-command-copy",
         "dialog-cancel",
         "dialog-ok",
     ] {
         assert!(has(cx, rig.window, id), "missing {id}");
     }
     assert!(!has(cx, rig.window, "sheet-problems"));
+    // Level is FLAC's; the hint appears only when there is something to say.
+    for absent in ["sheet-level", "sheet-hint"] {
+        assert!(!has(cx, rig.window, absent), "{absent}");
+    }
     let title = rig.workspace.read_with(cx, |w, cx| {
         w.convert_dialog()
             .expect("open")
@@ -212,7 +219,7 @@ fn the_copy_button_puts_the_equivalent_command_on_the_clipboard(cx: &mut TestApp
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);
     pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 1);
-    click(cx, rig.window, "sheet-copy");
+    click(cx, rig.window, "sheet-command-copy");
     let copied = cx.read_from_clipboard().and_then(|item| item.text());
     let expected = format!(
         "crossfade convert {} -o {} --sample-format s16",
@@ -394,4 +401,322 @@ fn the_sheet_builds_what_the_cli_builds_for_the_same_intent(cx: &mut TestAppCont
         assert_eq!(built.len(), n + 1, "intent {n} was not queued");
         assert_eq!(built[n], cli, "intent {n}: {args:?}");
     }
+}
+
+/// A rig with `name` holding `bytes` opened and selected.
+fn rig_with_file(cx: &mut TestAppContext, name: &str, bytes: &[u8]) -> Rig {
+    let rig = open_rig(cx);
+    let input = rig.dir.write(name, bytes);
+    add_paths(cx, &rig, &[&input]);
+    rig
+}
+
+fn dialog<R>(
+    cx: &mut TestAppContext,
+    rig: &Rig,
+    read: impl FnOnce(&crate::ConvertDialog, &App) -> R,
+) -> R {
+    rig.workspace.read_with(cx, |w, cx| {
+        read(w.convert_dialog().expect("the sheet is open").read(cx), cx)
+    })
+}
+
+fn labels(cx: &mut TestAppContext, rig: &Rig, id: &'static str) -> Vec<String> {
+    dialog(cx, rig, |d, cx| d.select_labels(id, cx))
+}
+
+#[gpui_test]
+fn the_container_select_rewrites_the_extension_and_filters_the_formats(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    assert_eq!(labels(cx, &rig, "sheet-container"), CONTAINER_LABELS);
+    assert_eq!(labels(cx, &rig, "sheet-format"), FORMAT_LABELS);
+
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert_eq!(sheet_output(cx, &rig), rig.dir.path("in.flac"));
+    // FLAC holds whole numbers up to 24 bits.
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..4]);
+
+    // A typed path keeps its folder and stem; only the extension follows.
+    let mine = rig.dir.path("my take.v2.flac");
+    type_output(cx, &rig, &mine);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
+    assert_eq!(sheet_output(cx, &rig), rig.dir.path("my take.v2.aiff"));
+    assert_eq!(labels(cx, &rig, "sheet-format"), FORMAT_LABELS);
+
+    // And typing an extension switches the select.
+    type_output(cx, &rig, &rig.dir.path("again.flac"));
+    assert_eq!(dialog(cx, &rig, |d, cx| d.container_label(cx)), "FLAC");
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..4]);
+}
+
+#[gpui_test]
+fn a_float_source_into_flac_shows_the_hint_and_is_saved_as_24_bit(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::F32, 480);
+    let rig = rig_with_file(cx, "float.wav", &wav);
+    open_sheet(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-hint"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert!(has(cx, rig.window, "sheet-hint"));
+    let hint = dialog(cx, &rig, |d, _| d.hint());
+    assert_eq!(
+        hint.as_deref(),
+        Some("FLAC stores whole-number samples up to 24-bit, so this will be saved as 24-bit.")
+    );
+    assert_eq!(
+        dialog(cx, &rig, |d, cx| d.format_label(cx)),
+        "24-bit integer"
+    );
+    assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[1..4]);
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    let audio = queued(cx, &rig)[0].job.outputs[0].audio.clone();
+    assert_eq!(audio.sample_format, Some(SampleFormat::S24));
+    assert_eq!(audio.codec, None);
+
+    // Going back to WAV takes the hint away.
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 0);
+    assert!(!has(cx, rig.window, "sheet-hint"));
+}
+
+#[gpui_test]
+fn a_192_khz_source_cannot_be_queued_as_flac(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(192_000, 1, SampleFormat::S24, 480);
+    let rig = rig_with_file(cx, "hi.wav", &wav);
+    open_sheet(cx, &rig);
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert!(has(cx, rig.window, "sheet-problems"));
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+    let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
+    assert_eq!(
+        problems,
+        ["FLAC output is limited to 96 kHz for now; this file is 192 kHz."]
+    );
+    assert!(problems.iter().all(|p| !p.contains("--")));
+    assert!(!has(cx, rig.window, "sheet-hint"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 0);
+    assert!(!has(cx, rig.window, "sheet-problems"));
+}
+
+#[gpui_test]
+fn the_level_select_exists_for_flac_only(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-level"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert!(has(cx, rig.window, "sheet-level"));
+    assert_eq!(labels(cx, &rig, "sheet-level"), LEVEL_LABELS);
+    pick(cx, &rig, "sheet-level", &LEVEL_LABELS, 9);
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    assert_eq!(
+        queued(cx, &rig)[0].job.outputs[0].audio.compression_level,
+        Some(8)
+    );
+
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    pick(cx, &rig, "sheet-level", &LEVEL_LABELS, 1);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
+    assert!(!has(cx, rig.window, "sheet-level"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert_eq!(dialog(cx, &rig, |d, cx| d.level_label(cx)), "Default");
+}
+
+#[gpui_test]
+fn copy_is_offered_for_a_flac_source_and_replaces_the_format_and_level(cx: &mut TestAppContext) {
+    let flac = fixtures::flac(44_100, 2, SampleFormat::S16, 4_410);
+    let rig = rig_with_file(cx, "tone.flac", &flac);
+    open_sheet(cx, &rig);
+    // The sheet starts as WAV, which cannot hold FLAC packets.
+    assert!(!has(cx, rig.window, "sheet-copy"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert!(has(cx, rig.window, "sheet-copy"));
+    assert!(dialog(cx, &rig, |d, _| d.format_enabled()));
+
+    click(cx, rig.window, "sheet-copy");
+    draw(cx, rig.window);
+    assert!(dialog(cx, &rig, |d, _| d.copy()));
+    assert!(!dialog(cx, &rig, |d, _| d.format_enabled()));
+    assert!(!dialog(cx, &rig, |d, _| d.level_enabled()));
+    assert_eq!(sheet_output(cx, &rig), rig.dir.path("tone-copy.flac"));
+
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    let audio = queued(cx, &rig)[0].job.outputs[0].audio.clone();
+    assert_eq!(audio.codec.as_deref(), Some("copy"));
+    assert_eq!((audio.sample_format, audio.compression_level), (None, None));
+}
+
+#[gpui_test]
+fn a_wav_source_offers_copy_into_wav_only(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    assert!(has(cx, rig.window, "sheet-copy"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
+    assert!(!has(cx, rig.window, "sheet-copy"));
+}
+
+#[gpui_test]
+fn the_command_line_preview_follows_container_level_and_copy(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    pick(cx, &rig, "sheet-level", &LEVEL_LABELS, 1);
+    click(cx, rig.window, "sheet-command-copy");
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(
+        copied,
+        Some(format!(
+            "crossfade convert {} -o {} --compression-level 0",
+            rig.dir.path("in.wav"),
+            rig.dir.path("in.flac")
+        ))
+    );
+}
+
+#[gpui_test]
+fn an_unsaveable_extension_is_explained_in_plain_words(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    type_output(cx, &rig, &rig.dir.path("out.ogg"));
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+    let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
+    assert_eq!(
+        problems,
+        [
+            "Crossfade can save .wav, .flac and .aiff files. Ogg files can be opened but not saved yet."
+        ]
+    );
+}
+
+/// What a person does to a freshly opened sheet.
+#[derive(Clone, Copy)]
+enum Act {
+    Container(&'static str),
+    Level(usize),
+    Preset(usize),
+    Format(&'static str),
+    Copy,
+    Type(&'static str),
+}
+
+struct Intent2 {
+    steps: &'static [Act],
+    /// What they would type after `convert <input>`; `@name` is a path in the scratch folder.
+    cli: &'static [&'static str],
+}
+
+const WAV_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Container("FLAC")],
+        cli: &["-o", "@in.flac"],
+    },
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Level(1)],
+        cli: &["-o", "@in.flac", "--compression-level", "0"],
+    },
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Level(9)],
+        cli: &["-o", "@in.flac", "--compression-level", "8"],
+    },
+    Intent2 {
+        steps: &[Act::Preset(5)],
+        cli: &["-o", "@in-s16.flac", "--sample-format", "s16"],
+    },
+    Intent2 {
+        steps: &[Act::Preset(6)],
+        cli: &["-o", "@in-s24.flac", "--sample-format", "s24"],
+    },
+    Intent2 {
+        steps: &[Act::Preset(7)],
+        cli: &["-o", "@in.aiff"],
+    },
+    Intent2 {
+        steps: &[Act::Container("AIFF"), Act::Format("24-bit integer")],
+        cli: &["-o", "@in-s24.aiff", "--sample-format", "s24"],
+    },
+    Intent2 {
+        steps: &[Act::Type("mine.wav"), Act::Container("FLAC")],
+        cli: &["-o", "@mine.flac"],
+    },
+    Intent2 {
+        steps: &[Act::Type("x.flac"), Act::Level(3)],
+        cli: &["-o", "@x.flac", "--compression-level", "2"],
+    },
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Level(6), Act::Container("WAV")],
+        cli: &["-o", "@in-copy.wav"],
+    },
+    Intent2 {
+        steps: &[Act::Copy],
+        cli: &["-o", "@in-copy.wav", "--codec", "copy"],
+    },
+];
+
+const FLAC_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Container("FLAC"), Act::Copy],
+        cli: &["-o", "@in-copy.flac", "--codec", "copy"],
+    },
+    Intent2 {
+        steps: &[Act::Type("out.flac"), Act::Copy],
+        cli: &["-o", "@out.flac", "--codec", "copy"],
+    },
+    Intent2 {
+        steps: &[Act::Preset(1)],
+        cli: &["-o", "@in-s16.wav", "--sample-format", "s16"],
+    },
+];
+
+fn run_intents(cx: &mut TestAppContext, input: &str, bytes: &[u8], intents: &[Intent2]) {
+    let rig = rig_with_file(cx, input, bytes);
+    for (n, intent) in intents.iter().enumerate() {
+        open_sheet(cx, &rig);
+        for act in intent.steps {
+            match *act {
+                Act::Container(label) => pick_label(cx, &rig, "sheet-container", label),
+                Act::Level(ix) => pick(cx, &rig, "sheet-level", &LEVEL_LABELS, ix),
+                Act::Preset(ix) => pick(cx, &rig, "sheet-preset", &PRESET_LABELS, ix),
+                Act::Format(label) => pick_label(cx, &rig, "sheet-format", label),
+                Act::Copy => {
+                    click(cx, rig.window, "sheet-copy");
+                    draw(cx, rig.window);
+                }
+                Act::Type(name) => type_output(cx, &rig, &rig.dir.path(name)),
+            }
+        }
+        click(cx, rig.window, "dialog-ok");
+        step(cx, 3);
+        draw(cx, rig.window);
+
+        let mut args = vec!["convert".to_owned(), rig.dir.path(input)];
+        args.extend(intent.cli.iter().map(|a| match a.strip_prefix('@') {
+            Some(name) => rig.dir.path(name),
+            None => (*a).to_owned(),
+        }));
+        let cli = crossfade_cli::request_from_args(&args)
+            .expect("valid arguments")
+            .expect("a convert request");
+        let built = queued(cx, &rig);
+        assert_eq!(built.len(), n + 1, "{input} intent {n} was not queued");
+        assert_eq!(built[n], cli, "{input} intent {n}: {args:?}");
+    }
+}
+
+#[gpui_test]
+fn wav_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
+    run_intents(cx, "in.wav", &wav, WAV_INTENTS);
+}
+
+#[gpui_test]
+fn flac_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let flac = fixtures::flac(44_100, 2, SampleFormat::S16, 4_410);
+    run_intents(cx, "in.flac", &flac, FLAC_INTENTS);
 }

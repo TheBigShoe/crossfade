@@ -19,11 +19,30 @@ fn probe_path_reports_a_document() {
     let (_, wav) = sine_wav(&s, 100);
     let mut io = MemoryIo::new();
     io.insert("a.wav", wav);
-    let InputState::Probed(doc) = probe_path("a.wav", &mut io, &Limits::default()) else {
+    let InputState::Probed(doc, _) = probe_path("a.wav", &mut io, &Limits::default()) else {
         panic!("expected Probed");
     };
     assert_eq!(doc.format, "wav");
     assert_eq!(doc.streams[0].frames, Some(100));
+}
+
+#[test]
+fn a_probed_entry_keeps_the_first_stream_for_validation() {
+    let s = spec(8000, SampleFormat::S16, ChannelLayout::mono());
+    let (_, wav) = sine_wav(&s, 100);
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", wav);
+    let mut inputs = Inputs::new();
+    inputs.add("a.wav", probe_path("a.wav", &mut io, &Limits::default()));
+    let entry = inputs.selected().unwrap();
+    let stream = entry.stream().expect("a probed file has a stream");
+    assert_eq!(stream.audio.sample_rate(), 8000);
+    assert_eq!(stream.frames, Some(100));
+    assert_eq!(entry.document().unwrap().format, "wav");
+
+    inputs.add("bad", failed());
+    assert!(inputs.selected().unwrap().stream().is_none());
+    assert!(inputs.selected().unwrap().document().is_none());
 }
 
 #[test]
@@ -113,4 +132,53 @@ fn ids_are_never_reused() {
     let a = inputs.add("a", failed());
     inputs.remove(a);
     assert_ne!(inputs.add("a", failed()), a);
+}
+
+/// One Ogg page holding `packet`, marked first and last, with a valid checksum.
+fn ogg_page(packet: &[u8]) -> Vec<u8> {
+    let mut out = b"OggS".to_vec();
+    out.extend([0, 0x03]);
+    out.extend(0i64.to_le_bytes());
+    out.extend(1u32.to_le_bytes());
+    out.extend(0u32.to_le_bytes());
+    out.extend([0; 4]);
+    out.push(1);
+    out.push(u8::try_from(packet.len()).unwrap());
+    out.extend(packet);
+    let mut crc = 0u32;
+    for byte in &out {
+        crc ^= u32::from(*byte) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04c1_1db7
+            } else {
+                crc << 1
+            };
+        }
+    }
+    out[22..26].copy_from_slice(&crc.to_le_bytes());
+    out
+}
+
+#[test]
+fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
+    let mut io = MemoryIo::new();
+    io.insert("song.ogg", ogg_page(b"\x01vorbis\0\0\0\0"));
+    io.insert("odd.ogg", ogg_page(b"mystery!"));
+    let InputState::Failed(vorbis) = probe_path("song.ogg", &mut io, &Limits::default()) else {
+        panic!("expected Failed");
+    };
+    assert_eq!(
+        vorbis,
+        "This Ogg file holds Vorbis audio, which Crossfade cannot open yet. \
+         Only FLAC inside Ogg can be opened."
+    );
+    let InputState::Failed(odd) = probe_path("odd.ogg", &mut io, &Limits::default()) else {
+        panic!("expected Failed");
+    };
+    assert!(
+        odd.starts_with("This Ogg file holds audio Crossfade does not recognise"),
+        "{odd}"
+    );
+    assert!(!vorbis.contains("unsupported:") && !odd.contains("--"));
 }

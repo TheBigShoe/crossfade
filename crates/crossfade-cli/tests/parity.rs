@@ -1,10 +1,67 @@
 //! A convert made on the sheet is the convert a person would type: same
 //! intent through both front doors, same `Request`.
 
-use crossfade_app::inputs::{InputState, Inputs};
-use crossfade_app::sheet::{ConvertSheet, FormatChoice};
+use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
+use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice};
 use crossfade_cli::request_from_args;
-use crossfade_core::SampleFormat;
+use crossfade_core::{Limits, SampleFormat};
+use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
+use crossfade_testkit::memory::MemoryIo;
+
+/// A 16-bit stereo 48 kHz WAV of a few frames.
+fn wav_bytes() -> Vec<u8> {
+    let frames = 64u32;
+    let data_len = frames * 4;
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_len).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&2u16.to_le_bytes());
+    v.extend_from_slice(&48_000u32.to_le_bytes());
+    v.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+    v.extend_from_slice(&4u16.to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_len.to_le_bytes());
+    for i in 0..frames * 2 {
+        v.extend_from_slice(&((i * 97) as i16).to_le_bytes());
+    }
+    v
+}
+
+/// The probed entry for `path`: a WAV, or the engine's own FLAC made from one when the
+/// name ends in `.flac`.
+fn entry_for(path: &str) -> InputEntry {
+    let mut io = MemoryIo::new();
+    if path.ends_with(".flac") {
+        io.insert("seed.wav", wav_bytes());
+        let job = Job {
+            version: Job::VERSION,
+            inputs: vec![JobInput {
+                path: "seed.wav".into(),
+            }],
+            outputs: vec![JobOutput {
+                path: path.into(),
+                audio: AudioSettings::default(),
+            }],
+        };
+        run(
+            &job,
+            &mut io,
+            &Limits::default(),
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+    } else {
+        io.insert(path, wav_bytes());
+    }
+    let mut inputs = Inputs::new();
+    inputs.add(path, probe_path(path, &mut io, &Limits::default()));
+    inputs.entries()[0].clone()
+}
 
 struct Intent {
     input: &'static str,
@@ -76,9 +133,7 @@ fn from_cli(i: &Intent) -> crossfade_app::Request {
 }
 
 fn sheet_for(path: &str) -> ConvertSheet {
-    let mut inputs = Inputs::new();
-    inputs.add(path, InputState::Failed(String::new()));
-    ConvertSheet::for_input(&inputs.entries()[0])
+    ConvertSheet::for_input(&entry_for(path))
 }
 
 fn from_sheet(i: &Intent) -> crossfade_app::Request {
@@ -140,4 +195,144 @@ fn the_default_output_is_what_a_person_would_type() {
     .unwrap()
     .unwrap();
     assert_eq!(sheet.build(&|_| false).unwrap(), typed);
+}
+
+/// One thing a person does on the sheet.
+#[derive(Clone, Copy)]
+enum Do {
+    Container(Container),
+    Preset(&'static str),
+    Format(&'static str),
+    Level(Option<u8>),
+    Copy,
+    Output(&'static str),
+}
+
+struct Row {
+    input: &'static str,
+    steps: &'static [Do],
+    /// What they would type after `convert <input>`.
+    cli: &'static [&'static str],
+}
+
+const ROWS: &[Row] = &[
+    // FLAC output: by container, by each preset, with levels.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Flac)],
+        cli: &["-o", "in.flac"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("flac")],
+        cli: &["-o", "in.flac"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("flac-cd")],
+        cli: &["-o", "in-s16.flac", "--sample-format", "s16"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("flac-24")],
+        cli: &["-o", "in-s24.flac", "--sample-format", "s24"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Flac), Do::Level(Some(0))],
+        cli: &["-o", "in.flac", "--compression-level", "0"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Flac), Do::Level(Some(8))],
+        cli: &["-o", "in.flac", "--compression-level", "8"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("out.flac"), Do::Format("u8"), Do::Level(Some(5))],
+        cli: &[
+            "-o",
+            "out.flac",
+            "--sample-format",
+            "u8",
+            "--compression-level",
+            "5",
+        ],
+    },
+    // AIFF output.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("aiff")],
+        cli: &["-o", "in.aiff"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Aiff), Do::Format("s24")],
+        cli: &["-o", "in-s24.aiff", "--sample-format", "s24"],
+    },
+    // Stream copy.
+    Row {
+        input: "in.flac",
+        steps: &[Do::Container(Container::Flac), Do::Copy],
+        cli: &["-o", "in-copy.flac", "--codec", "copy"],
+    },
+    Row {
+        input: "in.flac",
+        steps: &[Do::Output("out.flac"), Do::Copy],
+        cli: &["-o", "out.flac", "--codec", "copy"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Copy],
+        cli: &["-o", "in-copy.wav", "--codec", "copy"],
+    },
+    // A container chosen after a path was typed changes only the extension.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("my mix.wav"), Do::Container(Container::Flac)],
+        cli: &["-o", "my mix.flac"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[
+            Do::Output("my mix.wav"),
+            Do::Container(Container::Flac),
+            Do::Level(Some(2)),
+            Do::Container(Container::Aiff),
+        ],
+        cli: &["-o", "my mix.aiff"],
+    },
+    // A typed extension picks the container.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.flac")],
+        cli: &["-o", "typed.flac"],
+    },
+];
+
+#[test]
+fn flac_aiff_and_copy_intents_build_what_the_cli_builds() {
+    for row in ROWS {
+        let mut sheet = sheet_for(row.input);
+        for step in row.steps {
+            match *step {
+                Do::Container(c) => sheet.set_container(c),
+                Do::Preset(id) => sheet.apply_preset(id),
+                Do::Format(f) => sheet.set_format(format(f)),
+                Do::Level(l) => sheet.set_level(l),
+                Do::Copy => sheet.set_copy(true),
+                Do::Output(path) => sheet.set_output(path.into()),
+            }
+        }
+        let mut args = vec!["convert", row.input];
+        args.extend(row.cli);
+        let typed = request_from_args(&args).unwrap().unwrap();
+        assert_eq!(
+            sheet.build(&|_| false).unwrap(),
+            typed,
+            "{} {:?}",
+            row.input,
+            row.cli
+        );
+    }
 }

@@ -1,6 +1,7 @@
 //! The opened files and which one is selected.
 
-use crossfade_core::{JobIo, Limits};
+use crate::sheet::plain;
+use crossfade_core::{Error, JobIo, Limits, StreamInfo};
 use crossfade_graph::{ProbeDocument, probe};
 use std::path::Path;
 
@@ -9,7 +10,8 @@ pub struct InputId(u64);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputState {
-    Probed(ProbeDocument),
+    /// The document for display, and the first stream as the engine's `validate` wants it.
+    Probed(ProbeDocument, Option<StreamInfo>),
     Failed(String),
 }
 
@@ -22,12 +24,52 @@ pub struct InputEntry {
     pub state: InputState,
 }
 
+impl InputEntry {
+    pub fn document(&self) -> Option<&ProbeDocument> {
+        match &self.state {
+            InputState::Probed(doc, _) => Some(doc),
+            InputState::Failed(_) => None,
+        }
+    }
+
+    pub fn stream(&self) -> Option<&StreamInfo> {
+        match &self.state {
+            InputState::Probed(_, stream) => stream.as_ref(),
+            InputState::Failed(_) => None,
+        }
+    }
+}
+
 /// Free of `Inputs` so a UI can run it off the main thread.
 pub fn probe_path(path: &str, io: &mut dyn JobIo, limits: &Limits) -> InputState {
     match probe(path, io, limits) {
-        Ok(report) => InputState::Probed(report.document()),
-        Err(e) => InputState::Failed(e.to_string()),
+        Ok(report) => InputState::Probed(report.document(), report.streams.first().cloned()),
+        Err(e) => InputState::Failed(refusal(&e)),
     }
+}
+
+/// An engine refusal as the inspector shows it.
+fn refusal(error: &Error) -> String {
+    let Error::Unsupported { what } = error else {
+        return error.to_string();
+    };
+    let Some(codec) = what
+        .strip_prefix("ogg stream holds ")
+        .and_then(|rest| rest.split(';').next())
+    else {
+        return plain(what);
+    };
+    let holds = match codec {
+        "vorbis" => "Vorbis audio".to_owned(),
+        "opus" => "Opus audio".to_owned(),
+        "theora" => "Theora video".to_owned(),
+        "speex" => "Speex audio".to_owned(),
+        "unknown" => "audio Crossfade does not recognise".to_owned(),
+        other => format!("{other} data"),
+    };
+    format!(
+        "This Ogg file holds {holds}, which Crossfade cannot open yet. Only FLAC inside Ogg can be opened."
+    )
 }
 
 #[derive(Debug, Default)]
