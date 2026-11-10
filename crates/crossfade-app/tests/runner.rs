@@ -275,3 +275,26 @@ fn progress_is_monotonic_and_throttled() {
         })
     );
 }
+
+#[test]
+fn a_worker_that_panics_still_reports_how_the_job_ended() {
+    let d = Dir::new("panic");
+    s16_input(&d);
+    let (tx, rx) = mpsc::channel();
+    // The listener blows up on the first report, taking the worker with it.
+    let mut runner = ThreadRunner::new(Limits::default(), move |id, event| {
+        assert!(event != RunnerEvent::Started, "listener failure");
+        let _ = tx.send((id, event));
+    });
+    let id = job_id();
+    runner.start(
+        id,
+        &request(&d.path("in.wav"), &d.path("out.wav"), None, false),
+        CancelToken::new(),
+    );
+    let events = collect(&rx, id);
+    assert!(
+        matches!(events.as_slice(), [RunnerEvent::Failed { .. }]),
+        "{events:?}"
+    );
+}
