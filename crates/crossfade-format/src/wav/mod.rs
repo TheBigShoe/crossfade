@@ -3,6 +3,8 @@
 mod demux;
 mod mux;
 
+// The AIFF reader streams with the same primitives.
+pub(crate) use demux::{fill, fill_exact, skip};
 pub use demux::WavDemuxer;
 pub use mux::WavMuxer;
 
