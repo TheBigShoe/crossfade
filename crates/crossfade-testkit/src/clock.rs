@@ -16,11 +16,21 @@ impl ManualClock {
         Self::default()
     }
 
-    pub fn advance(&self, _by: Duration) {}
+    pub fn advance(&self, by: Duration) {
+        *self.now.lock().unwrap_or_else(|e| e.into_inner()) += by;
+    }
 
     /// Panics if `to` is earlier than the current time: [`Clock`] promises
     /// monotonic time.
-    pub fn set(&self, _to: Duration) {}
+    pub fn set(&self, to: Duration) {
+        let mut now = self.now.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            to >= *now,
+            "ManualClock cannot go backwards: now {:?}, asked for {to:?}",
+            *now
+        );
+        *now = to;
+    }
 }
 
 impl Clock for ManualClock {
