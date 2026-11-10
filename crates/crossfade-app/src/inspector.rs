@@ -129,8 +129,19 @@ pub fn sections(doc: &ProbeDocument) -> Vec<Section> {
     out
 }
 
-/// `TRACKNUMBER` reads as `Tracknumber`; keys are ASCII by convention.
+/// Keys are ASCII by convention. The common run-together ones get their words
+/// back; anything else is shown in title case.
 fn title_case(key: &str) -> String {
+    const WORDS: &[(&str, &str)] = &[
+        ("TRACKNUMBER", "Track number"),
+        ("TRACKTOTAL", "Track total"),
+        ("DISCNUMBER", "Disc number"),
+        ("DISCTOTAL", "Disc total"),
+        ("ALBUMARTIST", "Album artist"),
+    ];
+    if let Some((_, label)) = WORDS.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+        return (*label).to_owned();
+    }
     let mut chars = key.chars();
     chars.next().map_or_else(String::new, |first| {
         first
