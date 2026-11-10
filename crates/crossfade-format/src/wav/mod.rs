@@ -12,4 +12,6 @@ pub use mux::WavMuxer;
 pub const FRAMES_PER_PACKET: usize = 4096;
 
 #[cfg(test)]
+mod tag_tests;
+#[cfg(test)]
 mod tests;

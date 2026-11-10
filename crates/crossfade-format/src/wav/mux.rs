@@ -1,4 +1,4 @@
-use crossfade_core::{Channel, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo};
+use crossfade_core::{Channel, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags};
 use std::io::SeekFrom;
 
 const FORMAT_PCM: u16 = 1;
@@ -55,7 +55,15 @@ fn mask_for(positions: Option<&[Channel]>) -> u32 {
 }
 
 impl WavMuxer {
-    pub fn new(mut sink: Box<dyn MediaSink>, stream: &StreamInfo) -> Result<Self, Error> {
+    pub fn new(sink: Box<dyn MediaSink>, stream: &StreamInfo) -> Result<Self, Error> {
+        Self::with_tags(sink, stream, &Tags::new())
+    }
+
+    pub fn with_tags(
+        mut sink: Box<dyn MediaSink>,
+        stream: &StreamInfo,
+        _tags: &Tags,
+    ) -> Result<Self, Error> {
         let audio = &stream.audio;
         let format = audio.format();
         if stream.codec != CodecId::pcm_for(format) {
