@@ -14,7 +14,11 @@ fn cfg(channels: u8, bits: u8, level: u8) -> EncoderConfig {
     }
 }
 
-fn chunked(config: EncoderConfig, samples: &[i32], seed: u64) -> (Vec<u8>, crossfade_flac::streaminfo::StreamInfoBlock) {
+fn chunked(
+    config: EncoderConfig,
+    samples: &[i32],
+    seed: u64,
+) -> (Vec<u8>, crossfade_flac::streaminfo::StreamInfoBlock) {
     let mut enc = Encoder::new(config).unwrap();
     let ch = usize::from(config.channels);
     let mut rng = Rng(seed | 1);
