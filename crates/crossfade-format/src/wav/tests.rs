@@ -591,3 +591,308 @@ mod robustness {
         assert!(!d.read_packet(&mut p).unwrap());
     }
 }
+
+mod writer {
+    use super::*;
+    use crate::wav::WavMuxer;
+    use crossfade_core::{Channel, Muxer, StreamInfo};
+    use crossfade_testkit::io::FaultySink;
+    use std::io::{ErrorKind, SeekFrom};
+    use std::sync::{Arc, Mutex};
+
+    /// Sink whose bytes stay readable after the muxer owns it.
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Cursor<Vec<u8>>>>);
+
+    impl crossfade_core::MediaSink for Shared {
+        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+            std::io::Write::write_all(&mut *self.0.lock().unwrap(), buf)
+        }
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            std::io::Seek::seek(&mut *self.0.lock().unwrap(), pos)
+        }
+        fn finish(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Shared {
+        fn bytes(&self) -> Vec<u8> {
+            self.0.lock().unwrap().get_ref().clone()
+        }
+    }
+
+    pub(super) fn info(rate: u32, format: SampleFormat, layout: ChannelLayout) -> StreamInfo {
+        StreamInfo {
+            index: 0,
+            codec: CodecId::pcm_for(format),
+            audio: spec(rate, format, layout),
+            time_base: TimeBase::new(1, i64::from(rate)).unwrap(),
+            frames: None,
+        }
+    }
+
+    fn pkt(data: Vec<u8>) -> Packet {
+        Packet {
+            data,
+            ..Packet::default()
+        }
+    }
+
+    /// Independent parse: (chunk id, body) pairs plus the RIFF size field.
+    fn parse(bytes: &[u8]) -> (u32, Vec<([u8; 4], Vec<u8>)>) {
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        let riff_size = u32_le(&bytes[4..8]);
+        let mut chunks = Vec::new();
+        let mut i = 12;
+        while i < bytes.len() {
+            let id: [u8; 4] = bytes[i..i + 4].try_into().unwrap();
+            let size = u32_le(&bytes[i + 4..i + 8]) as usize;
+            chunks.push((id, bytes[i + 8..i + 8 + size].to_vec()));
+            i += 8 + size + size % 2;
+        }
+        assert_eq!(i, bytes.len(), "no trailing bytes");
+        (riff_size, chunks)
+    }
+
+    fn u32_le(b: &[u8]) -> u32 {
+        u32::from_le_bytes(b[..4].try_into().unwrap())
+    }
+
+    fn u16_le(b: &[u8]) -> u16 {
+        u16::from_le_bytes(b[..2].try_into().unwrap())
+    }
+
+    fn write(stream: &StreamInfo, packets: &[Vec<u8>]) -> Vec<u8> {
+        let sink = Shared::default();
+        let mut m = WavMuxer::new(Box::new(sink.clone()), stream).unwrap();
+        for p in packets {
+            m.write_packet(&pkt(p.clone())).unwrap();
+        }
+        m.finish().unwrap();
+        sink.bytes()
+    }
+
+    #[test]
+    fn plain_header_for_small_integer_stereo() {
+        let s = info(44100, SampleFormat::S16, ChannelLayout::stereo());
+        let pcm = payload(40);
+        let bytes = write(&s, &[pcm.clone()]);
+        let (riff_size, chunks) = parse(&bytes);
+        assert_eq!(chunks.len(), 2);
+        let (id, fmt) = &chunks[0];
+        assert_eq!(id, b"fmt ");
+        assert_eq!(fmt.len(), 16);
+        assert_eq!(u16_le(&fmt[0..]), 1);
+        assert_eq!(u16_le(&fmt[2..]), 2);
+        assert_eq!(u32_le(&fmt[4..]), 44100);
+        assert_eq!(u32_le(&fmt[8..]), 44100 * 4);
+        assert_eq!(u16_le(&fmt[12..]), 4);
+        assert_eq!(u16_le(&fmt[14..]), 16);
+        assert_eq!(chunks[1], (*b"data", pcm));
+        assert_eq!(riff_size as usize, bytes.len() - 8);
+    }
+
+    #[test]
+    fn extensible_header_when_plain_cannot_describe_the_stream() {
+        use Channel::*;
+        let layout = ChannelLayout::from_positions(vec![
+            FrontLeft,
+            FrontRight,
+            FrontCenter,
+            Lfe,
+            SideLeft,
+            SideRight,
+        ])
+        .unwrap();
+        let s = info(48000, SampleFormat::S24, layout);
+        let bytes = write(&s, &[payload(36)]);
+        let (_, chunks) = parse(&bytes);
+        assert_eq!(chunks.len(), 2);
+        let fmt = &chunks[0].1;
+        assert_eq!(fmt.len(), 40);
+        assert_eq!(u16_le(&fmt[0..]), 0xFFFE);
+        assert_eq!(u16_le(&fmt[2..]), 6);
+        assert_eq!(u16_le(&fmt[14..]), 24);
+        assert_eq!(u16_le(&fmt[16..]), 22);
+        assert_eq!(u16_le(&fmt[18..]), 24);
+        assert_eq!(u32_le(&fmt[20..]), 0b110_0000_1111);
+        assert_eq!(u16_le(&fmt[24..]), 1);
+        assert_eq!(
+            fmt[26..],
+            [0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71]
+        );
+    }
+
+    #[test]
+    fn unpositioned_layouts_write_a_zero_mask() {
+        let s = info(
+            8000,
+            SampleFormat::S16,
+            ChannelLayout::unpositioned(3).unwrap(),
+        );
+        let (_, chunks) = parse(&write(&s, &[payload(12)]));
+        assert_eq!(u32_le(&chunks[0].1[20..]), 0);
+    }
+
+    #[test]
+    fn high_rate_or_deep_or_wide_integer_streams_are_extensible() {
+        let cases = [
+            (96000, SampleFormat::S16, ChannelLayout::stereo()),
+            (
+                44100,
+                SampleFormat::U8,
+                ChannelLayout::unpositioned(3).unwrap(),
+            ),
+            (44100, SampleFormat::S32, ChannelLayout::mono()),
+        ];
+        for (rate, f, l) in cases {
+            let (_, chunks) = parse(&write(&info(rate, f, l), &[]));
+            assert_eq!(u16_le(&chunks[0].1[0..]), 0xFFFE, "{rate} {f:?}");
+        }
+        let (_, chunks) = parse(&write(
+            &info(48000, SampleFormat::U8, ChannelLayout::mono()),
+            &[],
+        ));
+        assert_eq!(chunks[0].1.len(), 16);
+    }
+
+    #[test]
+    fn float_gets_an_18_byte_fmt_and_a_fact_chunk() {
+        let s = info(48000, SampleFormat::F32, ChannelLayout::stereo());
+        let bytes = write(&s, &[payload(24), payload(16)]);
+        let (riff_size, chunks) = parse(&bytes);
+        let ids: Vec<_> = chunks.iter().map(|c| c.0).collect();
+        assert_eq!(ids, [*b"fmt ", *b"fact", *b"data"]);
+        let fmt = &chunks[0].1;
+        assert_eq!(fmt.len(), 18);
+        assert_eq!(u16_le(fmt), 3);
+        assert_eq!(u16_le(&fmt[14..]), 32);
+        assert_eq!(u16_le(&fmt[16..]), 0);
+        assert_eq!(u32_le(&chunks[1].1), 5);
+        assert_eq!(chunks[2].1.len(), 40);
+        assert_eq!(riff_size as usize, bytes.len() - 8);
+    }
+
+    #[test]
+    fn odd_data_is_padded_but_the_size_stays_odd() {
+        let s = info(8000, SampleFormat::U8, ChannelLayout::mono());
+        let bytes = write(&s, &[payload(5)]);
+        assert_eq!(bytes.len() % 2, 0);
+        let (riff_size, chunks) = parse(&bytes);
+        assert_eq!(chunks[1].1.len(), 5);
+        assert_eq!(riff_size as usize, bytes.len() - 8);
+        assert_eq!(*bytes.last().unwrap(), 0);
+    }
+
+    #[test]
+    fn positions_the_mask_cannot_order_are_written_as_no_mask() {
+        use Channel::*;
+        // The mask is a set in bit order, so this order would be lost.
+        let layout = ChannelLayout::from_positions(vec![FrontRight, FrontLeft]).unwrap();
+        let s = info(48000, SampleFormat::S32, layout);
+        let (_, chunks) = parse(&write(&s, &[]));
+        assert_eq!(u32_le(&chunks[0].1[20..]), 0);
+    }
+
+    #[test]
+    fn partial_frames_are_malformed() {
+        let s = info(8000, SampleFormat::S16, ChannelLayout::stereo());
+        let mut m = WavMuxer::new(Box::new(Shared::default()), &s).unwrap();
+        assert!(matches!(
+            m.write_packet(&pkt(payload(3))),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn a_codec_that_disagrees_with_the_sample_format_is_refused() {
+        let bad = StreamInfo {
+            codec: CodecId::PcmU8,
+            ..info(8000, SampleFormat::S16, ChannelLayout::mono())
+        };
+        let r = WavMuxer::new(Box::new(Shared::default()), &bad);
+        assert!(matches!(r, Err(Error::Malformed { .. })));
+    }
+
+    struct NullSink;
+
+    impl crossfade_core::MediaSink for NullSink {
+        fn write_all(&mut self, _: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+            Ok(0)
+        }
+        fn finish(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn data_beyond_what_32_bit_sizes_can_hold_is_unsupported() {
+        let s = info(8000, SampleFormat::U8, ChannelLayout::mono());
+        let mut m = WavMuxer::new(Box::new(NullSink), &s).unwrap();
+        let p = pkt(vec![0; 64 << 20]);
+        let mut written = 0u64;
+        let err = loop {
+            match m.write_packet(&p) {
+                Ok(()) => written += p.data.len() as u64,
+                Err(e) => break e,
+            }
+            assert!(written < 5 << 30, "never refused");
+        };
+        assert!(matches!(&err, Error::Unsupported { what } if what.contains("RF64")));
+        // Everything the format can hold was accepted: the header and
+        // `fact`-less chunk framing take the rest of the 32-bit budget.
+        assert!(written > (4u64 << 30) - (128 << 20));
+    }
+
+    #[test]
+    fn sink_errors_surface_as_io() {
+        let s = info(8000, SampleFormat::S16, ChannelLayout::mono());
+        let sink = FaultySink::new(Cursor::new(Vec::new())).fail_after(50, ErrorKind::StorageFull);
+        let mut m = WavMuxer::new(Box::new(sink), &s).unwrap();
+        let err = m.write_packet(&pkt(payload(100))).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Io {
+                kind: ErrorKind::StorageFull,
+                ..
+            }
+        ));
+
+        let sink = FaultySink::new(Cursor::new(Vec::new())).fail_on_finish(ErrorKind::BrokenPipe);
+        let mut m = WavMuxer::new(Box::new(sink), &s).unwrap();
+        m.write_packet(&pkt(payload(4))).unwrap();
+        let err = m.finish().unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Io {
+                kind: ErrorKind::BrokenPipe,
+                ..
+            }
+        ));
+
+        // Failure while writing the header itself.
+        let sink = FaultySink::new(Cursor::new(Vec::new())).fail_after(10, ErrorKind::StorageFull);
+        let err = WavMuxer::new(Box::new(sink), &s).err();
+        assert!(matches!(
+            err,
+            Some(Error::Io {
+                kind: ErrorKind::StorageFull,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn muxed_output_is_read_back_by_the_demuxer() {
+        let s = info(22050, SampleFormat::F64, ChannelLayout::mono());
+        let bytes = write(&s, &[payload(80)]);
+        let mut d = open(bytes).unwrap();
+        assert_eq!(d.streams()[0].frames, Some(10));
+        assert_eq!(drain(&mut d).0.concat_bytes(), payload(80));
+    }
+}
