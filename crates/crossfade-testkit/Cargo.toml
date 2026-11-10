@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 crossfade-core.workspace = true
+libm.workspace = true
 
 [lints]
 workspace = true
