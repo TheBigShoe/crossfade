@@ -1,6 +1,7 @@
 use crossfade_codec::{EncodeOptions, decoder_for, encoder_for};
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Packet, SampleFormat, StreamInfo, TimeBase,
+    AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Packet, SampleFormat, StreamInfo,
+    TimeBase,
 };
 
 #[test]
@@ -47,8 +48,16 @@ fn unsupported_what(r: Result<impl Sized, Error>) -> String {
 #[test]
 fn flac_is_routed_to_stubs_that_say_so() {
     let audio = AudioSpec::new(8000, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
-    let info = StreamInfo::new(0, CodecId::Flac, audio.clone(), TimeBase::new(1, 8000).unwrap());
-    assert_eq!(unsupported_what(decoder_for(&info)), "flac decoding is not built yet");
+    let info = StreamInfo::new(
+        0,
+        CodecId::Flac,
+        audio.clone(),
+        TimeBase::new(1, 8000).unwrap(),
+    );
+    assert_eq!(
+        unsupported_what(decoder_for(&info)),
+        "flac decoding is not built yet"
+    );
     let opts = EncodeOptions {
         compression_level: Some(5),
     };
