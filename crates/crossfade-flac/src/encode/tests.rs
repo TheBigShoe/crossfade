@@ -42,8 +42,16 @@ fn forced(bits: u8, level: u8, mode: ChannelAssignment, samples: &[i32]) {
 fn every_stereo_mode_round_trips_at_every_depth() {
     for mode in [LeftSide, SideRight, MidSide] {
         for bits in [4u8, 8, 16, 24, 31, 32] {
-            let lo = if bits == 32 { i32::MIN } else { -(1 << (bits - 1)) };
-            let hi = if bits == 32 { i32::MAX } else { (1 << (bits - 1)) - 1 };
+            let lo = if bits == 32 {
+                i32::MIN
+            } else {
+                -(1 << (bits - 1))
+            };
+            let hi = if bits == 32 {
+                i32::MAX
+            } else {
+                (1 << (bits - 1)) - 1
+            };
             let mut signals = vec![pseudo(bits, 2 * 300, 11)];
             // Extremes make the side channel as wide as it gets (33 bits at 32-bit depth).
             signals.push((0..200).map(|i| if i % 4 < 2 { lo } else { hi }).collect());
@@ -53,7 +61,7 @@ fn every_stereo_mode_round_trips_at_every_depth() {
             signals.push([hi, lo, lo, hi, hi, hi, lo, lo].to_vec());
             signals.push([1, 0, 0, 1, -1, 0, 0, -1].repeat(9));
             for s in &signals {
-                for level in [0, 5, 8] {
+                for level in [1, 5, 8] {
                     forced(bits, level, mode, s);
                 }
             }

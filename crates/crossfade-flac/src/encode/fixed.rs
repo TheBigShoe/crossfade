@@ -74,6 +74,43 @@ pub(super) fn residual<T: Sample>(x: &[T], order: usize, bps: u32, out: &mut Vec
     !bad
 }
 
+/// log2 in 1/256 bits, piecewise linear between powers of two (error under 0.09 bit).
+fn log2_q8(x: u64) -> u64 {
+    if x == 0 {
+        return 0;
+    }
+    let b = 63 - x.leading_zeros();
+    let frac = ((x << (63 - b)) >> 55) & 0xFF;
+    u64::from(b) * 256 + frac
+}
+
+/// A rough size in 1/256 bits of the best fixed-order coding of `x`, from the mean absolute
+/// residual of each order. Only for ranking stereo modes before a full search.
+pub(super) fn estimate<T: Sample>(x: &[T]) -> u64 {
+    let n = x.len();
+    let mut sums = [0u64; 5];
+    let g = |i: usize| -> i64 { x[i].into() };
+    if n < 5 {
+        sums[0] = (0..n).map(|i| g(i).unsigned_abs()).sum();
+    } else {
+        for i in 4..n {
+            let (a, b, c, d, e) = (g(i), g(i - 1), g(i - 2), g(i - 3), g(i - 4));
+            let d1 = a - b;
+            let d2 = d1 - (b - c);
+            let d3 = d2 - (b - c - (c - d));
+            let d4 = d3 - (b - c - (c - d) - (c - d - (d - e)));
+            for (sum, v) in sums.iter_mut().zip([a, d1, d2, d3, d4]) {
+                *sum += v.unsigned_abs();
+            }
+        }
+    }
+    let count = n as u64;
+    sums.iter()
+        .map(|&s| count * (log2_q8(s + count) - log2_q8(count)))
+        .min()
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use crate::frame::{self, ChannelAssignment, FrameHeader};
 use crate::md5::Md5;
 use crate::streaminfo::StreamInfoBlock;
-use analyze::{Analyzer, Level, Plan};
+use analyze::{Analyzer, Level, Plan, Stereo, is_constant};
 use bitsink::BitSink;
 
 /// What to encode and how hard to try.
@@ -63,8 +63,16 @@ pub struct Encoder {
     md5_bytes: Vec<u8>,
     /// One block, deinterleaved.
     planes: Vec<Vec<i32>>,
+    /// Mid and side of a stereo block; the side of a 32-bit stream needs 33 bits.
+    mid: Vec<i32>,
+    side32: Vec<i32>,
+    side64: Vec<i64>,
+    /// One plan per channel; a stereo stream has four: left, right, mid, side.
     slots: Vec<Plan>,
+    level: Level,
     analyzer: Analyzer,
+    #[cfg(test)]
+    force: Option<ChannelAssignment>,
 }
 
 impl Encoder {
@@ -96,8 +104,20 @@ impl Encoder {
             md5: Md5::new(),
             md5_bytes: Vec::with_capacity(level.block * channels * 4),
             planes: vec![vec![0; level.block]; channels],
-            slots: (0..channels).map(|_| Plan::new(level.block)).collect(),
+            mid: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
+            side32: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
+            side64: Vec::with_capacity(if channels == 2 && config.bits_per_sample == 32 {
+                level.block
+            } else {
+                0
+            }),
+            slots: (0..if channels == 2 { 4 } else { channels })
+                .map(|_| Plan::new(level.block))
+                .collect(),
+            level,
             analyzer: Analyzer::new(level),
+            #[cfg(test)]
+            force: None,
         })
     }
 
@@ -169,20 +189,140 @@ impl Encoder {
         self.md5.update(&self.md5_bytes);
     }
 
+    /// Plans one channel of the block into `slot`: a plane, or for a stereo stream slot 2
+    /// is the mid and slot 3 the side channel.
+    fn analyze_slot(&mut self, slot: usize, n: usize, bps: u32) {
+        let Self {
+            analyzer,
+            slots,
+            planes,
+            mid,
+            side32,
+            side64,
+            ..
+        } = self;
+        let plan = &mut slots[slot];
+        if slot < planes.len() {
+            analyzer.analyze(&planes[slot][..n], bps, plan);
+        } else if slot == 2 {
+            analyzer.analyze(&mid[..n], bps, plan);
+        } else if bps < 32 {
+            analyzer.analyze(&side32[..n], bps + 1, plan);
+        } else {
+            analyzer.analyze(&side64[..n], 33, plan);
+        }
+    }
+
+    fn estimate_slot(&self, slot: usize, n: usize, bps: u32) -> u64 {
+        if slot < self.planes.len() {
+            fixed::estimate(&self.planes[slot][..n])
+        } else if slot == 2 {
+            fixed::estimate(&self.mid[..n])
+        } else if bps < 32 {
+            fixed::estimate(&self.side32[..n])
+        } else {
+            fixed::estimate(&self.side64[..n])
+        }
+    }
+
+    /// Picks the channel assignment of a stereo block and plans the two channels it uses.
+    fn analyze_stereo(&mut self, n: usize, bps: u32) -> ChannelAssignment {
+        self.mid.clear();
+        self.side32.clear();
+        self.side64.clear();
+        for (&l, &r) in self.planes[0][..n].iter().zip(&self.planes[1][..n]) {
+            let (l, r) = (i64::from(l), i64::from(r));
+            self.mid.push(((l + r) >> 1) as i32);
+            if bps < 32 {
+                self.side32.push((l - r) as i32);
+            } else {
+                self.side64.push(l - r);
+            }
+        }
+        // Slots: left, right, mid, side.
+        let modes = [
+            (ChannelAssignment::Independent(2), [0, 1]),
+            (ChannelAssignment::LeftSide, [0, 3]),
+            (ChannelAssignment::SideRight, [3, 1]),
+            (ChannelAssignment::MidSide, [2, 3]),
+        ];
+        #[cfg(test)]
+        if let Some(mode) = self.force {
+            let pair = modes.iter().find(|m| m.0 == mode).map_or([0, 1], |m| m.1);
+            for slot in pair {
+                self.analyze_slot(slot, n, bps);
+            }
+            return mode;
+        }
+        let pick = |cost: &[u64; 4]| {
+            let mut best = 0;
+            for m in 1..modes.len() {
+                let total = |i: usize| cost[modes[i].1[0]] + cost[modes[i].1[1]];
+                if total(m) < total(best) {
+                    best = m;
+                }
+            }
+            best
+        };
+        let mut cost = [0u64; 4];
+        let best = if self.level.stereo == Stereo::Exhaustive {
+            for (slot, c) in cost.iter_mut().enumerate() {
+                self.analyze_slot(slot, n, bps);
+                *c = self.slots[slot].bits;
+            }
+            pick(&cost)
+        } else {
+            for (slot, c) in cost.iter_mut().enumerate() {
+                *c = self.estimate_slot(slot, n, bps);
+            }
+            let best = pick(&cost);
+            for slot in modes[best].1 {
+                self.analyze_slot(slot, n, bps);
+            }
+            if best != 0 {
+                // The estimate chose; exact bits decide against plain coding.
+                let [a, b] = modes[best].1;
+                let total = self.slots[a].bits + self.slots[b].bits;
+                let plain: u64 = (0..2)
+                    .map(|c| {
+                        if is_constant(&self.planes[c][..n]) {
+                            8 + u64::from(bps)
+                        } else {
+                            8 + n as u64 * u64::from(bps)
+                        }
+                    })
+                    .sum();
+                if total > plain {
+                    for c in 0..2 {
+                        self.analyzer
+                            .trivial(&self.planes[c][..n], bps, &mut self.slots[c]);
+                    }
+                    return modes[0].0;
+                }
+            }
+            best
+        };
+        modes[best].0
+    }
+
     fn write_frame(&mut self, n: usize, out: &mut Vec<u8>) {
         let bps = u32::from(self.config.bits_per_sample);
         let channels = usize::from(self.config.channels);
-        for c in 0..channels {
-            self.analyzer
-                .analyze(&self.planes[c][..n], bps, &mut self.slots[c]);
-        }
+        let assignment = if channels == 2 && self.level.stereo != Stereo::Off {
+            self.analyze_stereo(n, bps)
+        } else {
+            for c in 0..channels {
+                self.analyze_slot(c, n, bps);
+            }
+            ChannelAssignment::Independent(self.config.channels)
+        };
         let start = out.len();
         frame::write_header(
             &FrameHeader {
                 variable_block_size: false,
                 block_size: n as u32,
                 sample_rate: Some(self.config.sample_rate),
-                channels: ChannelAssignment::Independent(self.config.channels),
+                channels: assignment,
                 bits_per_sample: Some(self.config.bits_per_sample),
                 number: self.frame_number,
                 header_len: 0,
@@ -190,12 +330,32 @@ impl Encoder {
             out,
         );
         let mut sink = BitSink::new(out);
-        for c in 0..channels {
-            write::write_subframe(&mut sink, &self.slots[c], &self.planes[c][..n]);
+        let slots: [usize; 8] = match assignment {
+            ChannelAssignment::Independent(_) => [0, 1, 2, 3, 4, 5, 6, 7],
+            ChannelAssignment::LeftSide => [0, 3, 0, 0, 0, 0, 0, 0],
+            ChannelAssignment::SideRight => [3, 1, 0, 0, 0, 0, 0, 0],
+            ChannelAssignment::MidSide => [2, 3, 0, 0, 0, 0, 0, 0],
+        };
+        for &slot in &slots[..usize::from(assignment.channels())] {
+            let plan = &self.slots[slot];
+            if slot < channels {
+                write::write_subframe(&mut sink, plan, &self.planes[slot][..n]);
+            } else if slot == 2 {
+                write::write_subframe(&mut sink, plan, &self.mid[..n]);
+            } else if bps < 32 {
+                write::write_subframe(&mut sink, plan, &self.side32[..n]);
+            } else {
+                write::write_subframe(&mut sink, plan, &self.side64[..n]);
+            }
         }
         sink.finish();
         let crc = crc16(&out[start..]);
         out.extend_from_slice(&crc.to_be_bytes());
+    }
+
+    #[cfg(test)]
+    fn force_stereo(&mut self, mode: ChannelAssignment) {
+        self.force = Some(mode);
     }
 
     fn info(&self) -> StreamInfoBlock {

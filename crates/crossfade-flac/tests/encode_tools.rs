@@ -62,7 +62,7 @@ fn level_zero_codes_channels_independently() {
 #[test]
 fn a_noisy_tone_beats_raw_clearly() {
     let samples: Vec<i32> = (0..4096 * 2)
-        .map(|i| ((i / 2) as f64 * 0.05).sin().mul_add(20000.0, 0.0) as i32 + (i as i32 % 7))
+        .map(|i| (f64::from(i / 2) * 0.05).sin().mul_add(20000.0, 0.0) as i32 + i % 7)
         .collect();
     let e = round_trip(cfg(2, 16, 0), &samples, 0);
     assert!(

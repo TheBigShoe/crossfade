@@ -125,7 +125,7 @@ impl RiceSearch {
         // 5-bit parameters only pay when some partition wants a parameter above 14; by
         // convexity that shows in the finest partitions.
         let wants_more = (0..parts).any(|j| {
-            self.kstar[j] as u32 == KMAX4 && self.cost(u, j, KMAX4 + 1) < self.cost(u, j, KMAX4)
+            u32::from(self.kstar[j]) == KMAX4 && self.cost(u, j, KMAX4 + 1) < self.cost(u, j, KMAX4)
         });
         if wants_more {
             let mut other = out.clone();
@@ -142,7 +142,7 @@ impl RiceSearch {
         let (pbits, kmax) = if method5 { (5, KMAX5) } else { (4, KMAX4) };
         for j in 0..parts {
             let len = (self.bounds[j + 1] - self.bounds[j]) as u64;
-            let mean = if len == 0 { 0 } else { self.sum[j] / len };
+            let mean = self.sum[j].checked_div(len).unwrap_or(0);
             // The optimum is near log2 of the mean; convexity makes a downhill walk exact.
             let mut k = (64 - mean.leading_zeros()).saturating_sub(1).min(kmax);
             loop {
@@ -268,7 +268,7 @@ mod tests {
             let (pbits, kmax) = if method5 { (5u64, 30) } else { (4, 14) };
             for po in 0..=max_order.min(8) {
                 let parts = 1usize << po;
-                if block % parts != 0 || (block >> po) <= pred {
+                if !block.is_multiple_of(parts) || (block >> po) <= pred {
                     continue;
                 }
                 let size = block >> po;
