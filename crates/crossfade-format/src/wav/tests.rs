@@ -168,3 +168,156 @@ fn packet_buffer_is_reused() {
     assert_eq!(pkt.data.as_ptr(), ptr);
     assert!(!d.read_packet(&mut pkt).unwrap());
 }
+
+fn ext_body(fmt: &Fmt, valid: u16, mask: u32, sub_tag: u16) -> Vec<u8> {
+    let mut b = fmt.base(0xFFFE);
+    b.extend_from_slice(&22u16.to_le_bytes());
+    b.extend_from_slice(&valid.to_le_bytes());
+    b.extend_from_slice(&mask.to_le_bytes());
+    b.extend_from_slice(&sub_tag.to_le_bytes());
+    // Rest of the KSDATAFORMAT_SUBTYPE GUID.
+    b.extend_from_slice(&[
+        0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+    ]);
+    b
+}
+
+fn ext_file(fmt: &Fmt, valid: u16, mask: u32, sub_tag: u16, pcm: &[u8]) -> Vec<u8> {
+    riff(&[
+        chunk(b"fmt ", &ext_body(fmt, valid, mask, sub_tag)),
+        chunk(b"data", pcm),
+    ])
+}
+
+#[test]
+fn list_chunk_before_data_is_skipped() {
+    let fmt = Fmt::new(TAG_PCM, 1, 8000, 16);
+    let pcm = payload(8);
+    let bytes = riff(&[
+        chunk(b"fmt ", &fmt.body()),
+        chunk(b"LIST", b"INFOISFT\x05\0\0\0Lavf\0"),
+        chunk(b"data", &pcm),
+    ]);
+    let mut d = open(bytes).unwrap();
+    assert_eq!(drain(&mut d), (vec![(0, 4, pcm)], None));
+}
+
+#[test]
+fn odd_sized_chunk_is_followed_by_a_pad_byte() {
+    let fmt = Fmt::new(TAG_PCM, 1, 8000, 8);
+    let pcm = payload(6);
+    let bytes = riff(&[
+        chunk(b"junk", b"abc"),
+        chunk(b"fmt ", &fmt.body()),
+        chunk(b"fact", &[1, 2, 3, 4, 5]),
+        chunk(b"data", &pcm),
+    ]);
+    let mut d = open(bytes).unwrap();
+    assert_eq!(drain(&mut d), (vec![(0, 6, pcm)], None));
+}
+
+#[test]
+fn chunks_after_data_are_ignored() {
+    let fmt = Fmt::new(TAG_PCM, 1, 8000, 8);
+    let pcm = payload(5);
+    let bytes = riff(&[
+        chunk(b"fmt ", &fmt.body()),
+        chunk(b"data", &pcm),
+        chunk(b"LIST", b"whatever"),
+        b"garbage".to_vec(),
+    ]);
+    let mut d = open(bytes).unwrap();
+    assert_eq!(drain(&mut d), (vec![(0, 5, pcm)], None));
+}
+
+#[test]
+fn extensible_with_a_usable_mask_gives_positions() {
+    use crossfade_core::Channel::*;
+    // FL FR FC LFE BL BR: 0x3F, in bit order.
+    let fmt = Fmt::new(TAG_PCM, 6, 48000, 24);
+    let bytes = ext_file(&fmt, 24, 0x3F, 1, &payload(18));
+    let d = open(bytes).unwrap();
+    let want = ChannelLayout::from_positions(vec![
+        FrontLeft,
+        FrontRight,
+        FrontCenter,
+        Lfe,
+        BackLeft,
+        BackRight,
+    ])
+    .unwrap();
+    assert_eq!(d.streams()[0].audio.layout(), &want);
+    assert_eq!(d.streams()[0].audio.format(), SampleFormat::S24);
+    // Side channels sit at bits 9 and 10.
+    let fmt = Fmt::new(TAG_PCM, 2, 48000, 16);
+    let d = open(ext_file(&fmt, 16, (1 << 9) | (1 << 10), 1, &[])).unwrap();
+    let want = ChannelLayout::from_positions(vec![SideLeft, SideRight]).unwrap();
+    assert_eq!(d.streams()[0].audio.layout(), &want);
+}
+
+#[test]
+fn extensible_float_uses_the_subformat_tag() {
+    let fmt = Fmt::new(0xFFFE, 2, 48000, 32);
+    let d = open(ext_file(&fmt, 32, 3, TAG_FLOAT, &payload(8))).unwrap();
+    assert_eq!(d.streams()[0].audio.format(), SampleFormat::F32);
+}
+
+#[test]
+fn extensible_without_a_usable_mask_is_unpositioned() {
+    let fmt = Fmt::new(TAG_PCM, 2, 48000, 16);
+    for mask in [0u32, 1, 7, 1 << 20 | 1 << 21, 0x80000003] {
+        let d = open(ext_file(&fmt, 16, mask, 1, &[])).unwrap();
+        assert_eq!(
+            d.streams()[0].audio.layout(),
+            &ChannelLayout::unpositioned(2).unwrap(),
+            "mask {mask:#x}"
+        );
+    }
+}
+
+#[test]
+fn streaming_size_reads_until_end_of_input() {
+    let fmt = Fmt::new(TAG_PCM, 2, 8000, 16);
+    let pcm = payload(4 * 3 + 2);
+    let bytes = riff(&[
+        chunk(b"fmt ", &fmt.body()),
+        raw_chunk(b"data", 0xFFFF_FFFF, &pcm),
+    ]);
+    let mut d = open(bytes).unwrap();
+    assert_eq!(d.streams()[0].frames, None);
+    // The trailing half frame is dropped.
+    assert_eq!(drain(&mut d), (vec![(0, 3, pcm[..12].to_vec())], None));
+}
+
+#[test]
+fn streaming_size_spans_several_packets() {
+    let fmt = Fmt::new(TAG_PCM, 1, 8000, 8);
+    let frames = FRAMES_PER_PACKET + 10;
+    let pcm = payload(frames);
+    let bytes = riff(&[
+        chunk(b"fmt ", &fmt.body()),
+        raw_chunk(b"data", 0xFFFF_FFFF, &pcm),
+    ]);
+    let (packets, err) = drain(&mut open(bytes).unwrap());
+    assert_eq!(err, None);
+    let n = FRAMES_PER_PACKET;
+    assert_eq!(packets.len(), 2);
+    assert_eq!((packets[1].0, packets[1].1), (n as i64, 10));
+}
+
+#[test]
+fn empty_data_is_an_empty_stream() {
+    let fmt = Fmt::new(TAG_PCM, 2, 8000, 16);
+    let mut d = open(simple(&fmt, &[])).unwrap();
+    assert_eq!(d.streams()[0].frames, Some(0));
+    assert_eq!(drain(&mut d), (vec![], None));
+}
+
+#[test]
+fn trailing_partial_frame_in_a_sized_chunk_is_ignored() {
+    let fmt = Fmt::new(TAG_PCM, 2, 8000, 16);
+    let pcm = payload(4 * 2 + 3);
+    let mut d = open(simple(&fmt, &pcm)).unwrap();
+    assert_eq!(d.streams()[0].frames, Some(2));
+    assert_eq!(drain(&mut d), (vec![(0, 2, pcm[..8].to_vec())], None));
+}
