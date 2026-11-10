@@ -56,7 +56,10 @@ pub mod prelude {
     pub use gpui_kit::component::button::{Button, ButtonVariants};
     pub use gpui_kit::component::dialog::{Cancel, Confirm, DialogFooter};
     pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
+    // gpui-kit's theme file types, which the theme bridge fills.
+    pub use gpui_kit::component::highlighter::HighlightThemeStyle;
     pub use gpui_kit::component::{
         ActiveTheme, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex, v_flex,
     };
+    pub use gpui_kit::component::{ThemeConfig, ThemeConfigColors};
 }
