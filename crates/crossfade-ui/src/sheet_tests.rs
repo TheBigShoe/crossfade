@@ -3,7 +3,10 @@
 use crossfade_app::Request;
 
 use crate::prelude::*;
-use crate::test_support::{Rig, add_paths, click, disabled, draw, has, open_rig, step};
+use crate::test_support::{
+    FORMAT_LABELS, PRESET_LABELS, Rig, add_paths, click, disabled, draw, has, open_rig, open_sheet,
+    pick, step, type_output,
+};
 
 /// A rig with `in.wav` opened and selected.
 fn rig_with_input(cx: &mut TestAppContext) -> Rig {
@@ -13,12 +16,6 @@ fn rig_with_input(cx: &mut TestAppContext) -> Rig {
     rig
 }
 
-fn open_sheet(cx: &mut TestAppContext, rig: &Rig) {
-    click(cx, rig.window, "toolbar-convert");
-    step(cx, 3);
-    draw(cx, rig.window);
-}
-
 fn sheet_output(cx: &mut TestAppContext, rig: &Rig) -> String {
     rig.workspace.read_with(cx, |w, cx| {
         w.convert_dialog()
@@ -26,54 +23,6 @@ fn sheet_output(cx: &mut TestAppContext, rig: &Rig) -> String {
             .read(cx)
             .output(cx)
     })
-}
-
-const PRESET_LABELS: [&str; 4] = ["Same as source", "16-bit (CD)", "24-bit", "32-bit float"];
-const FORMAT_LABELS: [&str; 7] = [
-    "Same as source",
-    "8-bit unsigned",
-    "16-bit integer",
-    "24-bit integer",
-    "32-bit integer",
-    "32-bit float",
-    "64-bit float",
-];
-
-/// Pick item `ix` of the select called `id` with the keyboard, as a user can: the select
-/// shows its popup rows lazily, so arrow keys are the dependable way in.
-fn pick(cx: &mut TestAppContext, rig: &Rig, id: &'static str, labels: &[&str], ix: usize) {
-    let shown = rig.workspace.read_with(cx, |w, cx| {
-        let dialog = w.convert_dialog().expect("the sheet is open").read(cx);
-        match id {
-            "sheet-preset" => dialog.preset_label(cx),
-            _ => Some(dialog.format_label(cx)),
-        }
-    });
-    let at = shown.and_then(|text| labels.iter().position(|l| *l == text));
-    cx.update_window(rig.window, |_, window, cx| {
-        window.within(id).click("input", cx);
-        match at {
-            Some(at) if ix >= at => (0..ix - at).for_each(|_| window.press("down", cx)),
-            Some(at) => (0..at - ix).for_each(|_| window.press("up", cx)),
-            None => (0..=ix).for_each(|_| window.press("down", cx)),
-        }
-        window.press("enter", cx);
-    })
-    .expect("open");
-    step(cx, 3);
-    draw(cx, rig.window);
-}
-
-/// Replace the output path the way a user does: focus the field, select all, type.
-fn type_output(cx: &mut TestAppContext, rig: &Rig, path: &str) {
-    click(cx, rig.window, "sheet-output");
-    cx.update_window(rig.window, |_, window, cx| {
-        window.press("secondary-a", cx);
-        window.input(path, cx);
-    })
-    .expect("open");
-    cx.run_until_parked();
-    draw(cx, rig.window);
 }
 
 fn queued(cx: &mut TestAppContext, rig: &Rig) -> Vec<Request> {

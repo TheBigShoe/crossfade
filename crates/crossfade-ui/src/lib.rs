@@ -14,6 +14,8 @@ pub mod workspace;
 #[cfg(test)]
 mod files_tests;
 #[cfg(test)]
+mod gate;
+#[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
 mod sheet_tests;

@@ -45,6 +45,22 @@ impl TempDir {
         self.write(name, &wav_s16(rate, channels, frames))
     }
 
+    /// A mono 16-bit WAV that claims `frames` frames of silence, backed by a sparse file.
+    pub(crate) fn write_sparse_wav(&self, name: &str, rate: u32, frames: u32) -> String {
+        let path = self.path(name);
+        let header = wav_s16(rate, 1, 0);
+        let data_len = frames * 2;
+        let mut bytes = header[..40].to_vec();
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        std::fs::write(&path, bytes).expect("write the header");
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("reopen");
+        file.set_len(44 + u64::from(data_len)).expect("extend");
+        path
+    }
+
     pub(crate) fn listing(&self) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(&self.0)
             .expect("read the scratch directory")
@@ -204,4 +220,65 @@ pub(crate) fn press(cx: &mut TestAppContext, window: AnyWindowHandle, keys: &str
     cx.update_window(window, |_, window, cx| window.press(keys, cx))
         .expect("the window is open");
     cx.run_until_parked();
+}
+
+pub(crate) fn open_sheet(cx: &mut TestAppContext, rig: &Rig) {
+    click(cx, rig.window, "toolbar-convert");
+    step(cx, 3);
+    draw(cx, rig.window);
+}
+
+pub(crate) const PRESET_LABELS: [&str; 4] =
+    ["Same as source", "16-bit (CD)", "24-bit", "32-bit float"];
+pub(crate) const FORMAT_LABELS: [&str; 7] = [
+    "Same as source",
+    "8-bit unsigned",
+    "16-bit integer",
+    "24-bit integer",
+    "32-bit integer",
+    "32-bit float",
+    "64-bit float",
+];
+
+/// Pick item `ix` of the select called `id` with the keyboard, as a user can: the select
+/// shows its popup rows lazily, so arrow keys are the dependable way in.
+pub(crate) fn pick(
+    cx: &mut TestAppContext,
+    rig: &Rig,
+    id: &'static str,
+    labels: &[&str],
+    ix: usize,
+) {
+    let shown = rig.workspace.read_with(cx, |w, cx| {
+        let dialog = w.convert_dialog().expect("the sheet is open").read(cx);
+        match id {
+            "sheet-preset" => dialog.preset_label(cx),
+            _ => Some(dialog.format_label(cx)),
+        }
+    });
+    let at = shown.and_then(|text| labels.iter().position(|l| *l == text));
+    cx.update_window(rig.window, |_, window, cx| {
+        window.within(id).click("input", cx);
+        match at {
+            Some(at) if ix >= at => (0..ix - at).for_each(|_| window.press("down", cx)),
+            Some(at) => (0..at - ix).for_each(|_| window.press("up", cx)),
+            None => (0..=ix).for_each(|_| window.press("down", cx)),
+        }
+        window.press("enter", cx);
+    })
+    .expect("open");
+    step(cx, 3);
+    draw(cx, rig.window);
+}
+
+/// Replace the output path the way a user does: focus the field, select all, type.
+pub(crate) fn type_output(cx: &mut TestAppContext, rig: &Rig, path: &str) {
+    click(cx, rig.window, "sheet-output");
+    cx.update_window(rig.window, |_, window, cx| {
+        window.press("secondary-a", cx);
+        window.input(path, cx);
+    })
+    .expect("open");
+    cx.run_until_parked();
+    draw(cx, rig.window);
 }
