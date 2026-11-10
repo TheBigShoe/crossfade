@@ -6,7 +6,12 @@ use std::process::ExitCode;
 
 /// An FFmpeg-class audio/video tool in pure Rust.
 #[derive(Parser)]
-#[command(name = "crossfade", version, arg_required_else_help = true)]
+#[command(
+    name = "crossfade",
+    bin_name = "crossfade",
+    version,
+    arg_required_else_help = true
+)]
 struct Cli {}
 
 fn main() -> ExitCode {
