@@ -186,4 +186,14 @@ mod tests {
             "crossfade convert '' -o x.wav"
         );
     }
+
+    #[test]
+    fn a_codec_or_compression_level_has_no_spelling_yet() {
+        let mut with_codec = request("a.wav", "b.flac", None, false);
+        with_codec.job.outputs[0].audio.codec = Some("flac".into());
+        assert_eq!(convert_args(&with_codec), Err(NotExpressible));
+        let mut with_level = request("a.wav", "b.flac", None, false);
+        with_level.job.outputs[0].audio.compression_level = Some(5);
+        assert_eq!(command_line(&with_level), Err(NotExpressible));
+    }
 }

@@ -1,7 +1,7 @@
 mod common;
 
 use common::{data_chunk, job, sine_wav, spec};
-use crossfade_core::{ChannelLayout, Error, JobIo, Limits, SampleFormat};
+use crossfade_core::{ChannelLayout, Error, Limits, SampleFormat};
 use crossfade_graph::{CancelToken, Event, Job, Pipeline, run};
 use crossfade_testkit::memory::MemoryIo;
 
