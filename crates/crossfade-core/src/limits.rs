@@ -1,3 +1,35 @@
+use crate::Error;
+
+/// Caps that untrusted input must not be able to push past.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub max_alloc_bytes: usize,
+    pub max_nesting_depth: usize,
+    pub max_packet_bytes: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_alloc_bytes: 256 << 20,
+            max_nesting_depth: 32,
+            max_packet_bytes: 16 << 20,
+        }
+    }
+}
+
+impl Limits {
+    pub fn check_alloc(&self, bytes: usize) -> Result<(), Error> {
+        if bytes > self.max_alloc_bytes {
+            return Err(Error::AllocLimitExceeded {
+                requested: bytes,
+                max: self.max_alloc_bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Error, Limits};

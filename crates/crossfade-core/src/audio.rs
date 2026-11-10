@@ -1,3 +1,148 @@
+use crate::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SampleFormat {
+    U8,
+    S16,
+    S24,
+    S32,
+    F32,
+    F64,
+}
+
+impl SampleFormat {
+    pub fn bytes_per_sample(self) -> usize {
+        match self {
+            Self::U8 => 1,
+            Self::S16 => 2,
+            Self::S24 => 3,
+            Self::S32 | Self::F32 => 4,
+            Self::F64 => 8,
+        }
+    }
+
+    pub fn bits(self) -> usize {
+        self.bytes_per_sample() * 8
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, Self::F32 | Self::F64)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Channel {
+    FrontLeft,
+    FrontRight,
+    FrontCenter,
+    Lfe,
+    BackLeft,
+    BackRight,
+    SideLeft,
+    SideRight,
+}
+
+/// Either an ordered list of distinct speaker positions, or just a count
+/// when the source does not say where the channels go.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChannelLayout {
+    positions: Option<Vec<Channel>>,
+    count: u16,
+}
+
+impl ChannelLayout {
+    pub fn mono() -> Self {
+        Self {
+            positions: Some(vec![Channel::FrontCenter]),
+            count: 1,
+        }
+    }
+
+    pub fn stereo() -> Self {
+        Self {
+            positions: Some(vec![Channel::FrontLeft, Channel::FrontRight]),
+            count: 2,
+        }
+    }
+
+    pub fn from_positions(positions: Vec<Channel>) -> Result<Self, Error> {
+        if positions.is_empty() {
+            return Err(Error::EmptyChannelLayout);
+        }
+        for (i, c) in positions.iter().enumerate() {
+            if positions[..i].contains(c) {
+                return Err(Error::DuplicateChannel(*c));
+            }
+        }
+        // Distinct positions of a small enum: the count always fits.
+        let count = u16::try_from(positions.len()).map_err(|_| Error::Overflow)?;
+        Ok(Self {
+            positions: Some(positions),
+            count,
+        })
+    }
+
+    pub fn unpositioned(count: u16) -> Result<Self, Error> {
+        if count == 0 {
+            return Err(Error::EmptyChannelLayout);
+        }
+        Ok(Self {
+            positions: None,
+            count,
+        })
+    }
+
+    pub fn channels(&self) -> u16 {
+        self.count
+    }
+
+    pub fn positions(&self) -> Option<&[Channel]> {
+        self.positions.as_deref()
+    }
+}
+
+/// Fields are private so a spec can only exist in a valid state.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AudioSpec {
+    sample_rate: u32,
+    format: SampleFormat,
+    layout: ChannelLayout,
+}
+
+impl AudioSpec {
+    pub fn new(
+        sample_rate: u32,
+        format: SampleFormat,
+        layout: ChannelLayout,
+    ) -> Result<Self, Error> {
+        if sample_rate == 0 {
+            return Err(Error::ZeroSampleRate);
+        }
+        Ok(Self {
+            sample_rate,
+            format,
+            layout,
+        })
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn format(&self) -> SampleFormat {
+        self.format
+    }
+
+    pub fn layout(&self) -> &ChannelLayout {
+        &self.layout
+    }
+
+    /// At most `u16::MAX * 8`, so the product cannot overflow `usize`.
+    pub fn bytes_per_frame(&self) -> usize {
+        usize::from(self.layout.channels()) * self.format.bytes_per_sample()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{AudioSpec, Channel, ChannelLayout, Error, SampleFormat};
