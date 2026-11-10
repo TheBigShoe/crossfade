@@ -186,6 +186,9 @@ impl ConvertDialog {
             if input.value() != path {
                 input.set_value(path, window, cx);
             }
+            // A path longer than the field shows its end, where the file name is; the
+            // input scrolls back to the start on `set_value`.
+            input.set_scroll_offset(point(px(-1_000_000.), px(0.)), cx);
         });
         let preset = PRESETS
             .iter()
@@ -258,6 +261,7 @@ impl Render for ConvertDialog {
         v_flex()
             .id("convert-sheet")
             .gap_3()
+            .pt_2()
             .child(
                 self.row(
                     "Preset",

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossfade_app::queue::RunnerEvent;
+use crossfade_ui::config::{self, Config, ConfigPiece};
 use crossfade_ui::prelude::gpui_test::TestWindowExt;
 use crossfade_ui::prelude::*;
 use crossfade_ui::scripted::Script;
@@ -136,6 +137,15 @@ const SCENES: &[Scene] = &[
         },
     },
     Scene {
+        file: "10-settings-problem-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.break_settings();
+        },
+    },
+    Scene {
         file: "09-narrow-900x600-dark.png",
         size: NARROW,
         drive: |stage| {
@@ -178,6 +188,11 @@ impl Scratch {
 
     fn path(&self, name: &str) -> String {
         self.0.join(name).to_string_lossy().into_owned()
+    }
+
+    /// The scene's own config directory: the real one is never read.
+    fn config(&self) -> PathBuf {
+        self.0.join("config")
     }
 }
 
@@ -227,9 +242,14 @@ impl Stage {
         );
         let (width, height) = scene.size;
         let (script, options) = Script::options();
+        let dir = Scratch::new(scene.file.trim_end_matches(".png"));
+        let paths = appconfig::ConfigPaths::new(dir.config());
         let (window, workspace) = cx
             .update(|cx| {
                 init(cx);
+                // The bundled Crossfade themes, from a scratch config directory; never
+                // `config::start` and never the platform's directory.
+                config::install(Config::load(&paths, true), cx);
                 // Animations show their end state, so the picture does not depend on how
                 // much real time has passed.
                 cx.set_reduce_motion(true);
@@ -252,13 +272,27 @@ impl Stage {
             window,
             cx,
             script,
-            dir: Scratch::new(scene.file.trim_end_matches(".png")),
+            dir,
         }
     }
 
-    /// Switch gpui-kit's built-in theme.
+    /// Follow a dark or light system appearance: the bundled themes switch with it.
     fn set_theme(&mut self, mode: ThemeMode) {
-        self.cx.update(|cx| Theme::change(mode, None, cx));
+        let dark = mode == ThemeMode::Dark;
+        self.cx.update(|cx| config::set_appearance(dark, cx));
+        self.cx.run_until_parked();
+    }
+
+    /// Save a `settings.json` that does not parse and reload it, so the status bar says so.
+    fn break_settings(&mut self) {
+        std::fs::create_dir_all(self.dir.config()).expect("create the config directory");
+        std::fs::write(
+            self.dir.config().join("settings.json"),
+            "{ \"ui_font_size\": ",
+        )
+        .expect("write settings.json");
+        self.cx
+            .update(|cx| config::reload(ConfigPiece::Settings, cx));
         self.cx.run_until_parked();
     }
 
