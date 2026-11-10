@@ -3,10 +3,14 @@
 //! no native dependencies.
 #![forbid(unsafe_code)]
 
+mod audio;
 mod error;
+mod limits;
 mod rational;
 mod time;
 
+pub use audio::{AudioSpec, Channel, ChannelLayout, SampleFormat};
 pub use error::Error;
+pub use limits::Limits;
 pub use rational::Rational;
 pub use time::{Rounding, TimeBase, Timestamp};
