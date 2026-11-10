@@ -71,7 +71,9 @@ fn the_provisional_streaminfo_has_the_format_and_blank_totals() {
     );
     let u8e = encoder(&spec(8000, SampleFormat::U8, 1), &opts(None)).unwrap();
     assert_eq!(
-        StreamInfoBlock::parse(u8e.extradata()).unwrap().bits_per_sample,
+        StreamInfoBlock::parse(u8e.extradata())
+            .unwrap()
+            .bits_per_sample,
         8
     );
 }
@@ -127,12 +129,7 @@ pub(super) struct Output {
 }
 
 /// Feeds `samples` in chunks of `chunk` sample frames, draining after each send.
-pub(super) fn encode(
-    spec: &AudioSpec,
-    level: Option<u8>,
-    samples: &[i32],
-    chunk: usize,
-) -> Output {
+pub(super) fn encode(spec: &AudioSpec, level: Option<u8>, samples: &[i32], chunk: usize) -> Output {
     let mut e = encoder(spec, &opts(level)).unwrap();
     let per = chunk * usize::from(spec.layout().channels());
     let mut packets = Vec::new();
@@ -200,9 +197,18 @@ fn check_stream(spec: &AudioSpec, samples: &[i32], out: &Output, block: usize) {
     let b = StreamInfoBlock::parse(&out.extradata).unwrap();
     assert_eq!(b.total_samples, total as u64);
     assert_eq!(b.md5, rfc_md5(depth, samples));
-    assert_eq!((b.min_block_size, b.max_block_size), (block as u16, block as u16));
-    assert_eq!(b.min_frame_size as usize, sizes.iter().copied().min().unwrap_or(0));
-    assert_eq!(b.max_frame_size as usize, sizes.iter().copied().max().unwrap_or(0));
+    assert_eq!(
+        (b.min_block_size, b.max_block_size),
+        (block as u16, block as u16)
+    );
+    assert_eq!(
+        b.min_frame_size as usize,
+        sizes.iter().copied().min().unwrap_or(0)
+    );
+    assert_eq!(
+        b.max_frame_size as usize,
+        sizes.iter().copied().max().unwrap_or(0)
+    );
     assert_eq!(b.sample_rate, spec.sample_rate());
     assert_eq!(usize::from(b.channels), channels);
     assert_eq!(u32::from(b.bits_per_sample), depth);

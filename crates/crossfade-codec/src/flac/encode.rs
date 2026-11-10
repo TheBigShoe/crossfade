@@ -31,10 +31,14 @@
 
 use crate::EncodeOptions;
 use crate::flac::streaminfo::StreamInfoBlock;
+use crate::md5::Md5;
 use crossfade_core::{AudioFrame, AudioSpec, Encoder, Error, Packet, SampleFormat, Samples};
+use flacenc::bitsink::MemSink;
+use flacenc::component::BitRepr;
 use flacenc::config;
 use flacenc::error::Verified;
-use flacenc::source::FrameBuf;
+use flacenc::source::{Fill, FrameBuf};
+use std::collections::VecDeque;
 
 const DEFAULT_LEVEL: u8 = 5;
 const MAX_LEVEL: u8 = 8;
@@ -132,13 +136,34 @@ fn bits_of(format: SampleFormat) -> Result<u8, Error> {
 }
 
 struct FlacEncoder {
-    spec_rate: u32,
+    rate: u32,
     channels: u16,
     format: SampleFormat,
+    bits: u8,
     block: usize,
-    _config: Verified<config::Encoder>,
-    _framebuf: FrameBuf,
+    config: Verified<config::Encoder>,
+    /// flacenc's own header record; it only has to agree with the frames it is asked to code.
+    stream_info: flacenc::component::StreamInfo,
+    framebuf: FrameBuf,
+    /// Interleaved samples of the block being filled; never more than one block.
+    buf: Vec<i32>,
+    /// The block's samples as MD5 input, reused.
+    md5_bytes: Vec<u8>,
+    md5: Md5,
+    total_samples: u64,
+    next_frame: usize,
+    min_frame_size: u32,
+    max_frame_size: u32,
+    pending: VecDeque<Packet>,
+    drained: bool,
+    failed: Option<Error>,
     extradata: [u8; StreamInfoBlock::LEN],
+}
+
+fn malformed(what: &str, e: impl std::fmt::Display) -> Error {
+    Error::Malformed {
+        what: format!("{what}: {e}"),
+    }
 }
 
 pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Encoder>, Error> {
@@ -162,38 +187,136 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         )));
     }
     let level = &LEVELS[usize::from(level)];
-    let framebuf = FrameBuf::with_size(usize::from(channels), level.block).map_err(|e| {
-        Error::Malformed {
-            what: format!("flac encoder buffer: {e}"),
-        }
-    })?;
-    let extradata = StreamInfoBlock {
-        min_block_size: level.block as u16,
-        max_block_size: level.block as u16,
-        min_frame_size: 0,
-        max_frame_size: 0,
-        sample_rate: rate,
-        channels: channels as u8,
-        bits_per_sample: bits,
-        total_samples: 0,
-        md5: [0; 16],
-    }
-    .write();
-    Ok(Box::new(FlacEncoder {
-        spec_rate: rate,
+    let framebuf = FrameBuf::with_size(usize::from(channels), level.block)
+        .map_err(|e| malformed("flac encoder buffer", e))?;
+    let stream_info = flacenc::component::StreamInfo::new(
+        rate as usize,
+        usize::from(channels),
+        usize::from(bits),
+    )
+    .map_err(|e| malformed("flac stream parameters", e))?;
+    let mut enc = FlacEncoder {
+        rate,
         channels,
         format: spec.format(),
+        bits,
         block: level.block,
-        _config: level.config()?,
-        _framebuf: framebuf,
-        extradata,
-    }))
+        config: level.config()?,
+        stream_info,
+        framebuf,
+        buf: Vec::with_capacity(level.block * usize::from(channels)),
+        md5_bytes: Vec::new(),
+        md5: Md5::new(),
+        total_samples: 0,
+        next_frame: 0,
+        min_frame_size: u32::MAX,
+        max_frame_size: 0,
+        pending: VecDeque::new(),
+        drained: false,
+        failed: None,
+        extradata: [0; StreamInfoBlock::LEN],
+    };
+    enc.extradata = enc.header(0, [0; 16], 0, 0).write();
+    Ok(Box::new(enc))
+}
+
+impl FlacEncoder {
+    fn header(&self, total: u64, md5: [u8; 16], min_frame: u32, max_frame: u32) -> StreamInfoBlock {
+        StreamInfoBlock {
+            // The short last block must not lower the minimum: readers reject min != max
+            // for a stream that is not variable-blocked.
+            min_block_size: self.block as u16,
+            max_block_size: self.block as u16,
+            min_frame_size: min_frame,
+            max_frame_size: max_frame,
+            sample_rate: self.rate,
+            channels: self.channels as u8,
+            bits_per_sample: self.bits,
+            total_samples: total,
+            md5,
+        }
+    }
+
+    /// Takes samples until the iterator ends, coding each block as it fills.
+    fn push(&mut self, mut samples: impl Iterator<Item = i32>) -> Result<(), Error> {
+        let cap = self.block * usize::from(self.channels);
+        loop {
+            let before = self.buf.len();
+            self.buf.extend(samples.by_ref().take(cap - before));
+            if self.buf.len() == before {
+                return Ok(());
+            }
+            if self.buf.len() == cap {
+                self.flush_block()?;
+            }
+        }
+    }
+
+    fn flush_block(&mut self) -> Result<(), Error> {
+        let channels = usize::from(self.channels);
+        let frames = self.buf.len() / channels;
+        if frames == 0 {
+            return Ok(());
+        }
+        let width = usize::from(self.bits).div_ceil(8);
+        self.md5_bytes.clear();
+        for s in &self.buf {
+            self.md5_bytes.extend_from_slice(&s.to_le_bytes()[..width]);
+        }
+        self.md5.update(&self.md5_bytes);
+        self.framebuf
+            .fill_interleaved(&self.buf)
+            .map_err(|e| malformed("flac encoder input", e))?;
+        self.buf.clear();
+        let frame = flacenc::encode_fixed_size_frame(
+            &self.config,
+            &self.framebuf,
+            self.next_frame,
+            &self.stream_info,
+        )
+        .map_err(|e| malformed("flac encoder", e))?;
+        let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
+        frame
+            .write(&mut sink)
+            .map_err(|e| malformed("flac frame", e))?;
+        let data = sink.into_inner();
+        let size = u32::try_from(data.len()).map_err(|_| Error::Overflow)?;
+        self.min_frame_size = self.min_frame_size.min(size);
+        self.max_frame_size = self.max_frame_size.max(size);
+        self.pending.push_back(Packet {
+            stream: 0,
+            pts: self.total_samples as i64,
+            duration: frames as u64,
+            data,
+        });
+        self.total_samples += frames as u64;
+        self.next_frame += 1;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), Error> {
+        self.flush_block()?;
+        let min = if self.next_frame == 0 {
+            0
+        } else {
+            self.min_frame_size
+        };
+        self.extradata = self
+            .header(
+                self.total_samples,
+                self.md5.clone().finalize(),
+                min,
+                self.max_frame_size,
+            )
+            .write();
+        Ok(())
+    }
 }
 
 impl Encoder for FlacEncoder {
     fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
         if frame.samples.format() != self.format
-            || frame.sample_rate != self.spec_rate
+            || frame.sample_rate != self.rate
             || frame.layout.channels() != self.channels
         {
             return Err(unsupported(format!(
@@ -201,20 +324,67 @@ impl Encoder for FlacEncoder {
                 frame.sample_rate,
                 frame.layout.channels(),
                 frame.samples.format().name(),
-                self.spec_rate,
+                self.rate,
                 self.channels,
                 self.format.name()
             )));
         }
-        let _ = (self.block, Samples::new(self.format));
-        Ok(())
+        if self.drained {
+            return Err(unsupported("send_frame after drain"));
+        }
+        if !frame
+            .samples
+            .len()
+            .is_multiple_of(usize::from(self.channels))
+        {
+            return Err(Error::Malformed {
+                what: format!(
+                    "{} samples is not a whole number of {}-channel frames",
+                    frame.samples.len(),
+                    self.channels
+                ),
+            });
+        }
+        match &frame.samples {
+            Samples::U8(v) => self.push(v.iter().map(|&x| i32::from(x) - 128)),
+            Samples::S16(v) => self.push(v.iter().map(|&x| i32::from(x))),
+            Samples::S24(v) => {
+                if v.iter().any(|x| !(-(1 << 23)..1 << 23).contains(x)) {
+                    return Err(Error::Malformed {
+                        what: "24-bit sample outside -2^23..2^23-1".into(),
+                    });
+                }
+                self.push(v.iter().copied())
+            }
+            Samples::S32(_) | Samples::F32(_) | Samples::F64(_) => {
+                unreachable!("the constructor refused these formats")
+            }
+        }
     }
 
-    fn receive_packet(&mut self, _out: &mut Packet) -> Result<bool, Error> {
-        Ok(false)
+    fn receive_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        if let Some(e) = self.failed.take() {
+            return Err(e);
+        }
+        match self.pending.pop_front() {
+            Some(p) => {
+                *out = p;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
-    fn drain(&mut self) {}
+    fn drain(&mut self) {
+        if self.drained {
+            return;
+        }
+        self.drained = true;
+        // A failure here cannot be returned; the next `receive_packet` reports it.
+        if let Err(e) = self.finish() {
+            self.failed = Some(e);
+        }
+    }
 
     fn extradata(&self) -> &[u8] {
         &self.extradata
