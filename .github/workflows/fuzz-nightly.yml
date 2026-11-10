@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [rational_ops, time_rescale]
+        target: [rational_ops, time_rescale, wav_demux]
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal

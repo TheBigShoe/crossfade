@@ -37,11 +37,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-format"
+version = "0.0.0"
+dependencies = [
+ "crossfade-core",
+]
+
+[[package]]
 name = "crossfade-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
  "crossfade-core",
+ "crossfade-format",
  "libfuzzer-sys",
 ]
 
