@@ -11,12 +11,12 @@ name = "crossfade"
 path = "src/main.rs"
 
 [dependencies]
+crossfade-core.workspace = true
 crossfade-graph.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
-crossfade-core.workspace = true
 crossfade-testkit.workspace = true
 insta.workspace = true
 

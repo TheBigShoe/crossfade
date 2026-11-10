@@ -1,6 +1,8 @@
 //! The `crossfade` command-line tool.
 #![forbid(unsafe_code)]
 
+mod fsio;
+
 use clap::Parser;
 use std::process::ExitCode;
 
