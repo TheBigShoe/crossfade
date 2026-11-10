@@ -4,6 +4,49 @@
 
 pub mod wav;
 
+use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FormatId {
+    Wav,
+}
+
+impl FormatId {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Wav => "wav",
+        }
+    }
+
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        match ext.to_ascii_lowercase().as_str() {
+            "wav" | "wave" => Some(Self::Wav),
+            _ => None,
+        }
+    }
+}
+
+/// Identifies the container by its magic. Each demuxer checks its own, so
+/// nothing needs to seek back on a pipe.
+pub fn open_demuxer(
+    source: Box<dyn MediaSource>,
+    limits: &Limits,
+) -> Result<(FormatId, Box<dyn Demuxer>), Error> {
+    let demuxer = wav::WavDemuxer::new(source, limits)?;
+    Ok((FormatId::Wav, Box::new(demuxer)))
+}
+
+pub fn create_muxer(
+    format: FormatId,
+    sink: Box<dyn MediaSink>,
+    stream: &StreamInfo,
+) -> Result<Box<dyn Muxer>, Error> {
+    match format {
+        FormatId::Wav => Ok(Box::new(wav::WavMuxer::new(sink, stream)?)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,8 +93,8 @@ mod tests {
         };
         m.write_packet(&p).unwrap();
         m.finish().unwrap();
-        let bytes = sink.0.lock().unwrap().get_ref().clone();
-        bytes
+        let guard = sink.0.lock().unwrap();
+        guard.get_ref().clone()
     }
 
     #[test]
@@ -79,7 +122,10 @@ mod tests {
     #[test]
     fn unknown_input_is_unrecognised_and_rf64_is_unsupported() {
         let open = |bytes: Vec<u8>| open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default());
-        assert_eq!(open(b"OggS....more".to_vec()).err(), Some(Error::UnrecognisedFormat));
+        assert_eq!(
+            open(b"OggS....more".to_vec()).err(),
+            Some(Error::UnrecognisedFormat)
+        );
         assert_eq!(open(Vec::new()).err(), Some(Error::UnrecognisedFormat));
         let mut rf64 = wav_bytes();
         rf64[..4].copy_from_slice(b"RF64");
