@@ -250,21 +250,21 @@ fn sample_formats_and_codecs_read_in_plain_words_with_the_raw_name_kept() {
         doc(None, vec![s])
     };
     for (codec, format, friendly_codec, friendly_format) in [
-        ("pcm_u8", "u8", "PCM (8-bit unsigned)", "8-bit"),
-        ("pcm_s8", "u8", "PCM (8-bit signed)", "8-bit"),
-        ("pcm_s16le", "s16", "PCM (16-bit little-endian)", "16-bit"),
-        ("pcm_s24be", "s24", "PCM (24-bit big-endian)", "24-bit"),
-        ("pcm_s32le", "s32", "PCM (32-bit little-endian)", "32-bit"),
+        ("pcm_u8", "u8", "PCM 8-bit unsigned", "8-bit"),
+        ("pcm_s8", "u8", "PCM 8-bit signed", "8-bit"),
+        ("pcm_s16le", "s16", "PCM 16-bit LE", "16-bit"),
+        ("pcm_s24be", "s24", "PCM 24-bit BE", "24-bit"),
+        ("pcm_s32le", "s32", "PCM 32-bit LE", "32-bit"),
         (
             "pcm_f32le",
             "f32",
-            "PCM (32-bit float, little-endian)",
+            "PCM 32-bit float LE",
             "32-bit float",
         ),
         (
             "pcm_f64be",
             "f64",
-            "PCM (64-bit float, big-endian)",
+            "PCM 64-bit float BE",
             "64-bit float",
         ),
         ("flac", "s16", "FLAC", "16-bit"),

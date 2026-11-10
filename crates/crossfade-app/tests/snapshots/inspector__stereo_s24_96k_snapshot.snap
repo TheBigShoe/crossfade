@@ -8,7 +8,7 @@ expression: render(&sections(&stereo_s24_96k()))
 [Stream 0]
   Index (index): 0
   Type (type): audio
-  Codec (codec): PCM (24-bit little-endian)
+  Codec (codec): PCM 24-bit LE
   Sample format (sample_format): 24-bit
   Sample rate (sample_rate): 96 kHz
   Channels (channels): 2

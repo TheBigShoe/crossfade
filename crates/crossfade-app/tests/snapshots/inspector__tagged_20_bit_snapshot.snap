@@ -8,7 +8,7 @@ expression: render(&sections(&tagged_20_bit()))
 [Stream 0]
   Index (index): 0
   Type (type): audio
-  Codec (codec): PCM (24-bit little-endian)
+  Codec (codec): PCM 24-bit LE
   Sample format (sample_format): 24-bit
   Bit depth (bits_per_raw_sample): 20-bit
   Sample rate (sample_rate): 96 kHz

@@ -8,7 +8,7 @@ expression: render(&sections(&mono_u8_unknown_length()))
 [Stream 0]
   Index (index): 0
   Type (type): audio
-  Codec (codec): PCM (8-bit unsigned)
+  Codec (codec): PCM 8-bit unsigned
   Sample format (sample_format): 8-bit
   Sample rate (sample_rate): 8 kHz
   Channels (channels): 1
