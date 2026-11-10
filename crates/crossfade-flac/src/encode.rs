@@ -2,6 +2,7 @@
 
 mod analyze;
 mod bitsink;
+mod rice;
 mod write;
 
 use crate::crc::crc16;
