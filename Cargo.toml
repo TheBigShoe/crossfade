@@ -17,6 +17,8 @@ crossfade-codec = { path = "crates/crossfade-codec", version = "0.0.0" }
 crossfade-dsp = { path = "crates/crossfade-dsp", version = "0.0.0" }
 crossfade-graph = { path = "crates/crossfade-graph", version = "0.0.0" }
 crossfade-app = { path = "crates/crossfade-app", version = "0.0.0" }
+crossfade-cli = { path = "crates/crossfade-cli", version = "0.0.0" }
+appconfig = { path = "crates/appconfig", version = "0.0.0" }
 crossfade-testkit = { path = "crates/crossfade-testkit", version = "0.0.0" }
 crossfade-ui = { path = "crates/crossfade-ui", version = "0.0.0" }
 
@@ -39,6 +41,8 @@ criterion = { version = "0.5", default-features = false }
 
 # GPUI through one facade (brings gpui-pre 0.3.12). Import it only via crossfade_ui::prelude.
 gpui-kit = "=0.9.1"
+# Worker threads wake the UI through it.
+async-channel = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
