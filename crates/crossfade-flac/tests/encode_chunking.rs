@@ -86,3 +86,23 @@ fn invalid_writes_change_nothing() {
     assert_eq!(out, reference.bytes);
     m(enc.write(&[1, 2], &mut out)); // a short block ended the stream
 }
+
+#[test]
+fn frame_ends_mark_every_frame_in_chunked_output() {
+    let config = cfg(2, 16, 5);
+    let samples = noise(14, (4096 * 2 + 100) * 2, 3);
+    let exact = encode(config, &samples, 0);
+    let want: Vec<usize> = exact.frames.iter().map(|f| f.1).collect();
+    for step in [1usize, 700, 4096, 9000] {
+        let mut enc = Encoder::new(config).unwrap();
+        let (mut out, mut ends) = (vec![0xAA], Vec::new());
+        for chunk in samples.chunks(step * 2) {
+            enc.write_ends(chunk, &mut out, &mut ends).unwrap();
+        }
+        enc.flush_ends(&mut out, &mut ends).unwrap();
+        // Offsets are into `out`, which already held one byte.
+        let got: Vec<usize> = ends.iter().map(|e| e - 1).collect();
+        assert_eq!(got, want, "step {step}");
+        assert_eq!(&out[1..], &exact.bytes[..]);
+    }
+}
