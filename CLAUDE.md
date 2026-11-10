@@ -36,16 +36,27 @@ and a GPUI desktop app (`crossfade-gui`).
 | Crate | Role |
 |---|---|
 | `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
-| `crossfade-format` | Containers: WAV reader and writer; `open_demuxer` sniffs, `create_muxer` writes |
-| `crossfade-codec` | Codecs: PCM; `decoder_for` / `encoder_for` |
+| `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
+| `crossfade-codec` | Codecs: PCM (little- and big-endian), our FLAC decoder, a FLAC encoder wrapping `flacenc`; shared bit-level tools (`bits`, `md5`, `flac::{frame, streaminfo, crc}`); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
-| `crossfade-graph` | `Job` (plain serialisable data), `Pipeline::step`, `run` with events and cancel, `probe` |
+| `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`) |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert` |
 | `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
+| `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest, fetch/seed/verify into `.corpus-cache`, `require(id)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
+
+Format rules worth knowing before touching a codec or container: decoders
+emit samples left-justified in the container sample format and record the
+true depth in `StreamInfo::bits_per_raw_sample`; 8-bit signed audio is carried
+as `U8` with a +128 offset; a reader never seeks unless the source says it
+can, and never allocates a length it read from the file without checking
+`Limits`. The reference `flac` tool and macOS `afconvert`/`afinfo` are
+development oracles only; committed tests never call an external tool.
+Small reference-encoder fixtures live under `crates/*/tests/fixtures/` with a
+README giving the command that made each (5 MB budget for the repository).
 
 The purity gate lives in its own crate so its `serde_json` dependency and
 `cargo metadata` call never touch an engine crate's dependency graph.
