@@ -22,7 +22,12 @@ fn unsupported(r: Result<Box<dyn Encoder>, Error>) -> String {
 
 #[test]
 fn integer_formats_up_to_32_bits_are_accepted_and_float_is_not() {
-    for f in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24, SampleFormat::S32] {
+    for f in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
         assert!(encoder(&spec(44100, f, 2), &opts(None)).is_ok(), "{f:?}");
     }
     for f in [SampleFormat::F32, SampleFormat::F64] {
@@ -215,7 +220,12 @@ fn check_stream(spec: &AudioSpec, samples: &[i32], out: &Output, block: usize) {
 
 #[test]
 fn every_packet_is_a_valid_frame_and_the_final_streaminfo_matches() {
-    for format in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24, SampleFormat::S32] {
+    for format in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
         for channels in [1u16, 2, 6] {
             let spec = spec(44100, format, channels);
             // Two full blocks and a short tail.
@@ -288,10 +298,15 @@ fn decode_back(spec: &AudioSpec, out: &Output) -> Vec<i32> {
     let mut dec = crossfade_flac::Decoder::new(&info).unwrap();
     let (mut all, mut tmp) = (Vec::new(), Vec::new());
     for p in &out.packets {
-        dec.decode_frame(&p.data).unwrap().interleave_i32(0, &mut tmp);
+        dec.decode_frame(&p.data)
+            .unwrap()
+            .interleave_i32(0, &mut tmp);
         all.extend_from_slice(&tmp);
     }
-    assert_eq!(dec.finish().unwrap(), crossfade_flac::Verification::Md5Matched);
+    assert_eq!(
+        dec.finish().unwrap(),
+        crossfade_flac::Verification::Md5Matched
+    );
     assert_eq!(info.channels as u16, spec.layout().channels());
     all
 }
@@ -313,7 +328,11 @@ fn every_format_rate_and_channel_count_decodes_bit_exactly() {
         let samples = signal(usize::from(channels), 4096 + 301, bits(format), 3);
         for level in [0, 5, 8] {
             let out = encode(&spec, Some(level), &samples, 5000);
-            assert_eq!(decode_back(&spec, &out), samples, "{rate} {format:?} {channels}");
+            assert_eq!(
+                decode_back(&spec, &out),
+                samples,
+                "{rate} {format:?} {channels}"
+            );
         }
     }
 }
@@ -321,8 +340,8 @@ fn every_format_rate_and_channel_count_decodes_bit_exactly() {
 #[test]
 fn full_scale_32_bit_samples_round_trip() {
     let spec = spec(44100, SampleFormat::S32, 2);
-    let samples: Vec<i32> = [i32::MIN, i32::MAX, i32::MAX, i32::MIN, 0, -1, 1, i32::MIN]
-        .repeat(700);
+    let samples: Vec<i32> =
+        [i32::MIN, i32::MAX, i32::MAX, i32::MIN, 0, -1, 1, i32::MIN].repeat(700);
     let out = encode(&spec, None, &samples, 4096);
     assert_eq!(decode_back(&spec, &out), samples);
     // And the all-32-bit MD5 is the RFC's four bytes per sample.
@@ -338,7 +357,12 @@ fn a_source_with_zero_low_bits_keeps_the_container_depth_in_streaminfo() {
     let samples: Vec<i32> = signal(2, 4096, 20, 5).iter().map(|&v| v << 4).collect();
     let out = encode(&spec, None, &samples, 4096);
     assert_eq!(decode_back(&spec, &out), samples);
-    assert_eq!(StreamInfoBlock::parse(&out.extradata).unwrap().bits_per_sample, 24);
+    assert_eq!(
+        StreamInfoBlock::parse(&out.extradata)
+            .unwrap()
+            .bits_per_sample,
+        24
+    );
     let packed: usize = out.packets.iter().map(|p| p.data.len()).sum();
     assert!(packed < 4096 * 2 * 20 / 8, "{packed}");
 }

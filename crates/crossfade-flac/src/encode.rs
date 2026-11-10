@@ -142,7 +142,6 @@ pub struct Encoder {
     total: u64,
     min_frame: u32,
     max_frame: u32,
-    first_len: usize,
     short_seen: bool,
     done: Option<StreamInfoBlock>,
     md5: Md5,
@@ -186,7 +185,6 @@ impl Encoder {
             total: 0,
             min_frame: u32::MAX,
             max_frame: 0,
-            first_len: 0,
             short_seen: false,
             done: None,
             md5: Md5::new(),
@@ -273,9 +271,6 @@ impl Encoder {
         let len = (out.len() - start) as u32;
         self.min_frame = self.min_frame.min(len);
         self.max_frame = self.max_frame.max(len);
-        if self.frame_number == 0 {
-            self.first_len = n;
-        }
         self.frame_number += 1;
         self.total += n as u64;
         self.short_seen = n < self.block;
@@ -598,11 +593,6 @@ impl Encoder {
             return info;
         }
         let mut info = self.info();
-        if self.frame_number == 1 {
-            // A stream of one short block: the block size is that block's length.
-            info.min_block_size = self.first_len as u16;
-            info.max_block_size = self.first_len as u16;
-        }
         if self.frame_number > 0 {
             info.min_frame_size = self.min_frame;
             info.max_frame_size = self.max_frame;

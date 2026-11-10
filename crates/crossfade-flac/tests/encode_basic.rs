@@ -93,10 +93,10 @@ fn stream_info_before_and_after_finish() {
 }
 
 #[test]
-fn a_single_short_block_sets_both_block_sizes() {
+fn a_single_short_block_keeps_the_block_size() {
     let config = cfg(44_100, 1, 16, 5);
     let e = round_trip(config, &noise(16, 100, 3), 0);
-    assert_eq!((e.info.min_block_size, e.info.max_block_size), (100, 100));
+    assert_eq!((e.info.min_block_size, e.info.max_block_size), (4096, 4096));
 }
 
 #[test]
@@ -117,7 +117,8 @@ fn bad_blocks_are_malformed() {
 
 #[test]
 fn a_single_block_under_sixteen_samples_keeps_a_parsable_streaminfo() {
-    // STREAMINFO cannot hold a block size below 16 (its own parser refuses it).
+    // STREAMINFO takes no block size below 16 (its own parser refuses it), so the stream's
+    // block size stays, short last block or not.
     let config = cfg(8_000, 1, 16, 5);
     let e = round_trip(config, &noise(16, 10, 3), 0);
     assert_eq!((e.info.min_block_size, e.info.max_block_size), (4096, 4096));
