@@ -50,14 +50,24 @@ fn request() -> impl Strategy<Value = Request> {
         })
 }
 
-/// Just enough of a POSIX shell: words, single quotes, nothing else.
+/// Just enough of a POSIX shell: words, single quotes and `\\'`.
 fn split_posix(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut in_word = false;
     let mut quoted = false;
+    let mut escaped = false;
     for c in line.chars() {
+        if escaped {
+            cur.push(c);
+            escaped = false;
+            continue;
+        }
         match (quoted, c) {
+            (false, '\\') => {
+                escaped = true;
+                in_word = true;
+            }
             (true, '\'') => quoted = false,
             (true, c) => cur.push(c),
             (false, '\'') => {
