@@ -19,10 +19,13 @@ and a GPUI desktop app (`crossfade-gui`).
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
-4. **Dependency direction:** core <- format, codec, dsp <- graph <- app <- cli,
-   ui. `appconfig` stands alone and only ui uses it. `crossfade-testkit`
-   depends only on core and is only a dev-dependency. Nothing points the other
-   way. GPUI is imported only through `crossfade_ui::prelude`.
+4. **Dependency direction:** core <- codec, dsp <- format <- graph <- app <-
+   cli, ui. A demuxer needs a codec's frame-header parser to split packets (as
+   FFmpeg's libavformat uses libavcodec's parsers), so format depends on codec,
+   never the reverse. `appconfig` stands alone and only ui uses it.
+   `crossfade-testkit` depends only on core and is only a dev-dependency.
+   Nothing points the other way. GPUI is imported only through
+   `crossfade_ui::prelude`.
 5. **Self-contained tests.** `cargo test --workspace` needs no network,
    FFmpeg, audio device or display. No wall-clock timing assertions: use the
    `Clock` trait with a manual clock.
