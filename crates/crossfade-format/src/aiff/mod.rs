@@ -3,6 +3,8 @@
 mod extended;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writer_tests;
 
 mod demux;
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
