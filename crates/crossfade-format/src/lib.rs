@@ -199,13 +199,24 @@ mod tests {
             open_demuxer(Box::new(src), &Limits::default()).map(|(id, _)| id)
         };
         for (bytes, want) in [
-            (&b"fLaC\0\0\0\x22rest"[..], "reading flac is not built yet"),
-            (b"ID3\x04\0\0\0\0\0\0", "reading flac is not built yet"),
-            (b"FORM\0\0\0\x10AIFFCOMM", "reading aiff is not built yet"),
+            (
+                &b"FORM\0\0\0\x10AIFFCOMM"[..],
+                "reading aiff is not built yet",
+            ),
             (b"FORM\0\0\0\x10AIFCFVER", "reading aiff is not built yet"),
             (b"OggS\0\x02rest of page", "reading ogg is not built yet"),
         ] {
             assert_eq!(unsupported(open(bytes)), want, "{bytes:?}");
+        }
+        // The FLAC reader got these: it ran out of input inside STREAMINFO.
+        for bytes in [
+            &b"fLaC\0\0\0\x22rest"[..],
+            b"ID3\x04\0\0\0\0\0\0fLaC\0\0\0\x22",
+        ] {
+            assert!(
+                matches!(open(bytes), Err(Error::UnexpectedEof { .. })),
+                "{bytes:?}"
+            );
         }
         let wav = wav_bytes();
         assert_eq!(open(&wav).unwrap(), FormatId::Wav);

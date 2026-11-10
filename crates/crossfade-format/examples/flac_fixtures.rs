@@ -14,7 +14,7 @@ fn main() {
         let s = signals::signal(name);
         let path = format!("{dir}/{name}.raw");
         std::fs::write(&path, s.raw_pcm()).expect("write raw PCM");
-        if s.bits % 8 != 0 {
+        if !s.bits.is_multiple_of(8) {
             std::fs::write(format!("{dir}/{name}.wav"), s.wav_extensible()).expect("write WAV");
         }
         println!(

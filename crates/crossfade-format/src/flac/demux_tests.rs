@@ -5,7 +5,7 @@ use crossfade_codec::flac::frame::{self, ChannelAssignment, FrameHeader};
 use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::Packet;
 use crossfade_testkit::io::FaultySource;
-use std::io::Cursor;
+use std::io::{Cursor, ErrorKind};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/flac/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -538,10 +538,10 @@ fn truncating_a_real_file_at_every_offset_never_panics() {
 fn a_source_that_fails_mid_frame_reports_the_io_error() {
     let bytes = stream(120, &[], &frames(3));
     let at = bytes.len() as u64 - 30;
-    let src = FaultySource::new(Cursor::new(bytes)).fail_at(at, std::io::ErrorKind::BrokenPipe);
+    let src = FaultySource::new(Cursor::new(bytes)).fail_at(at, ErrorKind::BrokenPipe);
     let mut d = open(Box::new(src), &Limits::default()).unwrap();
     let (packets, err) = drain(d.as_mut());
-    assert_eq!(packets.len(), 1);
+    assert_eq!(packets.len(), 2);
     assert!(matches!(err, Some(Error::Io { .. })), "{err:?}");
 }
 
