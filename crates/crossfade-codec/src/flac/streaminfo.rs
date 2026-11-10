@@ -1,3 +1,105 @@
+//! The STREAMINFO metadata block body (RFC 9639 section 8.2).
+
+use crate::bits::{BitReader, BitWriter};
+use crossfade_core::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamInfoBlock {
+    pub min_block_size: u16,
+    pub max_block_size: u16,
+    /// 24-bit; 0 = unknown.
+    pub min_frame_size: u32,
+    pub max_frame_size: u32,
+    /// 20-bit, 1 to 1_048_575.
+    pub sample_rate: u32,
+    /// 1 to 8.
+    pub channels: u8,
+    /// 4 to 32.
+    pub bits_per_sample: u8,
+    /// 36-bit; 0 = unknown.
+    pub total_samples: u64,
+    /// All zero = unknown.
+    pub md5: [u8; 16],
+}
+
+fn malformed(what: &str) -> Error {
+    Error::Malformed {
+        what: format!("flac streaminfo: {what}"),
+    }
+}
+
+impl StreamInfoBlock {
+    pub const LEN: usize = 34;
+
+    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+        if body.len() != Self::LEN {
+            return Err(malformed("body is not 34 bytes"));
+        }
+        let mut r = BitReader::new(body);
+        // The length check above makes every read below succeed.
+        let mut bits = |n| r.read_bits(n);
+        let min_block_size = bits(16)? as u16;
+        let max_block_size = bits(16)? as u16;
+        let min_frame_size = bits(24)? as u32;
+        let max_frame_size = bits(24)? as u32;
+        let sample_rate = bits(20)? as u32;
+        let channels = bits(3)? as u8 + 1;
+        let bits_per_sample = bits(5)? as u8 + 1;
+        let total_samples = bits(36)?;
+        let mut md5 = [0u8; 16];
+        for b in &mut md5 {
+            *b = bits(8)? as u8;
+        }
+        if sample_rate == 0 {
+            return Err(malformed("sample rate is zero"));
+        }
+        if min_block_size < 16 || max_block_size < 16 {
+            return Err(malformed("block size below 16"));
+        }
+        if min_block_size > max_block_size {
+            return Err(malformed("minimum block size exceeds maximum"));
+        }
+        if bits_per_sample < 4 {
+            return Err(malformed("bits per sample below 4"));
+        }
+        Ok(Self {
+            min_block_size,
+            max_block_size,
+            min_frame_size,
+            max_frame_size,
+            sample_rate,
+            channels,
+            bits_per_sample,
+            total_samples,
+            md5,
+        })
+    }
+
+    /// Fields wider than their slot are masked in release builds.
+    pub fn write(&self) -> [u8; 34] {
+        debug_assert!(self.min_frame_size < 1 << 24 && self.max_frame_size < 1 << 24);
+        debug_assert!(self.sample_rate < 1 << 20);
+        debug_assert!((1..=8).contains(&self.channels));
+        debug_assert!((1..=32).contains(&self.bits_per_sample));
+        debug_assert!(self.total_samples < 1 << 36);
+        let mut w = BitWriter::new();
+        w.write_bits(u64::from(self.min_block_size), 16);
+        w.write_bits(u64::from(self.max_block_size), 16);
+        w.write_bits(u64::from(self.min_frame_size), 24);
+        w.write_bits(u64::from(self.max_frame_size), 24);
+        w.write_bits(u64::from(self.sample_rate), 20);
+        w.write_bits(u64::from(self.channels.wrapping_sub(1)), 3);
+        w.write_bits(u64::from(self.bits_per_sample.wrapping_sub(1)), 5);
+        w.write_bits(self.total_samples, 36);
+        for b in self.md5 {
+            w.write_bits(u64::from(b), 8);
+        }
+        let mut out = [0u8; 34];
+        out.copy_from_slice(&w.into_bytes());
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,7 +198,10 @@ mod tests {
             s.md5 = [0; 16];
         });
         let p = StreamInfoBlock::parse(&s).unwrap();
-        assert_eq!((p.min_frame_size, p.max_frame_size, p.total_samples, p.md5), (0, 0, 0, [0; 16]));
+        assert_eq!(
+            (p.min_frame_size, p.max_frame_size, p.total_samples, p.md5),
+            (0, 0, 0, [0; 16])
+        );
     }
 
     proptest! {
