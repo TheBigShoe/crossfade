@@ -16,6 +16,9 @@ crossfade-dsp = { path = "crates/crossfade-dsp" }
 crossfade-graph = { path = "crates/crossfade-graph" }
 crossfade-testkit = { path = "crates/crossfade-testkit" }
 
+serde = "1.0.228"
+serde_json = "1.0.150"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unreachable_pub = "warn"
