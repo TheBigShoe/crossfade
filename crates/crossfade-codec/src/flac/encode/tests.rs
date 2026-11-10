@@ -250,13 +250,8 @@ fn a_stream_shorter_than_one_block_keeps_the_block_size_in_streaminfo() {
 
 use proptest::prelude::*;
 
-fn flat(o: &Output) -> (Vec<(i64, u64, Vec<u8>)>, Vec<u8>) {
-    let packets = o
-        .packets
-        .iter()
-        .map(|p| (p.pts, p.duration, p.data.clone()))
-        .collect();
-    (packets, o.extradata.clone())
+fn flat(o: &Output) -> (Vec<Packet>, Vec<u8>) {
+    (o.packets.clone(), o.extradata.clone())
 }
 
 proptest! {
