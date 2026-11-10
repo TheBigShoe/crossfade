@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crossfade_app::Request;
 use crossfade_app::inputs::{InputState, Inputs, probe_path};
-use crossfade_app::queue::{JobId, Runner, RunnerEvent};
+use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent};
 use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
@@ -59,8 +60,13 @@ pub struct Workspace {
     last_action: Option<AppAction>,
     pub(crate) inputs: Inputs,
     io: IoFactory,
+    pub(crate) queue: Queue,
+    runner: Box<dyn Runner>,
+    queue_open: bool,
     /// Set while a drag of files is over the window.
     pub(crate) drag_over: bool,
+    /// Applies the runner's reports as they arrive; ends with the view.
+    _events: Task<()>,
 }
 
 impl Workspace {
@@ -69,14 +75,62 @@ impl Workspace {
         // Actions dispatch along the focus path; the root view holds focus so toolbar
         // clicks and shortcuts reach the same handlers.
         window.focus(&focus, cx);
-        let WorkspaceOptions { io, .. } = options;
+        let WorkspaceOptions {
+            runner, events, io, ..
+        } = options;
+        let listening = cx.spawn(async move |this, cx| {
+            // Reports from a busy worker pile up between wake-ups; apply them together.
+            while let Ok(first) = events.recv().await {
+                let mut batch = vec![first];
+                while let Ok(more) = events.try_recv() {
+                    batch.push(more);
+                }
+                let applied = this.update(cx, |this, cx| {
+                    for (id, event) in batch {
+                        this.queue.apply(id, event);
+                    }
+                    this.pump();
+                    cx.notify();
+                });
+                if applied.is_err() {
+                    return;
+                }
+            }
+        });
         Self {
             focus,
             last_action: None,
             inputs: Inputs::new(),
             io,
+            queue: Queue::new(),
+            runner,
+            queue_open: false,
             drag_over: false,
+            _events: listening,
         }
+    }
+
+    /// The conversions, waiting, running and done.
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    /// Whether the queue dock is showing.
+    pub fn queue_open(&self) -> bool {
+        self.queue_open
+    }
+
+    /// Queue `request`, start it if nothing runs, and show the dock.
+    pub fn enqueue(&mut self, request: Request, cx: &mut Context<Self>) {
+        self.queue.enqueue(request);
+        self.pump();
+        self.queue_open = true;
+        cx.notify();
+    }
+
+    /// Start the next waiting job unless one runs.
+    pub(crate) fn pump(&mut self) {
+        self.queue.pump(&mut *self.runner);
     }
 
     /// The opened files and which one is selected.
@@ -180,7 +234,7 @@ impl Workspace {
                     "toolbar-queue",
                     IconName::PanelRight,
                     "Toggle queue",
-                    false,
+                    self.queue_open,
                     cx,
                 )
                 .on_click(dispatch(Box::new(ToggleQueue), &self.focus)),
@@ -221,10 +275,21 @@ impl Workspace {
                     .truncate()
                     .child(SharedString::from(self.status_text())),
             )
+            .child(
+                div()
+                    .id("status-queue")
+                    .test_support()
+                    .flex_none()
+                    .pl_3()
+                    .child(SharedString::from(self.status_queue())),
+            )
     }
 
     /// The left of the status bar: what is selected.
     pub fn status_text(&self) -> String {
+        if let Some(text) = self.converting_text() {
+            return text;
+        }
         self.inputs
             .selected()
             .map_or_else(|| "Ready".to_owned(), |entry| entry.name.clone())
@@ -257,6 +322,7 @@ impl Render for Workspace {
                 this.record(AppAction::Convert, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleQueue, _, cx| {
+                this.queue_open = !this.queue_open;
                 this.record(AppAction::ToggleQueue, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {

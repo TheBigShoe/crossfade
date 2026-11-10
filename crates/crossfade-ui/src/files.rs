@@ -23,7 +23,7 @@ const OPEN_SHORTCUT: &str = if cfg!(target_os = "macos") {
 
 /// `48 kHz`, `44.1 kHz`.
 fn kilohertz(rate: u32) -> String {
-    if rate % 1000 == 0 {
+    if rate.is_multiple_of(1000) {
         format!("{} kHz", rate / 1000)
     } else {
         let tenths = (f64::from(rate) / 100.0).round() / 10.0;
@@ -103,13 +103,19 @@ impl Workspace {
                 .child(self.inspector(cx))
                 .into_any_element()
         };
+        let dock = self.queue_open().then(|| self.queue_dock(cx));
         div()
             .id("body")
             .relative()
             .flex_1()
             .min_h_0()
             .w_full()
-            .child(content)
+            .child(
+                h_flex()
+                    .size_full()
+                    .child(div().flex_1().min_w_0().h_full().child(content))
+                    .children(dock),
+            )
             .on_drag_move::<ExternalPaths>(cx.listener(|this, _, _, cx| {
                 if !this.drag_over {
                     this.drag_over = true;
