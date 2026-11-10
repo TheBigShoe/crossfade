@@ -2,6 +2,10 @@
 //! muxers that write them back. Built on the seams in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+pub mod aiff;
+pub mod flac;
+pub mod ogg;
+mod replay;
 pub mod wav;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo};

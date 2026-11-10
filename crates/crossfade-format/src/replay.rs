@@ -1,3 +1,89 @@
+//! Lets `open_demuxer` identify a container from its first bytes without seeking back, so
+//! a pipe works: the bytes it consumed are handed to the chosen demuxer again.
+
+use crossfade_core::{Error, MediaSource};
+use std::io::{self, SeekFrom};
+
+pub(crate) struct Replay {
+    head: Vec<u8>,
+    /// How much of `head` has been handed out; equal to `head.len()` once replaying is over.
+    pos: usize,
+    inner: Box<dyn MediaSource>,
+}
+
+impl Replay {
+    /// Reads up to `n` bytes (fewer at end of input) and returns them with the replaying source.
+    pub(crate) fn sniff(
+        mut inner: Box<dyn MediaSource>,
+        n: usize,
+    ) -> Result<(Vec<u8>, Self), Error> {
+        let mut head = vec![0u8; n];
+        let mut got = 0;
+        while got < n {
+            match inner.read(&mut head[got..]) {
+                Ok(0) => break,
+                Ok(k) => got += k,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        head.truncate(got);
+        let replay = Self {
+            head: head.clone(),
+            pos: 0,
+            inner,
+        };
+        Ok((head, replay))
+    }
+
+    fn replaying(&self) -> bool {
+        self.pos < self.head.len()
+    }
+}
+
+impl MediaSource for Replay {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.replaying() {
+            let n = buf.len().min(self.head.len() - self.pos);
+            buf[..n].copy_from_slice(&self.head[self.pos..self.pos + n]);
+            self.pos += n;
+            return Ok(n);
+        }
+        self.inner.read(buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        if !self.inner.is_seekable() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "source is not seekable",
+            ));
+        }
+        // The underlying position is already past the head; a relative seek must count from
+        // where the reader logically is.
+        let pos = match pos {
+            SeekFrom::Current(d) if self.replaying() => {
+                let target = (self.pos as i64).checked_add(d).filter(|t| *t >= 0);
+                SeekFrom::Start(target.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "seek before start")
+                })? as u64)
+            }
+            other => other,
+        };
+        let at = self.inner.seek(pos)?;
+        self.pos = self.head.len();
+        Ok(at)
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len()
+    }
+
+    fn is_seekable(&self) -> bool {
+        self.inner.is_seekable()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
