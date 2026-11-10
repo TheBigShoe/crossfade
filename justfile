@@ -28,9 +28,11 @@ mobile:
         cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-dsp -p crossfade-graph; \
     done
 
-# First speed baseline: in-memory conversion through the engine.
+# Speed baselines: in-memory conversion through the engine, then FLAC decode/encode with
+# AIFF and WAV read+decode (crates/crossfade-format/benches).
 bench:
     cargo bench -p crossfade-graph
+    cargo bench -p crossfade-format
 
 # Download the conformance corpus into .corpus-cache (once; needs curl and the network).
 corpus:
