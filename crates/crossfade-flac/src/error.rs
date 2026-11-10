@@ -26,3 +26,21 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_texts_match_the_engine_errors_they_map_to() {
+        assert_eq!(
+            Error::Malformed("x".into()).to_string(),
+            "malformed input: x"
+        );
+        assert_eq!(Error::Unsupported("y".into()).to_string(), "unsupported: y");
+        assert_eq!(
+            Error::UnexpectedEof { offset: 7 }.to_string(),
+            "unexpected end of input at byte 7"
+        );
+    }
+}
