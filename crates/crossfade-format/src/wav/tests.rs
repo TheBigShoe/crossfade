@@ -898,3 +898,178 @@ mod writer {
         assert_eq!(drain(&mut d).0.concat_bytes(), payload(80));
     }
 }
+
+mod props {
+    use super::writer::info;
+    use super::*;
+    use crate::wav::WavMuxer;
+    use crossfade_core::{MediaSink, Muxer, StreamInfo};
+    use proptest::prelude::*;
+    use std::io::SeekFrom;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Cursor<Vec<u8>>>>);
+
+    impl MediaSink for Shared {
+        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+            std::io::Write::write_all(&mut *self.0.lock().unwrap(), buf)
+        }
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            std::io::Seek::seek(&mut *self.0.lock().unwrap(), pos)
+        }
+        fn finish(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    const FORMATS: [SampleFormat; 6] = [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+        SampleFormat::F32,
+        SampleFormat::F64,
+    ];
+
+    fn any_stream() -> impl Strategy<Value = StreamInfo> {
+        let rate = prop_oneof![
+            Just(8000u32),
+            Just(22050),
+            Just(44100),
+            Just(48000),
+            Just(96000),
+            1u32..200_000
+        ];
+        (0..FORMATS.len(), 1u16..=8, rate, any::<bool>()).prop_map(|(f, ch, rate, positioned)| {
+            use crossfade_core::Channel::*;
+            let order = [
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                Lfe,
+                BackLeft,
+                BackRight,
+                SideLeft,
+                SideRight,
+            ];
+            // Plain headers cannot say "unpositioned" for 1 or 2 channels,
+            // and the float header has no mask, so positions need an integer
+            // format.
+            let positioned = positioned && !FORMATS[f].is_float();
+            let layout = match (ch, positioned) {
+                (1, _) => ChannelLayout::mono(),
+                (2, _) => ChannelLayout::stereo(),
+                (_, true) => {
+                    ChannelLayout::from_positions(order[..usize::from(ch)].to_vec()).unwrap()
+                }
+                (_, false) => ChannelLayout::unpositioned(ch).unwrap(),
+            };
+            info(rate, FORMATS[f], layout)
+        })
+    }
+
+    /// Frames split into packets at arbitrary points.
+    fn case() -> impl Strategy<Value = (StreamInfo, Vec<Vec<u8>>)> {
+        any_stream().prop_flat_map(|s| {
+            let bpf = s.audio.bytes_per_frame();
+            let packets = prop::collection::vec(prop::collection::vec(any::<u8>(), 0..40), 0..8);
+            packets.prop_map(move |ps| {
+                let ps: Vec<Vec<u8>> = ps
+                    .into_iter()
+                    .map(|mut p| {
+                        p.truncate(p.len() / bpf * bpf);
+                        p
+                    })
+                    .collect();
+                (s.clone(), ps)
+            })
+        })
+    }
+
+    fn mux(s: &StreamInfo, packets: &[Vec<u8>]) -> Vec<u8> {
+        let sink = Shared::default();
+        let mut m = WavMuxer::new(Box::new(sink.clone()), s).unwrap();
+        for p in packets {
+            let pkt = Packet {
+                data: p.clone(),
+                ..Packet::default()
+            };
+            m.write_packet(&pkt).unwrap();
+        }
+        m.finish().unwrap();
+        let guard = sink.0.lock().unwrap();
+        guard.get_ref().clone()
+    }
+
+    proptest! {
+        #[test]
+        fn demux_of_mux_is_the_identity((s, packets) in case()) {
+            let bytes = mux(&s, &packets);
+            let mut d = open(bytes).unwrap();
+            let all: Vec<u8> = packets.concat();
+            let got = &d.streams()[0];
+            prop_assert_eq!(got.codec, s.codec);
+            prop_assert_eq!(&got.audio, &s.audio);
+            prop_assert_eq!(got.frames, Some((all.len() / s.audio.bytes_per_frame()) as u64));
+            let (read, err) = drain(&mut d);
+            prop_assert_eq!(err, None);
+            prop_assert_eq!(read.concat_bytes(), all);
+        }
+
+        #[test]
+        fn arbitrary_bytes_never_panic_or_over_deliver(bytes in prop::collection::vec(any::<u8>(), 0..300)) {
+            check_bounded(bytes)?;
+        }
+
+        #[test]
+        fn arbitrary_bytes_after_a_valid_magic_never_panic(tail in prop::collection::vec(any::<u8>(), 0..300)) {
+            let mut bytes = b"RIFF\x00\x00\x00\x00WAVE".to_vec();
+            bytes.extend(tail);
+            check_bounded(bytes)?;
+        }
+
+        #[test]
+        fn corrupted_valid_files_never_panic_or_over_deliver(
+            (s, packets) in case(),
+            edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 0..6),
+            cut in proptest::option::of(any::<prop::sample::Index>()),
+        ) {
+            let mut bytes = mux(&s, &packets);
+            for (i, b) in edits {
+                let at = i.index(bytes.len());
+                bytes[at] = b;
+            }
+            if let Some(c) = cut {
+                bytes.truncate(c.index(bytes.len() + 1));
+            }
+            check_bounded(bytes)?;
+        }
+    }
+
+    fn check_bounded(bytes: Vec<u8>) -> Result<(), TestCaseError> {
+        let len = bytes.len();
+        let limits = Limits {
+            max_alloc_bytes: 1 << 16,
+            max_packet_bytes: 1 << 16,
+            ..Limits::default()
+        };
+        let Ok(mut d) = WavDemuxer::new(Box::new(Cursor::new(bytes)), &limits) else {
+            return Ok(());
+        };
+        let bpf = d.streams()[0].audio.bytes_per_frame();
+        let mut total = 0usize;
+        let mut pkt = Packet::default();
+        for _ in 0..len + 2 {
+            match d.read_packet(&mut pkt) {
+                Ok(true) => {
+                    prop_assert_eq!(pkt.data.len() % bpf, 0);
+                    total += pkt.data.len();
+                    prop_assert!(total <= len);
+                }
+                _ => return Ok(()),
+            }
+        }
+        Err(TestCaseError::fail("read loop did not terminate"))
+    }
+}
