@@ -16,12 +16,15 @@ fn ran_out() -> Error {
 }
 
 /// MSB-first reader over one frame body. Not `crate::bits::BitReader`: the residual loop is
-/// the decoder's hot path and wants a 64-bit window and a leading-zero count for unary codes.
+/// the decoder's hot path and wants a 64-bit window refilled a word at a time and a leading-zero
+/// count for unary codes.
 pub(super) struct Bits<'a> {
     data: &'a [u8],
     next: usize,
-    /// The low `n` bits hold the unread bits; anything above is stale.
+    /// The first `n` bits are the unread bits, MSB first. Below them sit either zeros or the
+    /// stream bits that follow, which a refill then ORs in again unchanged.
     acc: u64,
+    /// Never above 63, so every shift by an amount `<= n` stays in range.
     n: u32,
 }
 
@@ -35,17 +38,18 @@ impl<'a> Bits<'a> {
         }
     }
 
+    /// Brings `n` to at least 56 unless the data ends first.
+    #[inline(always)]
     fn refill(&mut self) {
-        if self.n <= 32
-            && let Some(word) = self.data.get(self.next..self.next + 4)
-        {
-            self.acc = (self.acc << 32)
-                | u64::from(u32::from_be_bytes([word[0], word[1], word[2], word[3]]));
-            self.next += 4;
-            self.n += 32;
+        if let Some(word) = self.data[self.next..].first_chunk::<8>() {
+            self.acc |= u64::from_be_bytes(*word) >> self.n;
+            let take = (63 - self.n) >> 3;
+            self.next += take as usize;
+            self.n += take * 8;
+            return;
         }
-        while self.n <= 56 && self.next < self.data.len() {
-            self.acc = (self.acc << 8) | u64::from(self.data[self.next]);
+        while self.n <= 55 && self.next < self.data.len() {
+            self.acc |= u64::from(self.data[self.next]) << (56 - self.n);
             self.next += 1;
             self.n += 8;
         }
@@ -63,8 +67,10 @@ impl<'a> Bits<'a> {
                 return Err(ran_out());
             }
         }
+        let v = self.acc >> (64 - k);
+        self.acc <<= k;
         self.n -= k;
-        Ok((self.acc >> self.n) & ((1u64 << k) - 1))
+        Ok(v)
     }
 
     /// Two's complement over `k` bits.
@@ -86,19 +92,46 @@ impl<'a> Bits<'a> {
                     return Err(ran_out());
                 }
             }
-            let lead = (self.acc << (64 - self.n)).leading_zeros();
+            let lead = self.acc.leading_zeros();
             if lead < self.n {
+                self.acc <<= lead + 1;
                 self.n -= lead + 1;
                 return Ok(zeros.saturating_add(lead));
             }
             zeros = zeros.saturating_add(self.n);
+            self.acc <<= self.n;
             self.n = 0;
         }
     }
 
+    /// Rice-decodes `out.len()` residuals with parameter `k` (below 32). A code that fits the
+    /// window is taken in one step; a long one, or one at the end of the data, goes the slow way.
+    fn read_rice(&mut self, out: &mut [i64], k: u32) -> Result<()> {
+        for v in out {
+            if self.n < 48 {
+                self.refill();
+            }
+            let lead = self.acc.leading_zeros();
+            let used = lead + 1 + k;
+            let folded = if used <= self.n {
+                let low = ((self.acc << (lead + 1)) >> 1) >> (63 - k);
+                self.acc <<= used;
+                self.n -= used;
+                (u64::from(lead) << k) | low
+            } else {
+                let q = u64::from(self.read_unary()?);
+                (q << k) | self.read(k)?
+            };
+            *v = ((folded >> 1) as i64) ^ -((folded & 1) as i64);
+        }
+        Ok(())
+    }
+
     /// Drops the bits up to the next byte boundary.
     pub(super) fn align(&mut self) {
-        self.n -= self.n % 8;
+        let drop = self.n % 8;
+        self.acc <<= drop;
+        self.n -= drop;
     }
 
     pub(super) fn bits_left(&self) -> u64 {
@@ -139,12 +172,7 @@ fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<()> {
                 *v = r.read_signed(bits)?;
             }
         } else {
-            let k = param as u32;
-            for v in part {
-                let q = u64::from(r.read_unary()?);
-                let folded = (q << k) | r.read(k)?;
-                *v = ((folded >> 1) as i64) ^ -((folded & 1) as i64);
-            }
+            r.read_rice(part, param as u32)?;
         }
     }
     Ok(())
@@ -279,4 +307,115 @@ pub(super) fn read_subframe(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// One bit at a time, the obvious way.
+    struct Slow<'a> {
+        data: &'a [u8],
+        pos: usize,
+    }
+
+    impl Slow<'_> {
+        fn bit(&mut self) -> Option<u64> {
+            let b = *self.data.get(self.pos / 8)?;
+            let bit = (b >> (7 - self.pos % 8)) & 1;
+            self.pos += 1;
+            Some(u64::from(bit))
+        }
+
+        fn read(&mut self, k: u32) -> Option<u64> {
+            let mut v = 0;
+            for _ in 0..k {
+                v = (v << 1) | self.bit()?;
+            }
+            Some(v)
+        }
+
+        fn unary(&mut self) -> Option<u32> {
+            let mut zeros = 0u32;
+            while self.bit()? == 0 {
+                zeros += 1;
+            }
+            Some(zeros)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum Op {
+        Read(u32),
+        Unary,
+        Rice(u32, usize),
+        Align,
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            (0u32..=56).prop_map(Op::Read),
+            Just(Op::Unary),
+            (0u32..=31, 0usize..8).prop_map(|(k, n)| Op::Rice(k, n)),
+            Just(Op::Align),
+        ]
+    }
+
+    proptest! {
+        // The windowed reader must agree with a bit-by-bit one on any mix of operations,
+        // including the end of the data, where both must fail together.
+        #[test]
+        fn the_windowed_reader_equals_a_bitwise_one(
+            data in prop::collection::vec(prop_oneof![Just(0u8), Just(0xff), any::<u8>()], 0..40),
+            ops in prop::collection::vec(op(), 0..40),
+        ) {
+            let mut fast = Bits::new(&data);
+            let mut slow = Slow { data: &data, pos: 0 };
+            for op in ops {
+                match op {
+                    Op::Read(k) => {
+                        let (f, s) = (fast.read(k).ok(), slow.read(k));
+                        prop_assert_eq!(f, s);
+                        if f.is_none() {
+                            return Ok(());
+                        }
+                    }
+                    Op::Unary => {
+                        let (f, s) = (fast.read_unary().ok(), slow.unary());
+                        prop_assert_eq!(f, s);
+                        if f.is_none() {
+                            return Ok(());
+                        }
+                    }
+                    Op::Rice(k, count) => {
+                        let mut got = vec![0i64; count];
+                        let ok = fast.read_rice(&mut got, k).is_ok();
+                        let mut want = Vec::new();
+                        for _ in 0..count {
+                            let Some(q) = slow.unary() else { break };
+                            let Some(low) = slow.read(k) else { break };
+                            let folded = (u64::from(q) << k) | low;
+                            want.push(((folded >> 1) as i64) ^ -((folded & 1) as i64));
+                        }
+                        prop_assert_eq!(ok, want.len() == count);
+                        if ok {
+                            prop_assert_eq!(got, want);
+                        } else {
+                            // Both gave up: what is left is unspecified, so stop here.
+                            return Ok(());
+                        }
+                    }
+                    Op::Align => {
+                        fast.align();
+                        slow.pos = slow.pos.next_multiple_of(8);
+                    }
+                }
+                prop_assert_eq!(
+                    fast.bits_left(),
+                    (data.len() * 8 - slow.pos.min(data.len() * 8)) as u64
+                );
+            }
+        }
+    }
 }
