@@ -63,7 +63,7 @@ pub fn sample_format_name(raw: &str) -> String {
     }
 }
 
-/// `pcm_s16le` reads `PCM (16-bit little-endian)`; short enough for a value column.
+/// `pcm_s16le` reads `PCM 16-bit LE`; short enough for a value column.
 pub fn codec_name(raw: &str) -> String {
     if raw == "flac" {
         return "FLAC".into();
@@ -71,23 +71,19 @@ pub fn codec_name(raw: &str) -> String {
     let Some(rest) = raw.strip_prefix("pcm_") else {
         return raw.into();
     };
-    let (sample, endian) = match rest.strip_suffix("le") {
-        Some(sample) => (sample, Some("little-endian")),
-        None => (
-            rest.strip_suffix("be").unwrap_or(rest),
-            rest.strip_suffix("be").map(|_| "big-endian"),
-        ),
-    };
-    let depth = match (sample, endian) {
-        ("u8", _) => return "PCM (8-bit unsigned)".into(),
-        ("s8", _) => return "PCM (8-bit signed)".into(),
-        (other, _) => sample_format_name(other),
-    };
-    match endian {
-        Some(endian) if depth.ends_with("float") => format!("PCM ({depth}, {endian})"),
-        Some(endian) => format!("PCM ({depth} {endian})"),
-        None => raw.into(),
+    match rest {
+        "u8" => return "PCM 8-bit unsigned".into(),
+        "s8" => return "PCM 8-bit signed".into(),
+        _ => {}
     }
+    let (sample, endian) = if let Some(sample) = rest.strip_suffix("le") {
+        (sample, "LE")
+    } else if let Some(sample) = rest.strip_suffix("be") {
+        (sample, "BE")
+    } else {
+        return raw.into();
+    };
+    format!("PCM {} {endian}", sample_format_name(sample))
 }
 
 /// The significant bits of a stream: the raw count when it is below the sample format's.
