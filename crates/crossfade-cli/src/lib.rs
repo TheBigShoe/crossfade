@@ -179,3 +179,117 @@ pub fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{EXIT_CANCELLED, Outcome, run_command};
+    use crossfade_app::FsIo;
+    use crossfade_graph::{CancelToken, Event};
+    use std::path::PathBuf;
+
+    struct Dir(PathBuf);
+
+    impl Dir {
+        fn new(name: &str) -> Self {
+            let p =
+                std::env::temp_dir().join(format!("crossfade-cli-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+
+        fn path(&self, name: &str) -> String {
+            self.0.join(name).to_string_lossy().into_owned()
+        }
+
+        fn listing(&self) -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(&self.0)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Mono 16-bit 8 kHz silence; large enough for the engine to report progress
+    /// several times.
+    fn write_silence(dir: &Dir, name: &str, frames: u32) -> String {
+        let data = frames * 2;
+        let mut v = Vec::new();
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&(36 + data).to_le_bytes());
+        v.extend_from_slice(b"WAVEfmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&8000u32.to_le_bytes());
+        v.extend_from_slice(&16_000u32.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&data.to_le_bytes());
+        v.resize(v.len() + data as usize, 0);
+        let path = dir.path(name);
+        std::fs::write(&path, v).unwrap();
+        path
+    }
+
+    fn convert(dir: &Dir, cancel: &CancelToken, on_event: &mut dyn FnMut(&Event)) -> Outcome {
+        let args = ["convert", &dir.path("in.wav"), "-o", &dir.path("out.flac")];
+        run_command(args, &mut FsIo::new(), cancel, on_event).unwrap()
+    }
+
+    #[test]
+    fn a_token_cancelled_before_start_leaves_only_the_input() {
+        let d = Dir::new("pre");
+        write_silence(&d, "in.wav", 1000);
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let outcome = convert(&d, &cancel, &mut |_| {});
+        assert!(matches!(outcome, Outcome::Cancelled));
+        assert_eq!(outcome.exit_code(), EXIT_CANCELLED);
+        assert_eq!(EXIT_CANCELLED, 130);
+        assert_eq!(d.listing(), ["in.wav"]);
+    }
+
+    #[test]
+    fn cancelling_from_a_progress_report_stops_and_cleans_up() {
+        let d = Dir::new("mid");
+        write_silence(&d, "in.wav", 2_000_000);
+        let cancel = CancelToken::new();
+        let mut reports = 0;
+        let outcome = convert(&d, &cancel, &mut |event| {
+            if matches!(event, Event::Progress { .. }) {
+                reports += 1;
+                cancel.cancel();
+            }
+        });
+        assert!(reports >= 1, "the conversion never reported progress");
+        assert!(matches!(outcome, Outcome::Cancelled));
+        assert_eq!(outcome.exit_code(), 130);
+        assert_eq!(d.listing(), ["in.wav"]);
+    }
+
+    #[test]
+    fn an_uncancelled_run_succeeds_and_failures_exit_1() {
+        let d = Dir::new("ok");
+        write_silence(&d, "in.wav", 1000);
+        let outcome = convert(&d, &CancelToken::new(), &mut |_| {});
+        assert!(matches!(outcome, Outcome::Done(_)));
+        assert_eq!(outcome.exit_code(), 0);
+        assert_eq!(d.listing(), ["in.wav", "out.flac"]);
+        let again = convert(&d, &CancelToken::new(), &mut |_| {});
+        assert!(
+            matches!(again, Outcome::Failed(_)),
+            "exists without --force"
+        );
+        assert_eq!(again.exit_code(), 1);
+    }
+}
