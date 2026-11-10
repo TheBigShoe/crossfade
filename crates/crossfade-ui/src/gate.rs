@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use crate::prelude::*;
 use crate::test_support::{
-    FORMAT_LABELS, Rig, TempDir, add_paths, click, draw, has, open_sheet, open_with, pick,
-    sample_at, step, type_output,
+    FORMAT_LABELS, Rig, TempDir, add_paths, click, draw, has, open_in, open_sheet, pick, sample_at,
+    step, type_output,
 };
 use crate::workspace::{Workspace, WorkspaceOptions};
 
@@ -45,7 +45,8 @@ fn real_rig(cx: &mut TestAppContext) -> Rig {
     // Before any worker thread exists: the scheduler flags later wake-ups from other
     // threads as non-determinism unless parking was allowed first.
     cx.executor().allow_parking();
-    let (window, workspace) = open_with(cx, WorkspaceOptions::real());
+    let config = crate::config_test_support::TempDir::new("gate-config");
+    let (window, workspace) = open_in(cx, WorkspaceOptions::real(), &config);
     // The scripted half of the rig is unused here; its runner never starts anything.
     let (script, _) = crate::scripted::Script::options();
     Rig {
@@ -53,6 +54,7 @@ fn real_rig(cx: &mut TestAppContext) -> Rig {
         workspace,
         script,
         dir: TempDir::new("gate"),
+        config,
     }
 }
 
