@@ -16,6 +16,11 @@ serde_json.workspace = true
 
 [dev-dependencies]
 crossfade-testkit.workspace = true
+criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "convert"
+harness = false
