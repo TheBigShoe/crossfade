@@ -72,3 +72,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo llvm-cov --workspace --fail-under-lines 87
       - run: cargo llvm-cov -p crossfade-core --fail-under-lines 90
+
+  # Nightly is needed only here; every other job uses rust-toolchain.toml.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo fetch --manifest-path fuzz/Cargo.toml --locked
+      # install-action's cargo-fuzz is a musl build; pin the gnu target explicitly.
+      - name: Smoke-fuzz each target
+        run: |
+          for t in $(cargo +nightly fuzz list); do
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$t" -- \
+              -max_total_time=30 -rss_limit_mb=2048 -malloc_limit_mb=256
+          done

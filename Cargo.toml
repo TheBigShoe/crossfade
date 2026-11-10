@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# libFuzzer is C++; the fuzz crate stays outside the pure-Rust workspace.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0"

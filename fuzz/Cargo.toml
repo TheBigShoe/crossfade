@@ -1,0 +1,30 @@
+[package]
+name = "crossfade-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+crossfade-core = { path = "../crates/crossfade-core" }
+
+# Not a member of the engine workspace: libFuzzer is C++.
+[workspace]
+
+[[bin]]
+name = "rational_ops"
+path = "fuzz_targets/rational_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "time_rescale"
+path = "fuzz_targets/time_rescale.rs"
+test = false
+doc = false
+bench = false
