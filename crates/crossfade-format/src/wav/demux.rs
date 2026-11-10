@@ -9,6 +9,8 @@ const STREAMING: u32 = 0xFFFF_FFFF;
 const FORMAT_PCM: u16 = 1;
 const FORMAT_FLOAT: u16 = 3;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+/// Bytes of a `fmt ` chunk that carry fields (the extensible layout).
+const FMT_FIELDS: usize = 40;
 
 pub struct WavDemuxer {
     source: Box<dyn MediaSource>,
@@ -174,7 +176,7 @@ impl WavDemuxer {
         if n < 12 || head[..4] != *b"RIFF" || head[8..] != *b"WAVE" {
             return Err(Error::UnrecognisedFormat);
         }
-        let mut fmt: Option<Vec<u8>> = None;
+        let mut fmt: Option<([u8; FMT_FIELDS], usize)> = None;
         loop {
             let mut ch = [0u8; 8];
             match fill(source.as_mut(), &mut pos, &mut ch)? {
@@ -185,19 +187,20 @@ impl WavDemuxer {
             let size = u32_at(&ch, 4);
             let padded = u64::from(size) + u64::from(size % 2);
             if ch[..4] == *b"data" {
-                let f = fmt.ok_or_else(|| malformed("data chunk before fmt chunk"))?;
-                return Self::start(source, pos, size, &parse_fmt(&f)?, limits);
+                let (f, len) = fmt.ok_or_else(|| malformed("data chunk before fmt chunk"))?;
+                return Self::start(source, pos, size, &parse_fmt(&f[..len])?, limits);
             }
             if ch[..4] == *b"fmt " && fmt.is_none() {
-                let len = usize::try_from(size).unwrap_or(usize::MAX);
-                limits.check_alloc(len)?;
+                // Read only the fields and skip the rest, so a hostile size
+                // costs no memory.
+                let len = usize::try_from(size).map_or(FMT_FIELDS, |s| s.min(FMT_FIELDS));
                 if len < 16 {
                     return Err(malformed("fmt chunk shorter than 16 bytes"));
                 }
-                let mut body = vec![0u8; len];
-                fill_exact(source.as_mut(), &mut pos, &mut body)?;
-                skip(source.as_mut(), &mut pos, padded - u64::from(size))?;
-                fmt = Some(body);
+                let mut body = [0u8; FMT_FIELDS];
+                fill_exact(source.as_mut(), &mut pos, &mut body[..len])?;
+                skip(source.as_mut(), &mut pos, padded - len as u64)?;
+                fmt = Some((body, len));
             } else {
                 skip(source.as_mut(), &mut pos, padded)?;
             }
