@@ -444,7 +444,7 @@ impl Workspace {
     pub(crate) fn can_convert(&self) -> bool {
         self.inputs
             .selected()
-            .is_some_and(|entry| matches!(entry.state, InputState::Probed(_)))
+            .is_some_and(|entry| matches!(entry.state, InputState::Probed(..)))
     }
 }
 

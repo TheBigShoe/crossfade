@@ -40,7 +40,7 @@ fn the_inspector_shows_what_the_model_returns_for_the_selected_file(cx: &mut Tes
 
     let expected = rig.workspace.read_with(cx, |w, _| {
         match &w.inputs().selected().expect("selected").state {
-            InputState::Probed(doc) => inspector::sections(doc),
+            InputState::Probed(doc, _) => inspector::sections(doc),
             InputState::Failed(error) => panic!("probe failed: {error}"),
         }
     });

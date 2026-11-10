@@ -60,7 +60,7 @@ fn clock(seconds: f64) -> String {
 
 /// The muted line under a file's name: `48 kHz · stereo · s24 · 1:02.250`.
 pub(crate) fn summary(entry: &InputEntry) -> String {
-    let InputState::Probed(doc) = &entry.state else {
+    let InputState::Probed(doc, _) = &entry.state else {
         return "unreadable".to_owned();
     };
     summary_of(doc)
@@ -92,7 +92,7 @@ impl Workspace {
     /// The selected file's inspector sections; empty for a failed or absent file.
     pub fn inspector_sections(&self) -> Vec<Section> {
         match self.inputs.selected().map(|entry| &entry.state) {
-            Some(InputState::Probed(doc)) => inspector::sections(doc),
+            Some(InputState::Probed(doc, _)) => inspector::sections(doc),
             _ => Vec::new(),
         }
     }
@@ -333,7 +333,7 @@ impl Workspace {
                             .child(SharedString::from(error.clone())),
                     )
                     .into_any_element(),
-                InputState::Probed(doc) => v_flex()
+                InputState::Probed(doc, _) => v_flex()
                     .gap_4()
                     .children(inspector::sections(doc).into_iter().enumerate().map(
                         |(s, section)| {

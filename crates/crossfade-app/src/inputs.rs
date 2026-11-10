@@ -1,6 +1,6 @@
 //! The opened files and which one is selected.
 
-use crossfade_core::{JobIo, Limits};
+use crossfade_core::{JobIo, Limits, StreamInfo};
 use crossfade_graph::{ProbeDocument, probe};
 use std::path::Path;
 
@@ -9,7 +9,8 @@ pub struct InputId(u64);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputState {
-    Probed(ProbeDocument),
+    /// The document for display, and the first stream as the engine's `validate` wants it.
+    Probed(ProbeDocument, Option<StreamInfo>),
     Failed(String),
 }
 
@@ -22,10 +23,26 @@ pub struct InputEntry {
     pub state: InputState,
 }
 
+impl InputEntry {
+    pub fn document(&self) -> Option<&ProbeDocument> {
+        match &self.state {
+            InputState::Probed(doc, _) => Some(doc),
+            InputState::Failed(_) => None,
+        }
+    }
+
+    pub fn stream(&self) -> Option<&StreamInfo> {
+        match &self.state {
+            InputState::Probed(_, stream) => stream.as_ref(),
+            InputState::Failed(_) => None,
+        }
+    }
+}
+
 /// Free of `Inputs` so a UI can run it off the main thread.
 pub fn probe_path(path: &str, io: &mut dyn JobIo, limits: &Limits) -> InputState {
     match probe(path, io, limits) {
-        Ok(report) => InputState::Probed(report.document()),
+        Ok(report) => InputState::Probed(report.document(), report.streams.first().cloned()),
         Err(e) => InputState::Failed(e.to_string()),
     }
 }
