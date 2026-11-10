@@ -20,43 +20,204 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crossfade_app::queue::RunnerEvent;
 use crossfade_ui::prelude::gpui_test::TestWindowExt;
 use crossfade_ui::prelude::*;
+use crossfade_ui::scripted::Script;
 use crossfade_ui::{Workspace, init};
 
 const WINDOW: (f32, f32) = (1180., 760.);
+const NARROW: (f32, f32) = (900., 600.);
 const FRAME: Duration = Duration::from_millis(8);
 
-/// One picture: its file name and what to do to the stage before it is taken.
+/// One picture: its file name, its window size and what to do to the stage before it is
+/// taken.
 struct Scene {
     file: &'static str,
+    size: (f32, f32),
     drive: fn(&mut Stage),
 }
 
 const SCENES: &[Scene] = &[
     Scene {
         file: "01-empty-dark.png",
+        size: WINDOW,
         drive: |stage| stage.set_theme(ThemeMode::Dark),
     },
     Scene {
         file: "02-empty-light.png",
+        size: WINDOW,
         drive: |stage| stage.set_theme(ThemeMode::Light),
+    },
+    Scene {
+        file: "03-files-inspector-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[
+                ("interview-take-1.wav", 48_000, 2),
+                ("room-tone.wav", 44_100, 1),
+            ]);
+            stage.add(&[("mix-master-final-v3-really-final.wav", 96_000, 2)]);
+        },
+    },
+    Scene {
+        file: "04-convert-sheet-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.convert();
+        },
+    },
+    Scene {
+        file: "05-convert-sheet-problem-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            // The default output already exists, so the sheet warns.
+            stage.write_bytes("interview-take-1-copy.wav", b"older conversion");
+            stage.convert();
+        },
+    },
+    Scene {
+        file: "06-queue-running-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.enqueue(&["interview-take-1.wav", "take-1-24bit.wav", "s24"]);
+            stage.enqueue(&["interview-take-1.wav", "take-1-float.wav", "f32"]);
+            stage.send(
+                0,
+                RunnerEvent::Progress {
+                    frames_done: 21_000_000,
+                    frames_total: Some(50_000_000),
+                },
+            );
+        },
+    },
+    Scene {
+        file: "07-queue-mixed-light.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Light);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            for out in ["a.wav", "b.wav", "c.wav", "d.wav", "e.wav"] {
+                stage.enqueue(&["interview-take-1.wav", out, "s16"]);
+            }
+            stage.send(0, RunnerEvent::Finished { frames: 6_000_000 });
+            stage.send(
+                1,
+                RunnerEvent::Failed {
+                    message: "disk full while writing b.wav".into(),
+                },
+            );
+            stage.click("queue-cancel-2");
+            stage.send(2, RunnerEvent::Cancelled);
+            stage.send(
+                3,
+                RunnerEvent::Progress {
+                    frames_done: 30,
+                    frames_total: Some(100),
+                },
+            );
+        },
+    },
+    Scene {
+        file: "08-failed-input-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.write_bytes("broken-recording.wav", b"RIFF not really a wave file");
+            stage.add_raw(&["broken-recording.wav"]);
+        },
+    },
+    Scene {
+        file: "09-narrow-900x600-dark.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[
+                ("interview-take-1.wav", 48_000, 2),
+                (
+                    "a-rather-long-file-name-for-the-narrow-window.wav",
+                    96_000,
+                    2,
+                ),
+            ]);
+            stage.enqueue(&[
+                "interview-take-1.wav",
+                "a-rather-long-file-name-for-the-narrow-window-24bit.wav",
+                "s24",
+            ]);
+            stage.send(
+                0,
+                RunnerEvent::Progress {
+                    frames_done: 1,
+                    frames_total: Some(3),
+                },
+            );
+        },
     },
 ];
 
+/// A scratch directory for generated inputs, removed when the scene ends.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(scene: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("crossfade-shots-{scene}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the scratch directory");
+        Self(dir)
+    }
+
+    fn path(&self, name: &str) -> String {
+        self.0.join(name).to_string_lossy().into_owned()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A 16-bit PCM WAV of `frames` frames of a quiet ramp.
+fn wav_s16(rate: u32, channels: u16, frames: u32) -> Vec<u8> {
+    let data_len = frames * u32::from(channels) * 2;
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_len).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&channels.to_le_bytes());
+    v.extend_from_slice(&rate.to_le_bytes());
+    v.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
+    v.extend_from_slice(&(channels * 2).to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_len.to_le_bytes());
+    v.resize(v.len() + data_len as usize, 0);
+    v
+}
+
 /// One scene's app, window and workspace.
 struct Stage {
-    #[expect(
-        dead_code,
-        reason = "scenes will read the workspace once they drive it"
-    )]
     workspace: Entity<Workspace>,
     window: AnyWindowHandle,
     cx: HeadlessAppContext,
+    script: Script,
+    dir: Scratch,
 }
 
 impl Stage {
-    fn open(text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    fn open(scene: &Scene, text_system: Arc<dyn PlatformTextSystem>) -> Self {
         // The app's icon set, as in the binary, so SVG icons draw. Keep this in step with
         // `src/main.rs`.
         let mut cx = HeadlessAppContext::with_platform(
@@ -64,7 +225,8 @@ impl Stage {
             Arc::new(Assets),
             platform::current_headless_renderer,
         );
-        let (width, height) = WINDOW;
+        let (width, height) = scene.size;
+        let (script, options) = Script::options();
         let (window, workspace) = cx
             .update(|cx| {
                 init(cx);
@@ -80,7 +242,7 @@ impl Stage {
                         ..Default::default()
                     },
                     cx,
-                    |window, cx| cx.new(|cx| Workspace::new(window, cx)),
+                    |window, cx| cx.new(|cx| Workspace::new(options, window, cx)),
                 )
             })
             .expect("open the workspace window");
@@ -89,12 +251,95 @@ impl Stage {
             workspace,
             window,
             cx,
+            script,
+            dir: Scratch::new(scene.file.trim_end_matches(".png")),
         }
     }
 
     /// Switch gpui-kit's built-in theme.
     fn set_theme(&mut self, mode: ThemeMode) {
         self.cx.update(|cx| Theme::change(mode, None, cx));
+        self.cx.run_until_parked();
+    }
+
+    fn write_bytes(&mut self, name: &str, bytes: &[u8]) {
+        std::fs::write(self.dir.path(name), bytes).expect("write a scratch file");
+    }
+
+    /// Generate `(name, rate, channels)` WAVs, one second long, and add them as the
+    /// workspace's inputs.
+    fn add(&mut self, files: &[(&str, u32, u16)]) {
+        let mut names = Vec::new();
+        for (name, rate, channels) in files {
+            self.write_bytes(name, &wav_s16(*rate, *channels, rate * 3));
+            names.push(*name);
+        }
+        self.add_raw(&names);
+    }
+
+    fn add_raw(&mut self, names: &[&str]) {
+        let paths: Vec<PathBuf> = names
+            .iter()
+            .map(|n| PathBuf::from(self.dir.path(n)))
+            .collect();
+        let workspace = self.workspace.clone();
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| workspace.add_paths(paths, window, cx));
+            })
+            .expect("the window is open");
+        self.cx.run_until_parked();
+    }
+
+    /// Open the convert sheet for the selected file.
+    fn convert(&mut self) {
+        let workspace = self.workspace.clone();
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| workspace.open_convert(window, cx));
+            })
+            .expect("the window is open");
+        self.cx.run_until_parked();
+        self.cx.advance_clock(FRAME);
+        self.cx.run_until_parked();
+    }
+
+    /// Queue `[input, output, sample format]` as the CLI would spell it.
+    fn enqueue(&mut self, [input, output, format]: &[&str; 3]) {
+        let args = [
+            "convert".to_owned(),
+            self.dir.path(input),
+            "-o".to_owned(),
+            self.dir.path(output),
+            "--sample-format".to_owned(),
+            (*format).to_owned(),
+        ];
+        let request = crossfade_cli::request_from_args(args)
+            .expect("valid arguments")
+            .expect("a convert request");
+        let workspace = self.workspace.clone();
+        self.cx.update(|cx| {
+            workspace.update(cx, |workspace, cx| workspace.enqueue(request, cx));
+        });
+        self.cx.run_until_parked();
+    }
+
+    /// Report on the `start`-th job the runner was given.
+    fn send(&mut self, start: usize, event: RunnerEvent) {
+        self.script.send(start, event);
+        self.cx.run_until_parked();
+        self.draw().expect("draw");
+    }
+
+    fn click(&mut self, id: &'static str) {
+        self.draw().expect("draw");
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                window.click(id, cx);
+                // Park the pointer on something inert so no hover state is in the picture.
+                window.hover("status-text", cx);
+            })
+            .expect("the window is open");
         self.cx.run_until_parked();
     }
 
@@ -149,7 +394,7 @@ fn take(
     text_system: Arc<dyn PlatformTextSystem>,
     path: &Path,
 ) -> Result<(u32, u32), String> {
-    let mut stage = Stage::open(text_system);
+    let mut stage = Stage::open(scene, text_system);
     (scene.drive)(&mut stage);
     stage.capture(path)
 }

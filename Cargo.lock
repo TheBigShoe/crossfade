@@ -1547,7 +1547,13 @@ name = "crossfade-ui"
 version = "0.0.0"
 dependencies = [
  "appconfig",
+ "async-channel",
  "crossbeam-channel",
+ "crossfade-app",
+ "crossfade-cli",
+ "crossfade-core",
+ "crossfade-graph",
+ "crossfade-testkit",
  "gpui-kit",
  "serde",
  "serde_json",

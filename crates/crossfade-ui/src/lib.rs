@@ -4,9 +4,13 @@
 pub mod actions;
 pub mod chrome;
 pub mod config;
+pub mod convert_sheet;
 pub mod dialog_footer;
+pub mod files;
 pub mod icons;
 pub mod keymap;
+pub mod queue_view;
+pub mod scripted;
 pub mod settings;
 pub mod theme_bridge;
 pub mod workspace;
@@ -16,9 +20,17 @@ mod config_test_support;
 #[cfg(test)]
 mod config_tests;
 #[cfg(test)]
+mod files_tests;
+#[cfg(test)]
+mod gate;
+#[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod queue_tests;
+#[cfg(test)]
 mod settings_tests;
+#[cfg(test)]
+mod sheet_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -26,7 +38,8 @@ mod theme_bridge_tests;
 #[cfg(test)]
 mod workspace_tests;
 
-pub use workspace::{Workspace, init, open_main_window};
+pub use convert_sheet::{ConvertDialog, ConvertEvent};
+pub use workspace::{Workspace, WorkspaceOptions, init, open_main_window};
 
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports
@@ -60,12 +73,17 @@ pub mod prelude {
     pub use gpui_kit::TestSupportExt;
 
     pub use gpui_kit::component::button::{Button, ButtonVariants};
-    pub use gpui_kit::component::dialog::{Cancel, Confirm, DialogFooter};
-    pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
+    pub use gpui_kit::component::dialog::{Cancel, Confirm, Dialog, DialogFooter};
     // gpui-kit's theme file types, which the theme bridge fills.
     pub use gpui_kit::component::highlighter::HighlightThemeStyle;
+    pub use gpui_kit::component::input::{Input, InputEvent, InputState};
+    pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
+    pub use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+    pub use gpui_kit::component::switch::Switch;
     pub use gpui_kit::component::{
-        ActiveTheme, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex, v_flex,
+        ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex,
+        v_flex,
     };
+    pub use gpui_kit::component::{IndexPath, WindowExt};
     pub use gpui_kit::component::{ThemeConfig, ThemeConfigColors};
 }

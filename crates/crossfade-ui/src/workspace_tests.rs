@@ -76,3 +76,21 @@ fn the_overflow_menu_opens_and_about_records_about(cx: &mut TestAppContext) {
         Some(AppAction::About)
     );
 }
+
+#[gpui_test]
+fn the_default_shortcuts_open_the_sheet_and_toggle_the_queue(cx: &mut TestAppContext) {
+    let rig = crate::test_support::open_rig(cx);
+    let input = rig.dir.write_wav("in.wav", 48_000, 1, 100);
+    crate::test_support::add_paths(cx, &rig, &[&input]);
+    press(cx, rig.window, "secondary-enter");
+    step(cx, 3);
+    draw(cx, rig.window);
+    assert!(has(cx, rig.window, "sheet-output"));
+    press(cx, rig.window, "escape");
+    step(cx, 3);
+
+    press(cx, rig.window, "secondary-j");
+    assert!(rig.workspace.read_with(cx, |w, _| w.queue_open()));
+    press(cx, rig.window, "secondary-j");
+    assert!(!rig.workspace.read_with(cx, |w, _| w.queue_open()));
+}

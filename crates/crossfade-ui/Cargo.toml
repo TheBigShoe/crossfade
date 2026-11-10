@@ -24,9 +24,15 @@ crossbeam-channel.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
+crossfade-app.workspace = true
+crossfade-core.workspace = true
+crossfade-graph.workspace = true
+async-channel.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+crossfade-cli.workspace = true
+crossfade-testkit.workspace = true
 
 [lints]
 workspace = true
