@@ -26,6 +26,15 @@ impl Signal {
         (self.samples.len() * self.spec.format().bytes_per_sample()) as u64
     }
 
+    /// Signed little-endian PCM, for timing another tool on the same audio.
+    fn raw(&self) -> Vec<u8> {
+        let width = self.spec.format().bytes_per_sample();
+        self.samples
+            .iter()
+            .flat_map(|s| s.to_le_bytes()[..width].to_vec())
+            .collect()
+    }
+
     fn frame(&self) -> AudioFrame {
         let mut f = AudioFrame::new(&self.spec);
         f.samples = match self.spec.format() {
@@ -137,6 +146,16 @@ fn read_decode(bytes: Vec<u8>) -> u64 {
 fn bench(c: &mut Criterion) {
     let long = signal("60s_44k1_16bit_stereo", 44_100, SampleFormat::S16, 60);
     let wide = signal("10s_96k_24bit_stereo", 96_000, SampleFormat::S24, 10);
+    // `CROSSFADE_BENCH_DUMP=dir` writes the inputs as raw PCM so `flac` can be timed on them.
+    if let Some(dir) = std::env::var_os("CROSSFADE_BENCH_DUMP") {
+        for s in [&long, &wide] {
+            std::fs::write(
+                std::path::Path::new(&dir).join(format!("{}.raw", s.name)),
+                s.raw(),
+            )
+            .unwrap();
+        }
+    }
 
     let mut group = c.benchmark_group("flac_decode");
     group
