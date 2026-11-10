@@ -63,7 +63,7 @@ fn contrast_ratio_matches_wcag() {
 
 #[gpui_test]
 fn each_bundled_theme_reaches_the_kit_colors(cx: &mut TestAppContext) {
-    cx.update(|cx| kit_init(cx));
+    cx.update(kit_init);
     let registry = registry();
     for name in ["Crossfade Dark", "Crossfade Light"] {
         let theme = registry.get(name).expect("bundled theme");
@@ -86,7 +86,7 @@ fn each_bundled_theme_reaches_the_kit_colors(cx: &mut TestAppContext) {
 
 #[gpui_test]
 fn the_mode_flag_follows_the_theme(cx: &mut TestAppContext) {
-    cx.update(|cx| kit_init(cx));
+    cx.update(kit_init);
     let registry = registry();
     let dark = registry.get("Crossfade Dark").unwrap();
     let light = registry.get("Crossfade Light").unwrap();
@@ -103,7 +103,7 @@ fn the_mode_flag_follows_the_theme(cx: &mut TestAppContext) {
 
 #[gpui_test]
 fn the_primary_label_is_whichever_reads_better(cx: &mut TestAppContext) {
-    cx.update(|cx| kit_init(cx));
+    cx.update(kit_init);
     let registry = registry();
     for name in ["Crossfade Dark", "Crossfade Light"] {
         let theme = registry.get(name).unwrap();
@@ -125,7 +125,7 @@ fn the_primary_label_is_whichever_reads_better(cx: &mut TestAppContext) {
 
 #[gpui_test]
 fn the_ui_font_reaches_gpui_kit(cx: &mut TestAppContext) {
-    cx.update(|cx| kit_init(cx));
+    cx.update(kit_init);
     let registry = registry();
     let theme = registry.get("Crossfade Dark").unwrap();
     cx.update(|cx| {
@@ -150,7 +150,7 @@ fn the_ui_font_reaches_gpui_kit(cx: &mut TestAppContext) {
 
 #[gpui_test]
 fn a_dialog_backdrop_reads_on_dark_and_light(cx: &mut TestAppContext) {
-    cx.update(|cx| kit_init(cx));
+    cx.update(kit_init);
     let registry = registry();
     cx.update(|cx| {
         install(registry.get("Crossfade Dark").unwrap(), &ui_font(14.0), cx);
