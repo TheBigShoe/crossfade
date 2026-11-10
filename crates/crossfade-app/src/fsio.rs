@@ -146,6 +146,20 @@ mod tests {
     }
 
     #[test]
+    fn two_writers_to_one_target_never_share_a_temp_file() {
+        let d = Dir::new("collide");
+        let target = d.path("out.wav");
+        let (mut a, mut b) = (FsIo::new(), FsIo::new());
+        a.create_sink(&target).unwrap().write_all(b"aaaa").unwrap();
+        b.create_sink(&target).unwrap().write_all(b"b").unwrap();
+        assert_eq!(d.listing().len(), 2, "{:?}", d.listing());
+        b.commit(&target).unwrap();
+        a.discard(&target);
+        assert_eq!(std::fs::read(&target).unwrap(), b"b");
+        assert_eq!(d.listing(), ["out.wav"]);
+    }
+
+    #[test]
     fn commit_replaces_an_existing_file() {
         let d = Dir::new("replace");
         let target = d.path("out.wav");
