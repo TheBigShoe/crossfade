@@ -1,3 +1,109 @@
+use std::fs::File;
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+
+/// Blocking byte input. Not `Read + Seek` so a non-seekable source (a pipe)
+/// can say so and have `seek` fail instead of lying.
+pub trait MediaSource {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
+    fn byte_len(&self) -> Option<u64>;
+    fn is_seekable(&self) -> bool;
+}
+
+/// Blocking byte output. `finish` flushes and surfaces deferred errors.
+pub trait MediaSink {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
+    fn finish(&mut self) -> io::Result<()>;
+}
+
+impl MediaSource for Cursor<Vec<u8>> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Read::read(self, buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        Seek::seek(self, pos)
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.get_ref().len() as u64)
+    }
+
+    fn is_seekable(&self) -> bool {
+        true
+    }
+}
+
+impl MediaSource for Cursor<&[u8]> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Read::read(self, buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        Seek::seek(self, pos)
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.get_ref().len() as u64)
+    }
+
+    fn is_seekable(&self) -> bool {
+        true
+    }
+}
+
+impl MediaSource for File {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Read::read(self, buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        Seek::seek(self, pos)
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.metadata()
+            .ok()
+            .filter(std::fs::Metadata::is_file)
+            .map(|m| m.len())
+    }
+
+    // Devices and pipes opened as `File` report no length and cannot seek.
+    fn is_seekable(&self) -> bool {
+        self.metadata().is_ok_and(|m| m.is_file())
+    }
+}
+
+impl MediaSink for Cursor<Vec<u8>> {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        Write::write_all(self, buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        Seek::seek(self, pos)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        Write::flush(self)
+    }
+}
+
+impl MediaSink for File {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        Write::write_all(self, buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        Seek::seek(self, pos)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        Write::flush(self)?;
+        self.sync_all()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{MediaSink, MediaSource};
@@ -47,7 +153,7 @@ mod tests {
         let mut s = Cursor::new(b"hello world".to_vec());
         assert_eq!(s.byte_len(), Some(11));
         assert!(s.is_seekable());
-        assert_eq!(s.seek(SeekFrom::Start(6)).unwrap(), 6);
+        assert_eq!(MediaSource::seek(&mut s, SeekFrom::Start(6)).unwrap(), 6);
         assert_eq!(read_all(&mut s), b"world");
     }
 
@@ -83,7 +189,7 @@ mod tests {
     fn vec_cursor_sink() {
         let mut s = Cursor::new(Vec::new());
         s.write_all(b"abcdef").unwrap();
-        s.seek(SeekFrom::Start(1)).unwrap();
+        MediaSink::seek(&mut s, SeekFrom::Start(1)).unwrap();
         s.write_all(b"XY").unwrap();
         s.finish().unwrap();
         assert_eq!(s.into_inner(), b"aXYdef");

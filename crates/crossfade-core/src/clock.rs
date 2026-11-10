@@ -1,3 +1,36 @@
+use std::time::{Duration, Instant};
+
+/// Monotonic time since an arbitrary fixed origin. A seam so tests can drive
+/// time by hand instead of sleeping.
+pub trait Clock {
+    fn now(&self) -> Duration;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SystemClock {
+    origin: Instant,
+}
+
+impl SystemClock {
+    pub fn new() -> Self {
+        Self {
+            origin: Instant::now(),
+        }
+    }
+}
+
+impl Default for SystemClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clock for SystemClock {
+    fn now(&self) -> Duration {
+        self.origin.elapsed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Clock, SystemClock};
