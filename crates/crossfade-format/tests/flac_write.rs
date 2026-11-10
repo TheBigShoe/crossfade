@@ -83,8 +83,7 @@ fn write_file(spec: &AudioSpec, samples: &[i32], tags: &Tags, level: Option<u8>)
     }
     mux.set_extradata(enc.extradata()).unwrap();
     mux.finish().unwrap();
-    let bytes = sink.0.lock().unwrap().get_ref().clone();
-    bytes
+    sink.0.lock().unwrap().get_ref().clone()
 }
 
 struct Walked {
@@ -113,7 +112,7 @@ fn walk(file: &[u8]) -> Walked {
             4 => {
                 tags = vorbis_comment::parse(body, &Limits::default())
                     .unwrap()
-                    .tags
+                    .tags;
             }
             _ => {}
         }
