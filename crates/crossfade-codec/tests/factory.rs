@@ -24,7 +24,9 @@ fn boxed_codecs_round_trip_for_every_pcm_codec() {
         };
         let mut dec = decoder_for(&info).unwrap();
         let mut enc = encoder_for(codec, &audio).unwrap();
-        let bytes: Vec<u8> = (0..format.bytes_per_sample() * 6).map(|i| i as u8).collect();
+        let bytes: Vec<u8> = (0..format.bytes_per_sample() * 6)
+            .map(|i| i as u8)
+            .collect();
         let pkt = Packet {
             data: bytes.clone(),
             ..Packet::default()
