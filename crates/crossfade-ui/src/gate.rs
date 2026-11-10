@@ -187,3 +187,37 @@ fn a_wav_converted_to_flac_decodes_bit_exact_and_copies_without_touching_the_aud
     assert_eq!(copied_total, total);
     assert_eq!(rig.dir.listing(), ["in-copy.flac", "in.flac", "in.wav"]);
 }
+
+#[gpui_test]
+fn quitting_mid_conversion_waits_for_the_discard_and_leaves_only_the_input(
+    cx: &mut TestAppContext,
+) {
+    let rig = real_rig(cx);
+    let quits = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = std::rc::Rc::clone(&quits);
+    cx.update(|cx| {
+        rig.workspace.update(cx, |workspace, _| {
+            workspace.set_quit(std::rc::Rc::new(move |_| seen.set(seen.get() + 1)));
+        });
+    });
+    let input = rig.dir.write_sparse_wav("big.wav", 48_000, 256 << 20);
+    add_paths(cx, &rig, &[&input]);
+    open_sheet(cx, &rig);
+    type_output(cx, &rig, &rig.dir.path("never.wav"));
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    draw(cx, rig.window);
+
+    cx.dispatch_action(rig.window, crate::actions::Quit);
+    // The quit step runs only after the worker's terminal event, which comes after the
+    // engine discarded the temp file; the bound only stops a hang.
+    for _ in 0..6000 {
+        cx.run_until_parked();
+        if quits.get() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(quits.get(), 1);
+    assert_eq!(rig.dir.listing(), ["big.wav"]);
+}

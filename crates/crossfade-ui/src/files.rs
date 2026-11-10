@@ -318,6 +318,7 @@ impl Workspace {
             return div().id("inspector").flex_1().into_any_element();
         };
         let (dir, name) = split_path(&entry.path);
+        let streams = entry.document().map_or(0, |doc| doc.streams.len());
         let body =
             match &entry.state {
                 InputState::Failed(error) => h_flex()
@@ -341,31 +342,40 @@ impl Workspace {
                             v_flex()
                                 .gap_1()
                                 .child(section_label(&section.title, cx))
-                                .children(section.rows.into_iter().map(|row| {
-                                    h_flex()
-                                        .id(SharedString::from(format!(
-                                            "inspector-row-{s}-{}",
-                                            row.id
-                                        )))
-                                        .test_support()
-                                        .h(INSPECTOR_ROW)
-                                        .items_center()
-                                        .gap_3()
-                                        .child(
-                                            div()
-                                                .flex_none()
-                                                .w(LABEL_COLUMN)
-                                                .text_color(theme.muted_foreground)
-                                                .child(row.label),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .truncate()
-                                                .child(SharedString::from(row.value)),
-                                        )
-                                }))
+                                .children(
+                                    section
+                                        .rows
+                                        .into_iter()
+                                        .filter(|row| {
+                                            // Noise for the usual one-stream file.
+                                            streams > 1 || !matches!(row.field, "index" | "type")
+                                        })
+                                        .map(|row| {
+                                            h_flex()
+                                                .id(SharedString::from(format!(
+                                                    "inspector-row-{s}-{}",
+                                                    row.id
+                                                )))
+                                                .test_support()
+                                                .h(INSPECTOR_ROW)
+                                                .items_center()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .flex_none()
+                                                        .w(LABEL_COLUMN)
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(row.label),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .child(SharedString::from(row.value)),
+                                                )
+                                        }),
+                                )
                         },
                     ))
                     .into_any_element(),
@@ -392,10 +402,30 @@ impl Workspace {
                     // The directory gives way first, so the file name always shows.
                     .child(
                         h_flex()
+                            .id("inspector-path")
+                            .test_support()
                             .text_size(LABEL_SIZE)
                             .text_color(theme.muted_foreground)
-                            .child(div().min_w_0().truncate().child(SharedString::from(dir)))
-                            .child(div().flex_none().child(SharedString::from(name.to_owned()))),
+                            .child(
+                                div()
+                                    .id("inspector-path-dir")
+                                    .test_support()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(SharedString::from(dir)),
+                            )
+                            .child(
+                                div()
+                                    .id("inspector-path-name")
+                                    .test_support()
+                                    // Never shrinks alongside the directory (a fraction of a
+                                    // pixel would clip its last letter); capped at the line, it
+                                    // truncates only when it alone is too wide.
+                                    .flex_none()
+                                    .max_w_full()
+                                    .truncate()
+                                    .child(SharedString::from(name.to_owned())),
+                            ),
                     ),
             )
             .child(body)

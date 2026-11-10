@@ -88,7 +88,6 @@
 
 mod analyze;
 mod bitsink;
-mod crc16;
 mod fixed;
 mod lpc;
 mod rice;
@@ -524,7 +523,7 @@ impl Encoder {
             }
         }
         sink.finish();
-        let crc = crc16::crc16(&out[start..]);
+        let crc = crate::crc::crc16(&out[start..]);
         out.extend_from_slice(&crc.to_be_bytes());
     }
 

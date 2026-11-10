@@ -955,3 +955,89 @@ proptest! {
         let _ = decode(&stream(44100, 2, 16), &f);
     }
 }
+
+proptest! {
+    // Both widths must undo every stereo assignment on what a valid stream of up to 31 bits
+    // holds: left and right in range, the side channel one bit wider.
+    #[test]
+    fn decorrelation_restores_left_and_right_in_both_widths(
+        which in 0usize..3,
+        lr in prop::collection::vec(
+            (prop_oneof![Just(-(1i64 << 30)), Just((1 << 30) - 1), -(1i64 << 30)..(1 << 30)],
+             prop_oneof![Just(-(1i64 << 30)), Just((1 << 30) - 1), -(1i64 << 30)..(1 << 30)]),
+            0..40,
+        ),
+    ) {
+        let assignment = [
+            ChannelAssignment::LeftSide,
+            ChannelAssignment::SideRight,
+            ChannelAssignment::MidSide,
+        ][which];
+        let coded: Vec<(i64, i64)> = lr
+            .iter()
+            .map(|&(l, r)| match assignment {
+                ChannelAssignment::LeftSide => (l, l - r),
+                ChannelAssignment::SideRight => (l - r, r),
+                _ => ((l + r) >> 1, l - r),
+            })
+            .collect();
+        let mut narrow = vec![
+            coded.iter().map(|p| p.0 as i32).collect::<Vec<_>>(),
+            coded.iter().map(|p| p.1 as i32).collect::<Vec<_>>(),
+        ];
+        let mut d = Decoder::new(&stream(44_100, 2, 32)).unwrap();
+        d.work = vec![
+            coded.iter().map(|p| p.0).collect(),
+            coded.iter().map(|p| p.1).collect(),
+        ];
+        decorrelate_i32(&mut narrow, assignment);
+        d.decorrelate(assignment);
+        let want = vec![
+            lr.iter().map(|p| p.0).collect::<Vec<_>>(),
+            lr.iter().map(|p| p.1).collect::<Vec<_>>(),
+        ];
+        prop_assert_eq!(&d.work, &want);
+        let narrow: Vec<Vec<i64>> = narrow.iter().map(|p| p.iter().map(|&v| i64::from(v)).collect()).collect();
+        prop_assert_eq!(narrow, want);
+    }
+}
+
+proptest! {
+    // The mono and stereo fast paths must write what the generic strided loops write.
+    #[test]
+    fn interleaving_and_packing_equal_the_generic_loops(
+        nch in 1usize..=3,
+        len in 0usize..40,
+        seed in any::<u64>(),
+        stale in any::<u8>(),
+    ) {
+        let mut x = seed;
+        let planes: Vec<Vec<i32>> = (0..nch)
+            .map(|_| {
+                (0..len)
+                    .map(|_| {
+                        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                        (x >> 32) as i32
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut fast = vec![0i32; 3];
+        interleave(&planes, len, &mut fast, |v| v);
+        let mut slow = vec![0i32; len * nch];
+        interleave_any(&planes, &mut slow, |v| v);
+        prop_assert_eq!(&fast, &slow);
+
+        // A reused buffer of stale bytes must come out fully rewritten.
+        let mut bytes = vec![stale; len * nch * 3];
+        pack::<3>(&planes, len, &mut bytes);
+        let mut slow = vec![0u8; len * nch * 3];
+        pack_any::<3>(&planes, &mut slow);
+        prop_assert_eq!(bytes, slow);
+        let mut bytes = Vec::new();
+        pack::<2>(&planes, len, &mut bytes);
+        let mut slow = vec![0u8; len * nch * 2];
+        pack_any::<2>(&planes, &mut slow);
+        prop_assert_eq!(bytes, slow);
+    }
+}

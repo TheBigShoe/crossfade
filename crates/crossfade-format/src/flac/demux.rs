@@ -187,13 +187,31 @@ fn read_metadata(
 fn find_sync(data: &[u8], from: usize) -> Option<usize> {
     let mut i = from;
     while i + 1 < data.len() {
-        i += data[i..data.len() - 1].iter().position(|&b| b == 0xFF)?;
+        i += find_ff(&data[i..data.len() - 1])?;
         if data[i + 1] & 0xFE == 0xF8 {
             return Some(i);
         }
         i += 1;
     }
     None
+}
+
+/// Index of the first 0xFF byte, looking eight bytes at a time: compressed audio holds one only
+/// every few hundred bytes, so a byte loop spends most of the reader's time here.
+fn find_ff(data: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    let (words, rest) = data.as_chunks::<8>();
+    for (n, w) in words.iter().enumerate() {
+        // The classic has-zero-byte test on the complement.
+        let x = !u64::from_le_bytes(*w);
+        if x.wrapping_sub(ONES) & !x & (ONES << 7) != 0 {
+            let at = w.iter().position(|&b| b == 0xFF)?;
+            return Some(n * 8 + at);
+        }
+    }
+    rest.iter()
+        .position(|&b| b == 0xFF)
+        .map(|at| words.len() * 8 + at)
 }
 
 /// Largest frame a header can describe, from the channels and depth the stream could hold:

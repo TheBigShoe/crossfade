@@ -15,7 +15,13 @@ workspace = true
 [dev-dependencies]
 proptest.workspace = true
 criterion.workspace = true
+crossfade-codec.workspace = true
+crossfade-core.workspace = true
 
 [[bench]]
 name = "encode"
+harness = false
+
+[[bench]]
+name = "decode"
 harness = false

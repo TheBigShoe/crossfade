@@ -2,6 +2,7 @@
 //! bar. The screens' rendering lives in sibling modules; this file owns the state.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crossfade_app::Request;
@@ -58,6 +59,18 @@ impl WorkspaceOptions {
     }
 }
 
+/// How long quitting waits for a cancelled conversion to report that it stopped (and so
+/// that its partial output is gone) before quitting anyway.
+pub const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What the workspace does to end the app once it is safe; tests count calls instead.
+pub type QuitFn = Rc<dyn Fn(&mut App)>;
+
+/// The workspace a Quit action goes to. Weak: a closed window leaves nothing to wait for.
+struct QuitTarget(WeakEntity<Workspace>);
+
+impl Global for QuitTarget {}
+
 /// How long a workspace notice stays in the status bar.
 const NOTICE_TIME: std::time::Duration = std::time::Duration::from_secs(6);
 
@@ -86,6 +99,10 @@ pub struct Workspace {
     /// and which one it is, so an older timer never clears a newer message.
     flash: Option<String>,
     flash_serial: u64,
+    quit: QuitFn,
+    /// Cancelled everything and waiting for the runner to confirm before quitting.
+    quitting: bool,
+    quit_done: bool,
     /// Redraws when the configuration is installed again.
     _config: Subscription,
     /// Applies the runner's reports as they arrive; ends with the view.
@@ -116,6 +133,9 @@ impl Workspace {
                         this.queue.apply(id, event);
                     }
                     this.pump();
+                    if this.quitting && this.queue.is_idle() {
+                        this.finish_quit(cx);
+                    }
                     cx.notify();
                 });
                 if applied.is_err() {
@@ -123,6 +143,19 @@ impl Workspace {
                 }
             }
         });
+        // The app's only window: closing it with work running is a quit that waits.
+        let this = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |workspace, cx| {
+                let idle = workspace.queue.is_idle();
+                if !idle {
+                    workspace.request_quit(cx);
+                }
+                idle
+            })
+            .unwrap_or(true)
+        });
+        cx.set_global(QuitTarget(cx.entity().downgrade()));
         Self {
             focus,
             last_action: None,
@@ -137,6 +170,9 @@ impl Workspace {
             drag_over: false,
             flash: None,
             flash_serial: 0,
+            quit: Rc::new(|cx| cx.quit()),
+            quitting: false,
+            quit_done: false,
             _config: cx.observe_global::<Config>(|_, cx| cx.notify()),
             _events: listening,
         }
@@ -211,8 +247,46 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Replace how the app is ended (tests: the platform's quit does nothing).
+    #[cfg(test)]
+    pub(crate) fn set_quit(&mut self, quit: QuitFn) {
+        self.quit = quit;
+    }
+
+    /// Cancel every conversion and quit once the worker has reported it stopped, which
+    /// is after the engine discarded its partial output. Never blocks the UI thread; the
+    /// wait ends after [`QUIT_GRACE`] if the worker is stuck.
+    pub fn request_quit(&mut self, cx: &mut Context<Self>) {
+        if self.quitting {
+            return;
+        }
+        self.queue.cancel_all();
+        cx.notify();
+        if self.queue.is_idle() {
+            self.finish_quit(cx);
+            return;
+        }
+        self.quitting = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(QUIT_GRACE).await;
+            this.update(cx, |this, cx| this.finish_quit(cx)).ok();
+        })
+        .detach();
+    }
+
+    fn finish_quit(&mut self, cx: &mut Context<Self>) {
+        if !self.quit_done {
+            self.quit_done = true;
+            (Rc::clone(&self.quit))(cx);
+        }
+    }
+
     /// Queue `request`, start it if nothing runs, and show the dock.
     pub fn enqueue(&mut self, request: Request, cx: &mut Context<Self>) {
+        // Nothing new may start while the app is leaving.
+        if self.quitting {
+            return;
+        }
         self.queue.enqueue(request);
         self.pump();
         self.queue_open = true;
@@ -496,7 +570,13 @@ pub fn init(cx: &mut App) {
     kit_init(cx);
     // Before anything binds keys of its own: keymap applies rebuild from this snapshot.
     snapshot_kit_bindings(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| {
+        let target = cx.try_global::<QuitTarget>().and_then(|t| t.0.upgrade());
+        match target {
+            Some(workspace) => workspace.update(cx, |workspace, cx| workspace.request_quit(cx)),
+            None => cx.quit(),
+        }
+    });
     set_menus(cx);
     let unstarted = appconfig::ConfigPaths::new(std::env::temp_dir().join("crossfade-unstarted"));
     config::install(Config::bundled(unstarted), cx);
