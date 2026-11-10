@@ -1,0 +1,20 @@
+// Crossfade default key bindings for linux, in Zed's keymap format: a list of sections,
+// each with an optional key context and a map of keystrokes to actions. Your keymap.json
+// is applied after this one, so its bindings win. Bind a key to null to unbind it.
+[
+  {
+    "bindings": {
+      "ctrl-q": "crossfade::Quit"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-o": "crossfade::OpenFiles",
+      "ctrl-enter": "crossfade::Convert",
+      "ctrl-j": "crossfade::ToggleQueue",
+      "ctrl-,": "crossfade::OpenSettings"
+      // crossfade::About has no default binding.
+    }
+  }
+]
