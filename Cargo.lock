@@ -252,6 +252,8 @@ dependencies = [
  "crossfade-graph",
  "crossfade-testkit",
  "insta",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
