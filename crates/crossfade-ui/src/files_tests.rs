@@ -50,6 +50,10 @@ fn the_inspector_shows_what_the_model_returns_for_the_selected_file(cx: &mut Tes
     assert_eq!(shown, expected);
     for (s, section) in expected.iter().enumerate() {
         for row in &section.rows {
+            // The model keeps these for the parity test; one stream hides them.
+            if matches!(row.field, "index" | "type") {
+                continue;
+            }
             let id: SharedString = format!("inspector-row-{s}-{}", row.id).into();
             assert!(has(cx, rig.window, id.clone()), "missing {id}");
         }
@@ -444,5 +448,53 @@ fn an_ogg_file_holding_vorbis_shows_the_refusal_in_plain_words(cx: &mut TestAppC
             )
         );
         assert!(!rig.workspace.read_with(cx, |w, _| w.can_convert()));
+    }
+}
+
+#[gpui_test]
+fn a_single_stream_file_hides_the_index_and_type_rows(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&a]);
+    assert!(has(cx, rig.window, "inspector-row-1-codec"));
+    assert!(!has(cx, rig.window, "inspector-row-1-index"));
+    assert!(!has(cx, rig.window, "inspector-row-1-type"));
+    // The model still has them.
+    let sections = rig.workspace.read_with(cx, |w, _| w.inspector_sections());
+    assert!(sections[1].rows.iter().any(|r| r.field == "index"));
+    assert!(sections[1].rows.iter().any(|r| r.field == "type"));
+}
+
+#[gpui_test]
+fn a_file_with_several_streams_shows_index_and_type_for_each(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&a]);
+    cx.update(|cx| {
+        rig.workspace.update(cx, |w, _| {
+            let InputState::Probed(doc, stream) =
+                w.inputs().selected().expect("a file").state.clone()
+            else {
+                panic!("probed");
+            };
+            let mut doc = doc;
+            let mut second = doc.streams[0].clone();
+            second.index = 1;
+            doc.streams.push(second);
+            w.inputs
+                .add("/two-streams.wav", InputState::Probed(doc, stream));
+        });
+    });
+    cx.run_until_parked();
+    draw(cx, rig.window);
+    for s in [1, 2] {
+        assert!(
+            has(cx, rig.window, format!("inspector-row-{s}-index")),
+            "stream {s}"
+        );
+        assert!(
+            has(cx, rig.window, format!("inspector-row-{s}-type")),
+            "stream {s}"
+        );
     }
 }
