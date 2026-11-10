@@ -733,14 +733,8 @@ fn level_and_format_are_disabled_when_the_source_cannot_be_saved_as_the_containe
     add_paths(cx, &rig, &[&input]);
     open_sheet(cx, &rig);
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
-    let select_disabled = |cx: &mut TestAppContext, id: &'static str| {
-        cx.update_window(rig.window, |_, window, _| {
-            window.within(id).find("input").disabled().unwrap_or(false)
-        })
-        .expect("open")
-    };
-    assert!(select_disabled(cx, "sheet-level"));
-    assert!(select_disabled(cx, "sheet-format"));
+    assert!(!dialog(cx, &rig, |d, _| d.level_enabled()));
+    assert!(!dialog(cx, &rig, |d, _| d.format_enabled()));
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
-    assert!(!select_disabled(cx, "sheet-format"));
+    assert!(dialog(cx, &rig, |d, _| d.format_enabled()));
 }
