@@ -1,8 +1,94 @@
-/// Exact fraction, always normalised.
+use crate::Error;
+use std::cmp::Ordering;
+
+/// Exact fraction, always normalised: gcd 1, positive denominator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rational {
     num: i64,
     den: i64,
+}
+
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+impl Rational {
+    /// Rejects a zero denominator, and results that do not fit `i64`.
+    pub fn new(num: i64, den: i64) -> Result<Self, Error> {
+        Self::from_i128(i128::from(num), i128::from(den))
+    }
+
+    // All arithmetic runs in i128 so `i64::MIN` never overflows on the way.
+    fn from_i128(num: i128, den: i128) -> Result<Self, Error> {
+        if den == 0 {
+            return Err(Error::ZeroDenominator);
+        }
+        let g = i128::try_from(gcd(num.unsigned_abs(), den.unsigned_abs()))
+            .map_err(|_| Error::Overflow)?;
+        let (mut n, mut d) = (num / g, den / g);
+        if d < 0 {
+            (n, d) = (-n, -d);
+        }
+        Ok(Self {
+            num: i64::try_from(n).map_err(|_| Error::Overflow)?,
+            den: i64::try_from(d).map_err(|_| Error::Overflow)?,
+        })
+    }
+
+    pub fn num(self) -> i64 {
+        self.num
+    }
+
+    pub fn den(self) -> i64 {
+        self.den
+    }
+
+    pub fn checked_add(self, rhs: Self) -> Result<Self, Error> {
+        Self::from_i128(
+            i128::from(self.num) * i128::from(rhs.den) + i128::from(rhs.num) * i128::from(self.den),
+            i128::from(self.den) * i128::from(rhs.den),
+        )
+    }
+
+    pub fn checked_sub(self, rhs: Self) -> Result<Self, Error> {
+        Self::from_i128(
+            i128::from(self.num) * i128::from(rhs.den) - i128::from(rhs.num) * i128::from(self.den),
+            i128::from(self.den) * i128::from(rhs.den),
+        )
+    }
+
+    pub fn checked_mul(self, rhs: Self) -> Result<Self, Error> {
+        Self::from_i128(
+            i128::from(self.num) * i128::from(rhs.num),
+            i128::from(self.den) * i128::from(rhs.den),
+        )
+    }
+
+    pub fn checked_div(self, rhs: Self) -> Result<Self, Error> {
+        if rhs.num == 0 {
+            return Err(Error::DivisionByZero);
+        }
+        Self::from_i128(
+            i128::from(self.num) * i128::from(rhs.den),
+            i128::from(self.den) * i128::from(rhs.num),
+        )
+    }
+}
+
+impl Ord for Rational {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (i128::from(self.num) * i128::from(other.den))
+            .cmp(&(i128::from(other.num) * i128::from(self.den)))
+    }
+}
+
+impl PartialOrd for Rational {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[cfg(test)]
