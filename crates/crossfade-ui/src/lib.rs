@@ -5,6 +5,14 @@ pub mod actions;
 pub mod chrome;
 pub mod dialog_footer;
 pub mod icons;
+pub mod workspace;
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod workspace_tests;
+
+pub use workspace::{Workspace, init};
 
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports
