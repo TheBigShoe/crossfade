@@ -1,5 +1,5 @@
 use crate::job::Job;
-use crossfade_codec::{decoder_for, encoder_for};
+use crossfade_codec::{EncodeOptions, decoder_for, encoder_for};
 use crossfade_core::{
     AudioFrame, AudioSpec, CodecId, Decoder, Demuxer, Encoder, Error, JobIo, Limits, Muxer, Packet,
     StreamInfo,
@@ -86,7 +86,7 @@ impl Pipeline {
             )
         };
         let decoder = decoder_for(stream)?;
-        let encoder = encoder_for(out_stream.codec, &out_spec)?;
+        let encoder = encoder_for(out_stream.codec, &out_spec, &EncodeOptions::default())?;
         let plan = Plan {
             input_format,
             output_format,
