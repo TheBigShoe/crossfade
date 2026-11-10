@@ -1,9 +1,11 @@
 use super::FRAMES_PER_PACKET;
+use super::INFO_CAP;
+use crate::aiff::decode_text;
 use crossfade_core::{
     AudioSpec, Channel, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet,
-    SampleFormat, StreamInfo, TimeBase,
+    SampleFormat, StreamInfo, Tags, TimeBase, tag_keys,
 };
-use std::io::ErrorKind;
+use std::io::{ErrorKind, SeekFrom};
 
 const STREAMING: u32 = 0xFFFF_FFFF;
 const FORMAT_PCM: u16 = 1;
@@ -16,6 +18,7 @@ pub struct WavDemuxer {
     source: Box<dyn MediaSource>,
     pos: u64,
     streams: [StreamInfo; 1],
+    tags: Tags,
     bytes_per_frame: usize,
     frames_per_packet: usize,
     next_frame: u64,
@@ -46,7 +49,11 @@ fn u32_at(b: &[u8], i: usize) -> u32 {
 }
 
 /// Fills `buf` unless the source ends first; returns the bytes read.
-fn fill(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Result<usize, Error> {
+pub(crate) fn fill(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    buf: &mut [u8],
+) -> Result<usize, Error> {
     let mut n = 0;
     while n < buf.len() {
         match source.read(&mut buf[n..]) {
@@ -60,7 +67,11 @@ fn fill(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Result<u
     Ok(n)
 }
 
-fn fill_exact(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Result<(), Error> {
+pub(crate) fn fill_exact(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    buf: &mut [u8],
+) -> Result<(), Error> {
     if fill(source, pos, buf)? < buf.len() {
         return Err(Error::UnexpectedEof { offset: *pos });
     }
@@ -68,7 +79,7 @@ fn fill_exact(source: &mut dyn MediaSource, pos: &mut u64, buf: &mut [u8]) -> Re
 }
 
 /// Skips by reading: the source may be a pipe.
-fn skip(source: &mut dyn MediaSource, pos: &mut u64, mut len: u64) -> Result<(), Error> {
+pub(crate) fn skip(source: &mut dyn MediaSource, pos: &mut u64, mut len: u64) -> Result<(), Error> {
     let mut scratch = [0u8; 4096];
     while len > 0 {
         let step = scratch
@@ -165,6 +176,99 @@ fn layout_from_mask(mask: u32, channels: u16) -> Option<ChannelLayout> {
     ChannelLayout::from_positions(positions).ok()
 }
 
+fn info_key(id: &[u8]) -> Option<&'static str> {
+    Some(match id {
+        b"INAM" => tag_keys::TITLE,
+        b"IART" => tag_keys::ARTIST,
+        b"IPRD" => tag_keys::ALBUM,
+        b"ICRD" => tag_keys::DATE,
+        b"ICMT" => tag_keys::COMMENT,
+        b"IGNR" => tag_keys::GENRE,
+        b"ITRK" => tag_keys::TRACKNUMBER,
+        b"ICOP" => tag_keys::COPYRIGHT,
+        _ => return None,
+    })
+}
+
+/// Values are NUL-terminated; a sub-chunk that overruns the list ends it.
+fn parse_info(body: &[u8], tags: &mut Tags) {
+    let mut i = 0;
+    while i + 8 <= body.len() {
+        let size = u32_at(body, i + 4) as usize;
+        let start = i + 8;
+        let Some(end) = start.checked_add(size).filter(|&e| e <= body.len()) else {
+            return;
+        };
+        if let Some(key) = info_key(&body[i..i + 4]) {
+            let value = &body[start..end];
+            let value = value.split(|&b| b == 0).next().unwrap_or_default();
+            tags.push(key, decode_text(value));
+        }
+        i = end + size % 2;
+    }
+}
+
+/// Consumes the whole `LIST` chunk body (and its pad byte). Only `INFO` lists within the
+/// caps are read; the declared size is checked before anything is allocated.
+fn read_list(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    size: u32,
+    limits: &Limits,
+    tags: &mut Tags,
+    tag_bytes: &mut usize,
+) -> Result<(), Error> {
+    let padded = u64::from(size) + u64::from(size % 2);
+    let cap = INFO_CAP.min(limits.max_alloc_bytes as u64);
+    let fits = u64::from(size) <= cap
+        && size >= 4
+        && (*tag_bytes as u64).saturating_add(u64::from(size)) <= limits.max_alloc_bytes as u64;
+    if !fits {
+        return skip(source, pos, padded);
+    }
+    let mut body = vec![0u8; size as usize];
+    fill_exact(source, pos, &mut body)?;
+    skip(source, pos, padded - u64::from(size))?;
+    if body[..4] == *b"INFO" {
+        *tag_bytes += body.len();
+        parse_info(&body[4..], tags);
+    }
+    Ok(())
+}
+
+/// Reads the chunks after the audio, for a source that can seek past it and back. Whatever
+/// goes wrong out there is not an error for the audio.
+fn tags_after_data(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+    data_size: u32,
+    limits: &Limits,
+    tags: &mut Tags,
+    tag_bytes: &mut usize,
+) -> Result<(), Error> {
+    let start = *pos;
+    let mut walk = || -> Result<(), Error> {
+        let mut p = source.seek(SeekFrom::Start(
+            start + u64::from(data_size) + u64::from(data_size % 2),
+        ))?;
+        loop {
+            let mut ch = [0u8; 8];
+            if fill(source, &mut p, &mut ch)? < 8 {
+                return Ok(());
+            }
+            let size = u32_at(&ch, 4);
+            if ch[..4] == *b"LIST" {
+                read_list(source, &mut p, size, limits, tags, tag_bytes)?;
+            } else {
+                p = source.seek(SeekFrom::Start(p + u64::from(size) + u64::from(size % 2)))?;
+            }
+        }
+    };
+    let _ = walk();
+    *pos = source.seek(SeekFrom::Start(start))?;
+    Ok(())
+}
+
 impl WavDemuxer {
     pub fn new(mut source: Box<dyn MediaSource>, limits: &Limits) -> Result<Self, Error> {
         let mut pos = 0u64;
@@ -176,6 +280,9 @@ impl WavDemuxer {
         if n < 12 || head[..4] != *b"RIFF" || head[8..] != *b"WAVE" {
             return Err(Error::UnrecognisedFormat);
         }
+        let seekable = source.is_seekable();
+        let mut tags = Tags::new();
+        let mut tag_bytes = 0usize;
         let mut fmt: Option<([u8; FMT_FIELDS], usize)> = None;
         loop {
             let mut ch = [0u8; 8];
@@ -188,7 +295,17 @@ impl WavDemuxer {
             let padded = u64::from(size) + u64::from(size % 2);
             if ch[..4] == *b"data" {
                 let (f, len) = fmt.ok_or_else(|| malformed("data chunk before fmt chunk"))?;
-                return Self::start(source, pos, size, &parse_fmt(&f[..len])?, limits);
+                let audio = parse_fmt(&f[..len])?;
+                if seekable && size != STREAMING {
+                    let (src, p) = (source.as_mut(), &mut pos);
+                    tags_after_data(src, p, size, limits, &mut tags, &mut tag_bytes)?;
+                }
+                return Self::start(source, pos, size, &audio, limits, tags);
+            }
+            if ch[..4] == *b"LIST" {
+                let (src, p) = (source.as_mut(), &mut pos);
+                read_list(src, p, size, limits, &mut tags, &mut tag_bytes)?;
+                continue;
             }
             if ch[..4] == *b"fmt " && fmt.is_none() {
                 // Read only the fields and skip the rest, so a hostile size
@@ -213,6 +330,7 @@ impl WavDemuxer {
         data_size: u32,
         audio: &AudioSpec,
         limits: &Limits,
+        tags: Tags,
     ) -> Result<Self, Error> {
         let bytes_per_frame = audio.bytes_per_frame();
         if bytes_per_frame > limits.max_packet_bytes {
@@ -240,6 +358,7 @@ impl WavDemuxer {
             source,
             pos,
             streams: [stream],
+            tags,
             bytes_per_frame,
             frames_per_packet,
             next_frame: 0,
@@ -253,6 +372,10 @@ impl WavDemuxer {
 impl Demuxer for WavDemuxer {
     fn streams(&self) -> &[StreamInfo] {
         &self.streams
+    }
+
+    fn tags(&self) -> &Tags {
+        &self.tags
     }
 
     fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {

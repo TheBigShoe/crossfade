@@ -88,7 +88,7 @@ pub fn open_demuxer(
     Ok((format, demuxer))
 }
 
-/// `tags` are written where the container can hold them; WAV does not yet.
+/// `tags` are written where the container can hold them.
 pub fn create_muxer(
     format: FormatId,
     sink: Box<dyn MediaSink>,
@@ -96,7 +96,7 @@ pub fn create_muxer(
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
     match format {
-        FormatId::Wav => Ok(Box::new(wav::WavMuxer::new(sink, stream)?)),
+        FormatId::Wav => Ok(Box::new(wav::WavMuxer::with_tags(sink, stream, tags)?)),
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => Err(Error::Unsupported {
@@ -201,12 +201,10 @@ mod tests {
         for (bytes, want) in [
             (&b"fLaC\0\0\0\x22rest"[..], "reading flac is not built yet"),
             (b"ID3\x04\0\0\0\0\0\0", "reading flac is not built yet"),
-            (b"FORM\0\0\0\x10AIFFCOMM", "reading aiff is not built yet"),
-            (b"FORM\0\0\0\x10AIFCFVER", "reading aiff is not built yet"),
         ] {
             assert_eq!(unsupported(open(bytes)), want, "{bytes:?}");
         }
-        // Ogg has a reader now; its routing is tested in `ogg::tests`.
+        // Ogg and AIFF have readers now; their routing is tested in their own modules.
         let wav = wav_bytes();
         assert_eq!(open(&wav).unwrap(), FormatId::Wav);
     }
@@ -239,10 +237,6 @@ mod tests {
         assert!(mk(FormatId::Wav).is_ok());
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
-        assert_eq!(
-            unsupported(mk(FormatId::Aiff)),
-            "writing aiff is not built yet"
-        );
         assert_eq!(
             unsupported(mk(FormatId::Ogg)),
             "writing ogg is not built yet"

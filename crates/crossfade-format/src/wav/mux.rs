@@ -1,4 +1,7 @@
-use crossfade_core::{Channel, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo};
+use super::INFO_CAP;
+use crossfade_core::{
+    Channel, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags, tag_keys,
+};
 use std::io::SeekFrom;
 
 const FORMAT_PCM: u16 = 1;
@@ -54,8 +57,57 @@ fn mask_for(positions: Option<&[Channel]>) -> u32 {
     mask
 }
 
+/// WAV `INFO` sub-chunk ids in the order they are written.
+const INFO_KEYS: [(&str, &[u8; 4]); 8] = [
+    (tag_keys::TITLE, b"INAM"),
+    (tag_keys::ARTIST, b"IART"),
+    (tag_keys::ALBUM, b"IPRD"),
+    (tag_keys::DATE, b"ICRD"),
+    (tag_keys::COMMENT, b"ICMT"),
+    (tag_keys::GENRE, b"IGNR"),
+    (tag_keys::TRACKNUMBER, b"ITRK"),
+    (tag_keys::COPYRIGHT, b"ICOP"),
+];
+
+/// A `LIST`/`INFO` chunk, or nothing when no tag maps. The first value of a key wins; values
+/// the reader would refuse for size are left out.
+fn info_chunk(tags: &Tags) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (key, id) in INFO_KEYS {
+        let Some(value) = tags.get(key) else { continue };
+        let len = value.len() as u64 + 1;
+        let padded = len + len % 2;
+        if 4 + body.len() as u64 + 8 + padded > INFO_CAP {
+            continue;
+        }
+        body.extend_from_slice(id);
+        body.extend_from_slice(&(len as u32).to_le_bytes());
+        body.extend_from_slice(value.as_bytes());
+        body.push(0);
+        if len % 2 == 1 {
+            body.push(0);
+        }
+    }
+    if body.is_empty() {
+        return body;
+    }
+    let mut out = b"LIST".to_vec();
+    out.extend_from_slice(&(4 + body.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"INFO");
+    out.extend_from_slice(&body);
+    out
+}
+
 impl WavMuxer {
-    pub fn new(mut sink: Box<dyn MediaSink>, stream: &StreamInfo) -> Result<Self, Error> {
+    pub fn new(sink: Box<dyn MediaSink>, stream: &StreamInfo) -> Result<Self, Error> {
+        Self::with_tags(sink, stream, &Tags::new())
+    }
+
+    pub fn with_tags(
+        mut sink: Box<dyn MediaSink>,
+        stream: &StreamInfo,
+        tags: &Tags,
+    ) -> Result<Self, Error> {
         let audio = &stream.audio;
         let format = audio.format();
         if stream.codec != CodecId::pcm_for(format) {
@@ -113,6 +165,7 @@ impl WavMuxer {
             fact_at = Some(h.len() as u64);
             h.extend_from_slice(&[0; 4]);
         }
+        h.extend_from_slice(&info_chunk(tags));
         h.extend_from_slice(b"data\0\0\0\0");
         let header_len = h.len() as u64;
         sink.write_all(&h)?;
