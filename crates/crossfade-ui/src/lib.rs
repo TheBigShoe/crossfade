@@ -6,6 +6,7 @@ pub mod chrome;
 pub mod dialog_footer;
 pub mod icons;
 pub mod settings;
+pub mod theme_bridge;
 pub mod workspace;
 
 #[cfg(test)]
@@ -14,6 +15,8 @@ mod config_test_support;
 mod settings_tests;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod theme_bridge_tests;
 #[cfg(test)]
 mod workspace_tests;
 
