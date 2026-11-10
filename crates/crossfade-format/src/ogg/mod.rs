@@ -1,6 +1,7 @@
 //! Ogg container.
 
 mod crc;
+mod flac;
 mod packets;
 mod page;
 #[cfg(test)]
