@@ -18,6 +18,12 @@ path = "src/main.rs"
 # gpui-kit re-exports GPUI and its macros resolve through it, so GPUI is not listed
 # separately. Code reaches all of it through `prelude`.
 gpui-kit.workspace = true
+appconfig.workspace = true
+# The config watcher thread sends on it; a background task drains it for the UI.
+crossbeam-channel.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

@@ -1546,7 +1546,12 @@ dependencies = [
 name = "crossfade-ui"
 version = "0.0.0"
 dependencies = [
+ "appconfig",
+ "crossbeam-channel",
  "gpui-kit",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

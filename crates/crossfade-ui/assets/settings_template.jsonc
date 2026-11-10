@@ -1,0 +1,24 @@
+// Crossfade settings. Every setting is listed below with its default value, commented
+// out. Remove the leading // from a line to change it.
+{
+  // A theme name, or { "mode": "system" | "light" | "dark", "light": name, "dark": name }.
+  // Mode "system" follows the operating system appearance.
+  // "theme": {
+  //   "mode": "system",
+  //   "light": "Crossfade Light",
+  //   "dark": "Crossfade Dark"
+  // },
+
+  // Font family of the interface. null uses the system UI font.
+  // "ui_font_family": null,
+  // Interface font size in points; values outside 10 to 24 are clamped.
+  // "ui_font_size": 14.0,
+
+  // What a new conversion starts from.
+  // "convert": {
+  //   // The output preset a conversion starts with. "same" keeps the input's format.
+  //   "preset": "same",
+  //   // Replace an output file that already exists instead of asking.
+  //   "overwrite": false
+  // }
+}

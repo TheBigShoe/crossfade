@@ -1,0 +1,14 @@
+// Crossfade key bindings. This file is applied after the bundled keymap, so a binding
+// here wins. The format is Zed's: a list of sections, each with an optional key context
+// and a map of keystrokes to actions. Bind a key to null to unbind it.
+//
+// For example, to start a conversion with cmd-shift-enter as well:
+// [
+//   {
+//     "context": "Workspace",
+//     "bindings": {
+//       "cmd-shift-enter": "crossfade::Convert"
+//     }
+//   }
+// ]
+[]

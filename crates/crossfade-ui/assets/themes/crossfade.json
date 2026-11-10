@@ -1,0 +1,99 @@
+{
+  "$schema": "https://zed.dev/schema/themes/v0.2.0.json",
+  "name": "Crossfade",
+  "author": "Crossfade",
+  "themes": [
+    {
+      "name": "Crossfade Dark",
+      "appearance": "dark",
+      "style": {
+        "background": "#16181d",
+        "surface.background": "#1b1e24",
+        "elevated_surface.background": "#22262d",
+        "panel.background": "#191c21",
+        "title_bar.background": "#14161b",
+        "status_bar.background": "#14161b",
+        "tab_bar.background": "#171a1f",
+        "tab.inactive_background": "#171a1f",
+        "tab.active_background": "#111318",
+        "toolbar.background": "#111318",
+        "element.background": "#23282f",
+        "element.hover": "#2b313a",
+        "element.active": "#343b46",
+        "element.selected": "#2e3b4d",
+        "ghost_element.hover": "#ffffff10",
+        "ghost_element.selected": "#6fb4ff24",
+        "border": "#2c323b",
+        "border.variant": "#23282f",
+        "border.focused": "#4f9cf0",
+        "border.selected": "#35597f",
+        "text": "#d8dde6",
+        "text.muted": "#99a2b1",
+        "text.accent": "#6fb4ff",
+        "icon.accent": "#6fb4ff",
+        "scrollbar.thumb.background": "#ffffff26",
+        "scrollbar.thumb.hover_background": "#ffffff3d",
+        "scrollbar.track.background": "#00000000",
+        "success": "#86d094",
+        "warning": "#e6c46e",
+        "error": "#ea6f78",
+        "info": "#6cadf5",
+        "editor.background": "#16181d",
+        "editor.foreground": "#d8dde6",
+        "players": [
+          {
+            "cursor": "#6fb4ff",
+            "background": "#6fb4ff",
+            "selection": "#6fb4ff3d"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Crossfade Light",
+      "appearance": "light",
+      "style": {
+        "background": "#f4f5f7",
+        "surface.background": "#eceef2",
+        "elevated_surface.background": "#ffffff",
+        "panel.background": "#eff1f4",
+        "title_bar.background": "#e8eaee",
+        "status_bar.background": "#e8eaee",
+        "tab_bar.background": "#eceef1",
+        "tab.inactive_background": "#eceef1",
+        "tab.active_background": "#fbfbfc",
+        "toolbar.background": "#fbfbfc",
+        "element.background": "#e4e7ec",
+        "element.hover": "#dbdfe6",
+        "element.active": "#cfd4dd",
+        "element.selected": "#cfe0f6",
+        "ghost_element.hover": "#00000012",
+        "ghost_element.selected": "#1f63c626",
+        "border": "#cfd4dc",
+        "border.variant": "#dde1e7",
+        "border.focused": "#2f7be0",
+        "border.selected": "#a9c6ee",
+        "text": "#23272e",
+        "text.muted": "#5b6472",
+        "text.accent": "#1f63c6",
+        "icon.accent": "#1f63c6",
+        "scrollbar.thumb.background": "#00000026",
+        "scrollbar.thumb.hover_background": "#0000003d",
+        "scrollbar.track.background": "#00000000",
+        "success": "#2a8a3f",
+        "warning": "#9a6a06",
+        "error": "#c2303c",
+        "info": "#1f63c6",
+        "editor.background": "#f4f5f7",
+        "editor.foreground": "#23272e",
+        "players": [
+          {
+            "cursor": "#1f63c6",
+            "background": "#1f63c6",
+            "selection": "#1f63c633"
+          }
+        ]
+      }
+    }
+  ]
+}

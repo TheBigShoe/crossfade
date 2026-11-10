@@ -3,12 +3,26 @@
 
 pub mod actions;
 pub mod chrome;
+pub mod config;
 pub mod dialog_footer;
 pub mod icons;
+pub mod keymap;
+pub mod settings;
+pub mod theme_bridge;
 pub mod workspace;
 
 #[cfg(test)]
+mod config_test_support;
+#[cfg(test)]
+mod config_tests;
+#[cfg(test)]
+mod keymap_tests;
+#[cfg(test)]
+mod settings_tests;
+#[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod theme_bridge_tests;
 #[cfg(test)]
 mod workspace_tests;
 
@@ -48,7 +62,10 @@ pub mod prelude {
     pub use gpui_kit::component::button::{Button, ButtonVariants};
     pub use gpui_kit::component::dialog::{Cancel, Confirm, DialogFooter};
     pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu};
+    // gpui-kit's theme file types, which the theme bridge fills.
+    pub use gpui_kit::component::highlighter::HighlightThemeStyle;
     pub use gpui_kit::component::{
         ActiveTheme, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex, v_flex,
     };
+    pub use gpui_kit::component::{ThemeConfig, ThemeConfigColors};
 }
