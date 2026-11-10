@@ -1,7 +1,7 @@
 mod common;
 
 use common::{data_chunk, job, sine_wav, spec};
-use crossfade_core::{AudioSpec, ChannelLayout, Limits, SampleFormat};
+use crossfade_core::{AudioSpec, ChannelLayout, JobIo, Limits, SampleFormat};
 use crossfade_format::wav::FRAMES_PER_PACKET;
 use crossfade_graph::{Pipeline, Step};
 use crossfade_testkit::{memory::MemoryIo, pcm};

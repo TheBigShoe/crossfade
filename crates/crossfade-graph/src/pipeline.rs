@@ -4,6 +4,7 @@ use crossfade_core::{
     AudioFrame, AudioSpec, CodecId, Decoder, Demuxer, Encoder, Error, JobIo, Limits, Muxer, Packet,
     StreamInfo,
 };
+use crossfade_dsp::convert::convert_format;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
 
 /// What a job will do, known once the input has been opened.
@@ -116,5 +117,56 @@ impl Pipeline {
 
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Moves one packet through demux, decode, convert, encode and mux. At
+    /// the end of input it drains both codecs and finishes the muxer.
+    pub fn step(&mut self) -> Result<Step, Error> {
+        if self.finished {
+            return Ok(Step::Finished);
+        }
+        if self.demuxer.read_packet(&mut self.packet)? {
+            self.decoder.send_packet(&self.packet)?;
+            self.pump_frames()?;
+            return Ok(Step::Progress {
+                frames_done: self.frames_done,
+                frames_total: self.plan.input.frames,
+            });
+        }
+        self.decoder.drain();
+        self.pump_frames()?;
+        self.encoder.drain();
+        self.pump_packets()?;
+        self.muxer.finish()?;
+        self.finished = true;
+        Ok(Step::Finished)
+    }
+
+    /// Decoder to encoder. The protocol wants every frame received before
+    /// the next send, so this loops until the decoder is dry.
+    fn pump_frames(&mut self) -> Result<(), Error> {
+        while self.decoder.receive_frame(&mut self.decoded)? {
+            self.frames_done += self.decoded.frames() as u64;
+            let frame = if self.decoded.samples.format() == self.plan.output.audio.format() {
+                &self.decoded
+            } else {
+                convert_format(
+                    &self.decoded,
+                    self.plan.output.audio.format(),
+                    &mut self.converted,
+                )?;
+                &self.converted
+            };
+            self.encoder.send_frame(frame)?;
+            self.pump_packets()?;
+        }
+        Ok(())
+    }
+
+    fn pump_packets(&mut self) -> Result<(), Error> {
+        while self.encoder.receive_packet(&mut self.packet)? {
+            self.muxer.write_packet(&self.packet)?;
+        }
+        Ok(())
     }
 }
