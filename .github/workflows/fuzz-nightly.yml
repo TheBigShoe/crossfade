@@ -1,8 +1,7 @@
 name: fuzz-nightly
 
+# Manual only for now; add a daily `schedule` when hosted CI is switched on.
 on:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:

@@ -1,9 +1,9 @@
 name: ci
 
+# Manual only for now: hosted CI is deferred until the cross-OS task starts.
+# Restore `push` and `pull_request` triggers then.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
