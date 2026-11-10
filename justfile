@@ -65,11 +65,24 @@ screenshots *names:
 # Dependencies run in order and the first failure stops the recipe.
 ci: fmt-check lint test conformance
 
-# Needs nightly and cargo-fuzz; not part of `ci`.
+# Needs cargo-fuzz. The default runs unsanitised on the pinned toolchain (RUSTC_BOOTSTRAP lets
+# it use libFuzzer's flags); with a nightly toolchain, `FUZZ_RUN="cargo +nightly fuzz run" just
+# fuzz <target>` adds AddressSanitizer. `fuzz/corpus` is git-ignored, so each target also reads
+# the committed fixtures as an extra corpus directory (the writable corpus is named first, so
+# libFuzzer writes new inputs only there): flac_demux and flac_decode -> tests/fixtures/flac,
+# aiff_demux -> tests/fixtures/aiff, ogg_demux -> tests/fixtures/ogg; the others start empty.
+fuzz_run := env_var_or_default("FUZZ_RUN", "RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none")
+fixtures := justfile_directory() / "crates/crossfade-format/tests/fixtures"
+
 fuzz target secs="60":
-    cargo +nightly fuzz run {{target}} -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256
+    seeds=""; \
+    case "{{target}}" in \
+        flac_demux|flac_decode) seeds="{{fixtures}}/flac" ;; \
+        aiff_demux) seeds="{{fixtures}}/aiff" ;; \
+        ogg_demux) seeds="{{fixtures}}/ogg" ;; \
+    esac; \
+    mkdir -p fuzz/corpus/{{target}}; \
+    cd fuzz && {{fuzz_run}} "{{target}}" corpus/{{target}} $seeds -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256
 
 fuzz-smoke:
-    for t in $(cargo +nightly fuzz list); do \
-        cargo +nightly fuzz run "$t" -- -max_total_time=30 -rss_limit_mb=2048 -malloc_limit_mb=256; \
-    done
+    for t in $(cd fuzz && cargo fuzz list); do just fuzz "$t" 30; done

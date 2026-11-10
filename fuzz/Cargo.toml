@@ -11,10 +11,14 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 crossfade-core = { path = "../crates/crossfade-core" }
+crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
 
 # Not a member of the engine workspace: libFuzzer is C++.
 [workspace]
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "rational_ops"
@@ -33,6 +37,48 @@ bench = false
 [[bin]]
 name = "wav_demux"
 path = "fuzz_targets/wav_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flac_demux"
+path = "fuzz_targets/flac_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flac_decode"
+path = "fuzz_targets/flac_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "aiff_demux"
+path = "fuzz_targets/aiff_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ogg_demux"
+path = "fuzz_targets/ogg_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vorbis_comment"
+path = "fuzz_targets/vorbis_comment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flac_roundtrip"
+path = "fuzz_targets/flac_roundtrip.rs"
 test = false
 doc = false
 bench = false

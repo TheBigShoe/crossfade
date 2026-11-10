@@ -59,7 +59,7 @@ just conformance  # tier 3, FLAC corpus vs the frozen results (needs the corpus,
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
-just fuzz-smoke  # 30 s per target; needs nightly and cargo-fuzz
+just fuzz-smoke  # 30 s per target; needs cargo-fuzz (nightly optional, see the justfile)
 just bench     # criterion; not part of the gate
 just run       # the desktop app
 just screenshots [names]  # offscreen PNGs in target/screenshots (macOS only)

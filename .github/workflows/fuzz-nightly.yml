@@ -16,7 +16,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [rational_ops, time_rescale, wav_demux]
+        target:
+          [
+            rational_ops,
+            time_rescale,
+            wav_demux,
+            flac_demux,
+            flac_decode,
+            aiff_demux,
+            ogg_demux,
+            vorbis_comment,
+            flac_roundtrip,
+          ]
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --profile minimal
