@@ -4,11 +4,19 @@ use crate::SampleFormat;
 #[non_exhaustive]
 pub enum CodecId {
     PcmU8,
+    /// Stored as unsigned with a +128 offset, which is lossless.
+    PcmS8,
     PcmS16Le,
     PcmS24Le,
     PcmS32Le,
     PcmF32Le,
     PcmF64Le,
+    PcmS16Be,
+    PcmS24Be,
+    PcmS32Be,
+    PcmF32Be,
+    PcmF64Be,
+    Flac,
 }
 
 impl CodecId {
@@ -16,22 +24,36 @@ impl CodecId {
     pub fn name(self) -> &'static str {
         match self {
             Self::PcmU8 => "pcm_u8",
+            Self::PcmS8 => "pcm_s8",
             Self::PcmS16Le => "pcm_s16le",
             Self::PcmS24Le => "pcm_s24le",
             Self::PcmS32Le => "pcm_s32le",
             Self::PcmF32Le => "pcm_f32le",
             Self::PcmF64Le => "pcm_f64le",
+            Self::PcmS16Be => "pcm_s16be",
+            Self::PcmS24Be => "pcm_s24be",
+            Self::PcmS32Be => "pcm_s32be",
+            Self::PcmF32Be => "pcm_f32be",
+            Self::PcmF64Be => "pcm_f64be",
+            Self::Flac => "flac",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "pcm_u8" => Self::PcmU8,
+            "pcm_s8" => Self::PcmS8,
             "pcm_s16le" => Self::PcmS16Le,
             "pcm_s24le" => Self::PcmS24Le,
             "pcm_s32le" => Self::PcmS32Le,
             "pcm_f32le" => Self::PcmF32Le,
             "pcm_f64le" => Self::PcmF64Le,
+            "pcm_s16be" => Self::PcmS16Be,
+            "pcm_s24be" => Self::PcmS24Be,
+            "pcm_s32be" => Self::PcmS32Be,
+            "pcm_f32be" => Self::PcmF32Be,
+            "pcm_f64be" => Self::PcmF64Be,
+            "flac" => Self::Flac,
             _ => return None,
         })
     }
@@ -48,14 +70,31 @@ impl CodecId {
         }
     }
 
+    /// The big-endian PCM codec carrying `format`; 8-bit is signed (AIFF).
+    pub fn pcm_be_for(format: SampleFormat) -> Self {
+        match format {
+            SampleFormat::U8 => Self::PcmS8,
+            SampleFormat::S16 => Self::PcmS16Be,
+            SampleFormat::S24 => Self::PcmS24Be,
+            SampleFormat::S32 => Self::PcmS32Be,
+            SampleFormat::F32 => Self::PcmF32Be,
+            SampleFormat::F64 => Self::PcmF64Be,
+        }
+    }
+
+    pub fn is_pcm(self) -> bool {
+        self.pcm_sample_format().is_some()
+    }
+
     pub fn pcm_sample_format(self) -> Option<SampleFormat> {
         Some(match self {
-            Self::PcmU8 => SampleFormat::U8,
-            Self::PcmS16Le => SampleFormat::S16,
-            Self::PcmS24Le => SampleFormat::S24,
-            Self::PcmS32Le => SampleFormat::S32,
-            Self::PcmF32Le => SampleFormat::F32,
-            Self::PcmF64Le => SampleFormat::F64,
+            Self::PcmU8 | Self::PcmS8 => SampleFormat::U8,
+            Self::PcmS16Le | Self::PcmS16Be => SampleFormat::S16,
+            Self::PcmS24Le | Self::PcmS24Be => SampleFormat::S24,
+            Self::PcmS32Le | Self::PcmS32Be => SampleFormat::S32,
+            Self::PcmF32Le | Self::PcmF32Be => SampleFormat::F32,
+            Self::PcmF64Le | Self::PcmF64Be => SampleFormat::F64,
+            Self::Flac => return None,
         })
     }
 }
