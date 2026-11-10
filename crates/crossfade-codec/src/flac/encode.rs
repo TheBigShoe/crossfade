@@ -287,7 +287,10 @@ impl FlacEncoder {
             .fill_interleaved(&self.buf)
             .map_err(|e| malformed("flac encoder input", e))?;
         self.buf.clear();
-        let code = |config: &Verified<config::Encoder>| -> Result<Vec<u8>, Error> {
+        // Raw samples (one more bit on a side channel) plus the headers bound any sane frame.
+        let limit = 16 + 2 + channels * (1 + (frames * (usize::from(self.bits) + 1)).div_ceil(8));
+        // `None`: the frame is over the limit, found from its size before any of it is written.
+        let code = |config: &Verified<config::Encoder>| -> Result<Option<Vec<u8>>, Error> {
             let frame = flacenc::encode_fixed_size_frame(
                 config,
                 &self.framebuf,
@@ -295,28 +298,23 @@ impl FlacEncoder {
                 &self.stream_info,
             )
             .map_err(|e| malformed("flac encoder", e))?;
+            if frame.count_bits().div_ceil(8) > limit {
+                return Ok(None);
+            }
             let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
             frame
                 .write(&mut sink)
                 .map_err(|e| malformed("flac frame", e))?;
-            Ok(sink.into_inner())
+            Ok(Some(sink.into_inner()))
         };
-        // Raw samples (one more bit on a side channel) plus the headers bound any sane frame.
-        let limit = 16 + 2 + channels * (1 + (frames * (usize::from(self.bits) + 1)).div_ceil(8));
-        let mut data = code(&self.config)?;
-        if data.len() > limit {
-            // flacenc picks a subframe by an estimated size and, with residuals near full scale,
-            // can write a Rice parameter above 14 as if it fitted: valid but enormous.
-            data = code(&self.fallback)?;
-        }
-        if data.len() > limit {
-            return Err(Error::Malformed {
-                what: format!(
-                    "flac encoder: a {frames}-sample frame came out {} bytes",
-                    data.len()
-                ),
-            });
-        }
+        // flacenc picks a subframe by an estimated size and, with residuals near full scale, can
+        // write a Rice parameter above 14 as if it fitted: valid but enormous (hundreds of MB).
+        let data = match code(&self.config)? {
+            Some(data) => data,
+            None => code(&self.fallback)?.ok_or_else(|| Error::Malformed {
+                what: format!("flac encoder: a {frames}-sample frame came out over {limit} bytes"),
+            })?,
+        };
         let size = u32::try_from(data.len()).map_err(|_| Error::Overflow)?;
         self.min_frame_size = self.min_frame_size.min(size);
         self.max_frame_size = self.max_frame_size.max(size);
