@@ -1,5 +1,138 @@
 //! Packets out of the pages of one logical stream (RFC 3533 section 5).
 
+use super::page::PageReader;
+use crossfade_core::Error;
+
+fn malformed(what: &str) -> Error {
+    Error::Malformed {
+        what: what.to_owned(),
+    }
+}
+
+pub(crate) struct PacketReader {
+    pages: PageReader,
+    serial: u32,
+    max_packet: usize,
+    /// `pages` holds a page nobody has looked at yet.
+    pending: bool,
+    next_sequence: Option<u32>,
+    /// Next segment and body offset within the current page.
+    seg: usize,
+    off: usize,
+    /// The last segment taken was 255, so the packet goes on in the next page.
+    mid_packet: bool,
+    /// The page with the end-of-stream flag has been loaded.
+    last_page: bool,
+}
+
+impl PacketReader {
+    pub fn new(pages: PageReader, serial: u32, max_packet: usize) -> Self {
+        Self {
+            pages,
+            serial,
+            max_packet,
+            pending: false,
+            next_sequence: None,
+            seg: 0,
+            off: 0,
+            mid_packet: false,
+            last_page: false,
+        }
+    }
+
+    /// Carries on after the stream's first page, which the caller consumed itself.
+    /// `page_loaded`: the reader holds a page that has not been looked at.
+    pub fn resume(&mut self, next_sequence: u32, page_loaded: bool) {
+        self.next_sequence = Some(next_sequence);
+        self.pending = page_loaded;
+    }
+
+    /// Loads the next page of this stream; `Ok(false)` when the input ends.
+    fn load_page(&mut self) -> Result<bool, Error> {
+        loop {
+            if self.pending {
+                self.pending = false;
+            } else if !self.pages.next_page()? {
+                return Ok(false);
+            }
+            let h = *self.pages.header();
+            if h.serial != self.serial {
+                continue;
+            }
+            if h.is_first() && self.next_sequence.is_some() {
+                return Err(malformed("second beginning-of-stream page for one serial"));
+            }
+            if let Some(want) = self.next_sequence
+                && h.sequence != want
+            {
+                return Err(Error::Malformed {
+                    what: format!(
+                        "ogg page sequence jumps from {} to {} at byte {}",
+                        want.wrapping_sub(1),
+                        h.sequence,
+                        h.offset
+                    ),
+                });
+            }
+            if h.is_continued() != self.mid_packet {
+                return Err(malformed(if self.mid_packet {
+                    "packet continuation is missing"
+                } else {
+                    "continued packet with nothing to continue"
+                }));
+            }
+            self.next_sequence = Some(h.sequence.wrapping_add(1));
+            self.last_page = h.is_last();
+            self.seg = 0;
+            self.off = 0;
+            return Ok(true);
+        }
+    }
+
+    /// Clears `out` and fills it with the next packet; `Ok(false)` at the end of the stream.
+    pub fn next_packet(&mut self, out: &mut Vec<u8>) -> Result<bool, Error> {
+        out.clear();
+        let mut started = false;
+        loop {
+            if self.seg >= self.pages.lacing().len() {
+                if self.last_page {
+                    if self.mid_packet {
+                        return Err(malformed("stream ends inside a packet"));
+                    }
+                    return Ok(false);
+                }
+                if !self.load_page()? {
+                    if started || self.mid_packet {
+                        return Err(Error::UnexpectedEof {
+                            offset: self.pages.position(),
+                        });
+                    }
+                    return Ok(false);
+                }
+                continue;
+            }
+            let lace = usize::from(self.pages.lacing()[self.seg]);
+            if out.len() + lace > self.max_packet {
+                return Err(Error::Malformed {
+                    what: format!("ogg packet longer than the {} byte limit", self.max_packet),
+                });
+            }
+            out.extend_from_slice(&self.pages.body()[self.off..self.off + lace]);
+            self.off += lace;
+            self.seg += 1;
+            started = true;
+            self.mid_packet = lace == 255;
+            if lace < 255 {
+                return Ok(true);
+            }
+        }
+    }
+
+    pub fn header(&self) -> &super::page::PageHeader {
+        self.pages.header()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,7 +178,11 @@ mod tests {
             .collect();
         for per_page in [&[255][..], &[1], &[2], &[3, 1], &[7]] {
             let bytes = testutil::bytes(&testutil::pages(9, 0, &packets, per_page));
-            assert_eq!(all(&mut reader(bytes, 9, BIG)).unwrap(), packets, "{per_page:?}");
+            assert_eq!(
+                all(&mut reader(bytes, 9, BIG)).unwrap(),
+                packets,
+                "{per_page:?}"
+            );
         }
     }
 
@@ -73,7 +210,10 @@ mod tests {
         let packets = vec![pkt(700, 1), pkt(10, 2)];
         let pages = testutil::pages(1, 0, &packets, &[2, 255]);
         assert!(pages[1].flags & CONTINUED != 0);
-        assert_eq!(all(&mut reader(testutil::bytes(&pages), 1, BIG)).unwrap(), packets);
+        assert_eq!(
+            all(&mut reader(testutil::bytes(&pages), 1, BIG)).unwrap(),
+            packets
+        );
     }
 
     #[test]
@@ -141,7 +281,11 @@ mod tests {
 
     #[test]
     fn a_packet_unfinished_at_the_last_page_is_malformed() {
-        let mut page = RawPage { flags: EOS, serial: 1, ..RawPage::default() };
+        let mut page = RawPage {
+            flags: EOS,
+            serial: 1,
+            ..RawPage::default()
+        };
         page.lacing = vec![255];
         page.body = pkt(255, 1);
         let what = malformed(all(&mut reader(page.to_bytes(), 1, BIG)));
@@ -155,7 +299,10 @@ mod tests {
         pages[0].flags &= !EOS;
         let bytes = testutil::bytes(&pages);
         let len = bytes.len() as u64;
-        assert_eq!(all(&mut reader(bytes, 1, BIG)), Err(Error::UnexpectedEof { offset: len }));
+        assert_eq!(
+            all(&mut reader(bytes, 1, BIG)),
+            Err(Error::UnexpectedEof { offset: len })
+        );
     }
 
     #[test]
@@ -163,7 +310,10 @@ mod tests {
         let mut pages = testutil::pages(1, 0, &[pkt(10, 1), pkt(10, 2)], &[1]);
         pages.truncate(1);
         pages[0].flags &= !EOS;
-        assert_eq!(all(&mut reader(testutil::bytes(&pages), 1, BIG)).unwrap(), [pkt(10, 1)]);
+        assert_eq!(
+            all(&mut reader(testutil::bytes(&pages), 1, BIG)).unwrap(),
+            [pkt(10, 1)]
+        );
     }
 
     #[test]
@@ -178,7 +328,9 @@ mod tests {
     fn io_errors_and_pipes_pass_through() {
         let packets = vec![pkt(300, 1), pkt(20, 2)];
         let bytes = testutil::bytes(&testutil::pages(1, 0, &packets, &[1]));
-        let src = FaultySource::new(Cursor::new(bytes)).not_seekable().max_read(7);
+        let src = FaultySource::new(Cursor::new(bytes))
+            .not_seekable()
+            .max_read(7);
         let mut r = PacketReader::new(PageReader::new(Box::new(src)), 1, BIG);
         assert_eq!(all(&mut r).unwrap(), packets);
     }
