@@ -1,4 +1,4 @@
-use crate::{AudioFrame, Error, Packet, StreamInfo};
+use crate::{AudioFrame, Error, NO_TAGS, Packet, StreamInfo, Tags};
 
 /// Reads packets out of a container.
 pub trait Demuxer {
@@ -7,11 +7,21 @@ pub trait Demuxer {
     /// Clears `out.data` and refills it with the next packet. `Ok(false)`
     /// means end of stream; `out` is then unspecified.
     fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error>;
+
+    fn tags(&self) -> &Tags {
+        &NO_TAGS
+    }
 }
 
 /// Writes packets into a container.
 pub trait Muxer {
     fn write_packet(&mut self, packet: &Packet) -> Result<(), Error>;
+
+    /// The final codec header (see [`Encoder::extradata`]), given at most once, after the last
+    /// packet and before `finish`.
+    fn set_extradata(&mut self, _extradata: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
 
     /// Writes trailers and flushes. Call exactly once, after the last packet.
     fn finish(&mut self) -> Result<(), Error>;
@@ -44,6 +54,12 @@ pub trait Encoder {
     /// Signals end of input; `receive_packet` then returns what is left and
     /// finally `Ok(false)`.
     fn drain(&mut self);
+
+    /// The codec header as known so far; final once `drain` has been called and every packet
+    /// received.
+    fn extradata(&self) -> &[u8] {
+        &[]
+    }
 }
 
 #[cfg(test)]
