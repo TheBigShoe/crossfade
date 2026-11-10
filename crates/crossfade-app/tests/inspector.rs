@@ -255,8 +255,18 @@ fn sample_formats_and_codecs_read_in_plain_words_with_the_raw_name_kept() {
         ("pcm_s16le", "s16", "PCM (16-bit little-endian)", "16-bit"),
         ("pcm_s24be", "s24", "PCM (24-bit big-endian)", "24-bit"),
         ("pcm_s32le", "s32", "PCM (32-bit little-endian)", "32-bit"),
-        ("pcm_f32le", "f32", "PCM (32-bit float, little-endian)", "32-bit float"),
-        ("pcm_f64be", "f64", "PCM (64-bit float, big-endian)", "64-bit float"),
+        (
+            "pcm_f32le",
+            "f32",
+            "PCM (32-bit float, little-endian)",
+            "32-bit float",
+        ),
+        (
+            "pcm_f64be",
+            "f64",
+            "PCM (64-bit float, big-endian)",
+            "64-bit float",
+        ),
         ("flac", "s16", "FLAC", "16-bit"),
         ("mystery", "weird", "mystery", "weird"),
     ] {
@@ -270,7 +280,12 @@ fn sample_formats_and_codecs_read_in_plain_words_with_the_raw_name_kept() {
 
 #[test]
 fn container_names_read_as_people_write_them() {
-    for (raw_name, shown) in [("wav", "WAV"), ("flac", "FLAC"), ("aiff", "AIFF"), ("ogg", "Ogg")] {
+    for (raw_name, shown) in [
+        ("wav", "WAV"),
+        ("flac", "FLAC"),
+        ("aiff", "AIFF"),
+        ("ogg", "Ogg"),
+    ] {
         let mut d = mono_u8_unknown_length();
         d.format = raw_name.into();
         assert_eq!(value(&d, "format"), shown);
