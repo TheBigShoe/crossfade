@@ -1,0 +1,19 @@
+[package]
+name = "appconfig"
+description = "GPUI-free configuration layer shared by the desktop apps: config paths, layered JSONC settings, a comment-preserving editor, Zed-format keymaps and themes, and a config watcher."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+jsonc-parser.workspace = true
+parking_lot.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
