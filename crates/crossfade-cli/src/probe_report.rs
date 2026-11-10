@@ -19,10 +19,19 @@ pub(crate) fn to_text(report: &ProbeReport) -> String {
             "  Stream {}: audio, {}, {} Hz, {}, {}",
             s.index, s.codec, s.sample_rate, s.layout, s.sample_format
         ));
+        if let Some(bits) = s.bits_per_raw_sample {
+            out.push_str(&format!(" ({bits}-bit)"));
+        }
         if let (Some(secs), Some(frames)) = (s.duration_seconds, s.frames) {
             out.push_str(&format!(", {secs:.3} s ({frames} frames)"));
         }
         out.push('\n');
+    }
+    if !doc.tags.is_empty() {
+        out.push_str("Tags:\n");
+        for t in &doc.tags {
+            out.push_str(&format!("  {}: {}\n", t.key, t.value));
+        }
     }
     out
 }
