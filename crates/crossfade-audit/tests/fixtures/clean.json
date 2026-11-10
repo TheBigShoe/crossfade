@@ -1,0 +1,23 @@
+{
+  "packages": [
+    { "name": "crossfade-core", "id": "path+file:///ws/crates/crossfade-core#0.0.0", "links": null },
+    { "name": "crossfade-format", "id": "path+file:///ws/crates/crossfade-format#0.0.0", "links": null },
+    { "name": "thiserror", "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18", "links": null }
+  ],
+  "workspace_members": [
+    "path+file:///ws/crates/crossfade-core#0.0.0",
+    "path+file:///ws/crates/crossfade-format#0.0.0"
+  ],
+  "resolve": {
+    "nodes": [
+      { "id": "path+file:///ws/crates/crossfade-core#0.0.0", "deps": [
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18", "dep_kinds": [{ "kind": null, "target": null }] }
+      ] },
+      { "id": "path+file:///ws/crates/crossfade-format#0.0.0", "deps": [
+        { "pkg": "path+file:///ws/crates/crossfade-core#0.0.0", "dep_kinds": [{ "kind": null, "target": null }] }
+      ] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18", "deps": [] }
+    ],
+    "root": null
+  }
+}

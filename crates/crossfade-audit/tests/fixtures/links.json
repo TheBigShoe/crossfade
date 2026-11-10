@@ -1,0 +1,26 @@
+{
+  "packages": [
+    { "name": "crossfade-core", "id": "path+file:///ws/crates/crossfade-core#0.0.0", "links": null },
+    { "name": "crossfade-format", "id": "path+file:///ws/crates/crossfade-format#0.0.0", "links": null },
+    { "name": "inflate", "id": "registry+https://github.com/rust-lang/crates.io-index#inflate@1.0.0", "links": null },
+    { "name": "zlib-native", "id": "registry+https://github.com/rust-lang/crates.io-index#zlib-native@0.3.0", "links": "z" }
+  ],
+  "workspace_members": [
+    "path+file:///ws/crates/crossfade-core#0.0.0",
+    "path+file:///ws/crates/crossfade-format#0.0.0"
+  ],
+  "resolve": {
+    "nodes": [
+      { "id": "path+file:///ws/crates/crossfade-core#0.0.0", "deps": [] },
+      { "id": "path+file:///ws/crates/crossfade-format#0.0.0", "deps": [
+        { "pkg": "path+file:///ws/crates/crossfade-core#0.0.0", "dep_kinds": [{ "kind": null, "target": null }] },
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#inflate@1.0.0", "dep_kinds": [{ "kind": null, "target": "cfg(target_os = \"android\")" }] }
+      ] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#inflate@1.0.0", "deps": [
+        { "pkg": "registry+https://github.com/rust-lang/crates.io-index#zlib-native@0.3.0", "dep_kinds": [{ "kind": null, "target": null }] }
+      ] },
+      { "id": "registry+https://github.com/rust-lang/crates.io-index#zlib-native@0.3.0", "deps": [] }
+    ],
+    "root": null
+  }
+}

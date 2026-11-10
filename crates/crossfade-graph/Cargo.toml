@@ -1,0 +1,16 @@
+[package]
+name = "crossfade-graph"
+description = "Processing graph that wires Crossfade formats, codecs and DSP together."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+crossfade-core.workspace = true
+crossfade-format.workspace = true
+crossfade-codec.workspace = true
+crossfade-dsp.workspace = true
+
+[lints]
+workspace = true
