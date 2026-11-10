@@ -296,7 +296,27 @@ impl Encoder {
     /// Takes samples in chunks of any size (whole sample frames) and appends a frame to `out`
     /// each time a block fills. Call [`flush`](Self::flush) at the end for the remainder. Do
     /// not mix with [`encode_block`](Self::encode_block) while samples are pending.
-    pub fn write(&mut self, mut interleaved: &[i32], out: &mut Vec<u8>) -> Result<()> {
+    pub fn write(&mut self, interleaved: &[i32], out: &mut Vec<u8>) -> Result<()> {
+        self.write_inner(interleaved, out, None)
+    }
+
+    /// As [`write`](Self::write), and pushes `out.len()` onto `ends` after each frame it
+    /// appends, so a caller can cut `out` into frames (one packet per frame) without parsing.
+    pub fn write_ends(
+        &mut self,
+        interleaved: &[i32],
+        out: &mut Vec<u8>,
+        ends: &mut Vec<usize>,
+    ) -> Result<()> {
+        self.write_inner(interleaved, out, Some(ends))
+    }
+
+    fn write_inner(
+        &mut self,
+        mut interleaved: &[i32],
+        out: &mut Vec<u8>,
+        mut ends: Option<&mut Vec<usize>>,
+    ) -> Result<()> {
         if self.done.is_some() {
             return Err(malformed("the stream is finished"));
         }
@@ -319,11 +339,17 @@ impl Encoder {
                 self.pending = full;
                 self.pending.clear();
                 result?;
+                if let Some(e) = ends.as_deref_mut() {
+                    e.push(out.len());
+                }
             }
         }
         while interleaved.len() >= per {
             let (block, rest) = interleaved.split_at(per);
             self.encode_block(block, out)?;
+            if let Some(e) = ends.as_deref_mut() {
+                e.push(out.len());
+            }
             interleaved = rest;
         }
         self.pending.extend_from_slice(interleaved);
@@ -334,6 +360,15 @@ impl Encoder {
     /// nothing when none are pending. Call it before [`finish`](Self::finish): samples left
     /// pending then are not part of the stream.
     pub fn flush(&mut self, out: &mut Vec<u8>) -> Result<()> {
+        self.flush_inner(out, None)
+    }
+
+    /// As [`flush`](Self::flush), reporting the frame's end like [`write_ends`](Self::write_ends).
+    pub fn flush_ends(&mut self, out: &mut Vec<u8>, ends: &mut Vec<usize>) -> Result<()> {
+        self.flush_inner(out, Some(ends))
+    }
+
+    fn flush_inner(&mut self, out: &mut Vec<u8>, ends: Option<&mut Vec<usize>>) -> Result<()> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -341,7 +376,11 @@ impl Encoder {
         let result = self.encode_block(&rest, out);
         self.pending = rest;
         self.pending.clear();
-        result
+        result?;
+        if let Some(e) = ends {
+            e.push(out.len());
+        }
+        Ok(())
     }
 
     /// The MD5 is over the samples as little-endian integers in the smallest whole number
