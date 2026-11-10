@@ -259,6 +259,8 @@ name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-testkit",
+ "proptest",
 ]
 
 [[package]]
@@ -274,6 +276,8 @@ name = "crossfade-dsp"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-testkit",
+ "proptest",
 ]
 
 [[package]]
