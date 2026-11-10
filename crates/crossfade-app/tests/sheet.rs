@@ -550,3 +550,19 @@ fn engine_wording_loses_its_flags() {
     );
     assert_eq!(plain("no decoder for foo."), "No decoder for foo.");
 }
+
+#[test]
+fn a_source_flac_cannot_take_leaves_the_audio_choices_disabled() {
+    let mut s = sheet_of(&wav_entry("hi.wav", 192_000, SampleFormat::S24));
+    s.set_container(Container::Flac);
+    assert!(s.level_visible());
+    assert!(!s.level_enabled());
+    assert!(!s.format_enabled());
+    s.set_container(Container::Aiff);
+    assert!(s.format_enabled());
+    s.set_container(Container::Flac);
+    let mut ok = sheet_of(&wav_entry("lo.wav", 48_000, SampleFormat::S16));
+    ok.set_container(Container::Flac);
+    assert!(ok.level_enabled());
+    assert!(ok.format_enabled());
+}
