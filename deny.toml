@@ -17,8 +17,19 @@ allow = [
     "Unicode-3.0",
     "CC0-1.0",
     "BSL-1.0",
+    # enum-iterator and enum-iterator-derive, via gpui-component.
+    "0BSD",
 ]
-# Add MPL-2.0 only if a dependency needs it; copyleft is otherwise denied.
+# MPL-2.0 is file-level copyleft: unmodified use in a binary imposes nothing on our code.
+# Allowed per crate, not globally, so a new MPL dependency still fails the check.
+# cbindgen (build-time, via gpui-pre-apple), dwrote and option-ext (both via
+# zed-font-kit, which gpui-pre-apple pulls in).
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "cbindgen" },
+    { allow = ["MPL-2.0"], crate = "dwrote" },
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+# Copyleft is otherwise denied.
 
 [bans]
 multiple-versions = "warn"
