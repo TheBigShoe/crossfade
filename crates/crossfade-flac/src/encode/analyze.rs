@@ -54,6 +54,31 @@ pub(super) enum Stereo {
     Exhaustive,
 }
 
+/// One analysis window for LPC: its span in twelfths of the block, and how many orders get an
+/// exact search from it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Apodization {
+    from: usize,
+    to: usize,
+    tries: usize,
+}
+
+const fn apod(from: usize, to: usize, tries: usize) -> Apodization {
+    Apodization { from, to, tries }
+}
+
+static WINDOWS: [&[Apodization]; 9] = [
+    &[],
+    &[],
+    &[],
+    &[apod(0, 12, 1)],
+    &[apod(0, 12, 1)],
+    &[apod(0, 12, 2)],
+    &[apod(0, 12, 3)],
+    &[apod(0, 12, 4)],
+    &[apod(0, 12, 3), apod(0, 8, 1), apod(4, 12, 1)],
+];
+
 /// What a level asks of the search.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Level {
@@ -65,8 +90,9 @@ pub(super) struct Level {
     pub(super) fixed_tries: usize,
     /// Largest LPC order; 0 means fixed predictors only.
     pub(super) max_lpc: usize,
-    /// How many LPC orders, best by estimate first, get an exact search.
-    pub(super) lpc_tries: usize,
+    /// The analysis windows, each with its own Levinson run; partial windows follow
+    /// non-stationary audio better.
+    pub(super) windows: &'static [Apodization],
     /// Quantised coefficient precision in bits, sign included.
     pub(super) precision: u32,
 }
@@ -93,12 +119,7 @@ impl Level {
                 4..=6 => 8,
                 _ => 12,
             },
-            lpc_tries: match level {
-                3 | 4 => 1,
-                5 => 2,
-                6 => 3,
-                _ => 4,
-            },
+            windows: WINDOWS[usize::from(level.min(8))],
             // As the reference encoder: more precision for longer blocks.
             precision: 12,
         }
@@ -155,6 +176,8 @@ pub(super) struct Analyzer {
     pool32: Vec<i32>,
     pool64: Vec<i64>,
     window: Vec<f64>,
+    /// What `window` currently holds: block length and span.
+    window_key: (usize, usize, usize),
     windowed: Vec<f64>,
     lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
     acc: lpc::Accumulators,
@@ -172,6 +195,7 @@ impl Analyzer {
             pool32: Vec::with_capacity(level.block),
             pool64: Vec::with_capacity(wide_cap),
             window: Vec::with_capacity(level.block),
+            window_key: (0, 0, 0),
             windowed: Vec::with_capacity(level.block),
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
             acc: lpc::Accumulators::with_capacity(level.block, wide_cap),
@@ -249,22 +273,36 @@ impl Analyzer {
             }
         }
         if self.level.max_lpc > 0 && n >= 16 {
-            self.search_lpc(x, bps, head, plan);
+            for &apod in self.level.windows {
+                self.search_lpc(x, bps, head, apod, plan);
+            }
         }
     }
 
     /// Linear prediction: one Levinson run gives every order; the orders that look best by
     /// estimate are then coded for real and compared by exact bits.
-    fn search_lpc<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+    fn search_lpc<T: Sample>(
+        &mut self,
+        x: &[T],
+        bps: u32,
+        head: u64,
+        apod: Apodization,
+        plan: &mut Plan,
+    ) {
         let n = x.len();
         let max_order = self.level.max_lpc.min(n - 1);
-        if self.window.len() != n {
-            lpc::window(n, &mut self.window);
+        let span = (n * apod.from / 12, n * apod.to / 12);
+        if self.window_key != (n, span.0, span.1) {
+            lpc::window(n, span.0, span.1, &mut self.window);
+            self.window_key = (n, span.0, span.1);
         }
+        // Only the span inside the window carries anything.
+        let (from, to) = (span.0.min(n), span.1.min(n));
         self.windowed.clear();
         self.windowed.extend(
-            x.iter()
-                .zip(&self.window)
+            x[from..to]
+                .iter()
+                .zip(&self.window[from..to])
                 .map(|(&v, &w)| v.into() as f64 * w),
         );
         let mut autoc = [0.0f64; MAX_ORDER + 1];
@@ -293,7 +331,7 @@ impl Analyzer {
                 order,
             );
         }
-        let tries = self.level.lpc_tries.min(orders);
+        let tries = apod.tries.min(orders);
         for t in 0..tries {
             // Selection of the next best estimate; ties go to the lower order.
             let mut at = t;

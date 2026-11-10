@@ -11,17 +11,20 @@ use super::fixed::fold;
 
 pub(super) const MAX_ORDER: usize = 32;
 
-/// A Tukey-like window: flat in the middle, with a smoothstep taper over the first and last
-/// quarter. Smoothstep (`3x^2 - 2x^3`) stands in for the cosine taper, which would need `cos`.
-pub(super) fn window(n: usize, out: &mut Vec<f64>) {
+/// A Tukey-like window over `from..to` of `n` samples, zero outside: flat in the middle with
+/// a smoothstep taper over the first and last quarter of its span. Smoothstep (`3x^2 - 2x^3`)
+/// stands in for the cosine taper, which would need `cos`.
+pub(super) fn window(n: usize, from: usize, to: usize, out: &mut Vec<f64>) {
     out.clear();
-    out.resize(n, 1.0);
-    let taper = n / 4;
+    out.resize(n, 0.0);
+    let (from, to) = (from.min(n), to.min(n));
+    out[from..to].fill(1.0);
+    let taper = (to - from) / 4;
     for i in 0..taper {
         let x = (i as f64 + 0.5) / taper as f64;
         let w = x * x * (3.0 - 2.0 * x);
-        out[i] = w;
-        out[n - 1 - i] = w;
+        out[from + i] = w;
+        out[to - 1 - i] = w;
     }
 }
 
@@ -308,16 +311,20 @@ mod tests {
     fn window_is_symmetric_flat_in_the_middle_and_tapered() {
         let mut w = Vec::new();
         for n in [1usize, 3, 16, 17, 4096] {
-            window(n, &mut w);
+            window(n, 0, n, &mut w);
             assert_eq!(w.len(), n);
             for i in 0..n {
                 assert_eq!(w[i], w[n - 1 - i]);
                 assert!((0.0..=1.0).contains(&w[i]));
             }
         }
-        window(4096, &mut w);
+        window(4096, 0, 4096, &mut w);
         assert!(w[0] < 1e-5 && w[2048] == 1.0 && w[1023] < 1.0 && w[1024] == 1.0);
         assert!(w.windows(2).take(1024).all(|p| p[0] <= p[1]));
+        // A partial window is zero outside its span and tapers inside it.
+        window(4096, 1024, 3072, &mut w);
+        assert!(w[..1024].iter().all(|&v| v == 0.0) && w[3072..].iter().all(|&v| v == 0.0));
+        assert!(w[1024] < 1e-4 && w[1536] == 1.0 && w[3071] < 1e-4);
     }
 
     #[test]
