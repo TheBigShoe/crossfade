@@ -26,6 +26,12 @@ pub struct JobOutput {
 pub struct AudioSettings {
     #[serde(default, skip_serializing_if = "Option::is_none", with = "format_name")]
     pub sample_format: Option<SampleFormat>,
+    /// `"copy"`, `"pcm"`, `"flac"`; `None` is the container's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    /// FLAC only, 0 to 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression_level: Option<u8>,
 }
 
 /// `SampleFormat` stays serde-free in core; the job spells it by name.
