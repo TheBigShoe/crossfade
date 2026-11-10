@@ -238,13 +238,13 @@ pub fn write_header(header: &FrameHeader, out: &mut Vec<u8>) {
     let sr_code = if let Some(c) = SAMPLE_RATES.iter().skip(1).position(|&r| r == rate) {
         sr_extra = Vec::new();
         c as u8 + 1
-    } else if rate != 0 && rate % 1000 == 0 && rate / 1000 <= 255 {
+    } else if rate != 0 && rate.is_multiple_of(1000) && rate / 1000 <= 255 {
         sr_extra = vec![(rate / 1000) as u8];
         12
     } else if (1..=65535).contains(&rate) {
         sr_extra = (rate as u16).to_be_bytes().to_vec();
         13
-    } else if rate % 10 == 0 && (1..=65535).contains(&(rate / 10)) {
+    } else if rate.is_multiple_of(10) && (1..=65535).contains(&(rate / 10)) {
         sr_extra = ((rate / 10) as u16).to_be_bytes().to_vec();
         14
     } else {

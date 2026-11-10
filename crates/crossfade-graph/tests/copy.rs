@@ -22,7 +22,7 @@ fn io_with_input(frames: usize) -> (MemoryIo, Vec<u8>) {
 fn wav_to_wav_copy_keeps_the_data_chunk_and_reports_frames() {
     let (mut io, wav) = io_with_input(10_000);
     let j = with_audio(job("in.wav", "out.wav", None), |a| {
-        a.codec = Some("copy".into())
+        a.codec = Some("copy".into());
     });
     let mut events = Vec::new();
     run(
@@ -67,7 +67,7 @@ fn copy_with_a_sample_format_is_refused_and_leaves_no_output() {
 fn a_codec_the_container_cannot_hold_is_refused() {
     let (mut io, _) = io_with_input(100);
     let j = with_audio(job("in.wav", "out.wav", None), |a| {
-        a.codec = Some("flac".into())
+        a.codec = Some("flac".into());
     });
     let r = Pipeline::open(&j, &mut io, &Limits::default());
     assert!(matches!(r.err(), Some(Error::Unsupported { .. })));
@@ -78,7 +78,7 @@ fn a_codec_the_container_cannot_hold_is_refused() {
 fn a_level_with_a_pcm_output_is_refused() {
     let (mut io, _) = io_with_input(100);
     let j = with_audio(job("in.wav", "out.wav", None), |a| {
-        a.compression_level = Some(3)
+        a.compression_level = Some(3);
     });
     assert!(matches!(
         Pipeline::open(&j, &mut io, &Limits::default()).err(),
