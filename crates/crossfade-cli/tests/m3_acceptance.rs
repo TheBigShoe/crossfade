@@ -835,3 +835,112 @@ fn copy_never_needs_a_decoder() {
     assert!(a.audio == b.audio);
     assert_eq!(a.streaminfo, b.streaminfo);
 }
+
+// ---- tags ----------------------------------------------------------------------------------
+
+fn pairs(list: &[(&str, &str)]) -> Tags {
+    list.iter()
+        .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
+}
+
+/// Every key the writers know, some twice, and one no container but FLAC has a place for.
+const RICH: [(&str, &str); 11] = [
+    ("TITLE", "Song"),
+    ("ARTIST", "One"),
+    ("ARTIST", "Two"),
+    ("ALBUM", "Disc"),
+    ("DATE", "2024"),
+    ("TRACKNUMBER", "7"),
+    ("GENRE", "Test"),
+    ("COMMENT", "first"),
+    ("COMMENT", "second"),
+    ("COPYRIGHT", "(c) Me"),
+    ("CROSSFADE_TEST", "custom"),
+];
+
+#[test]
+fn tagged_flac_keeps_every_tag_in_order_when_re_encoded_and_when_copied() {
+    let d = Dir::new("tags-flac");
+    d.write(
+        "in.flac",
+        &flac_with_tags(&fixture("flac/stereo-16bit.flac"), &RICH),
+    );
+    for extra in [&[][..], &["--codec", "flac"], &["--codec", "copy"]] {
+        let mut args = vec!["convert", "in.flac", "-o", "out.flac", "--force"];
+        args.extend_from_slice(extra);
+        d.ok(&args);
+        assert_eq!(
+            parse_flac(&d.read("out.flac")).tags,
+            pairs(&RICH),
+            "{extra:?}"
+        );
+    }
+
+    // The fixture with a seek table, a picture and padding keeps the tags it has.
+    d.write("fx.flac", &fixture("flac/tagged.flac"));
+    d.ok(&["convert", "fx.flac", "-o", "fx-out.flac"]);
+    let want = pairs(&[("TITLE", "Fixture"), ("ARTIST", "Crossfade")]);
+    assert_eq!(parse_flac(&d.read("fx-out.flac")).tags, want);
+}
+
+#[test]
+fn wav_holds_eight_keys_and_the_first_value_of_each() {
+    let d = Dir::new("tags-wav");
+    d.write(
+        "in.flac",
+        &flac_with_tags(&fixture("flac/stereo-16bit.flac"), &RICH),
+    );
+    d.ok(&["convert", "in.flac", "-o", "mid.wav"]);
+    // INFO order: title, artist, album, date, comment, genre, track, copyright.
+    let kept = pairs(&[
+        ("TITLE", "Song"),
+        ("ARTIST", "One"),
+        ("ALBUM", "Disc"),
+        ("DATE", "2024"),
+        ("COMMENT", "first"),
+        ("GENRE", "Test"),
+        ("TRACKNUMBER", "7"),
+        ("COPYRIGHT", "(c) Me"),
+    ]);
+    assert_eq!(wav_tags(&d.read("mid.wav")), kept);
+    d.ok(&["convert", "mid.wav", "-o", "out.flac"]);
+    assert_eq!(parse_flac(&d.read("out.flac")).tags, kept);
+}
+
+#[test]
+fn aiff_holds_title_artist_copyright_and_every_comment() {
+    let d = Dir::new("tags-aiff");
+    d.write(
+        "in.flac",
+        &flac_with_tags(&fixture("flac/stereo-16bit.flac"), &RICH),
+    );
+    d.ok(&["convert", "in.flac", "-o", "mid.aiff"]);
+    let kept = pairs(&[
+        ("TITLE", "Song"),
+        ("ARTIST", "One"),
+        ("COPYRIGHT", "(c) Me"),
+        ("COMMENT", "first"),
+        ("COMMENT", "second"),
+    ]);
+    assert_eq!(parse_aiff(&d.read("mid.aiff")).tags, kept);
+    d.ok(&["convert", "mid.aiff", "-o", "out.flac"]);
+    assert_eq!(parse_flac(&d.read("out.flac")).tags, kept);
+}
+
+#[test]
+fn ogg_flac_tags_reach_the_flac_output() {
+    let d = Dir::new("tags-ogg");
+    d.write("in.oga", &fixture("ogg/tagged.oga"));
+    let want = pairs(&[
+        ("TITLE", "Crossfade"),
+        ("ARTIST", "Tester"),
+        ("ALBUM", "Fixtures"),
+    ]);
+    for extra in [&[][..], &["--codec", "copy"]] {
+        let mut args = vec!["convert", "in.oga", "-o", "out.flac", "--force"];
+        args.extend_from_slice(extra);
+        d.ok(&args);
+        assert_eq!(parse_flac(&d.read("out.flac")).tags, want, "{extra:?}");
+    }
+}
