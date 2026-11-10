@@ -19,11 +19,30 @@ fn probe_path_reports_a_document() {
     let (_, wav) = sine_wav(&s, 100);
     let mut io = MemoryIo::new();
     io.insert("a.wav", wav);
-    let InputState::Probed(doc) = probe_path("a.wav", &mut io, &Limits::default()) else {
+    let InputState::Probed(doc, _) = probe_path("a.wav", &mut io, &Limits::default()) else {
         panic!("expected Probed");
     };
     assert_eq!(doc.format, "wav");
     assert_eq!(doc.streams[0].frames, Some(100));
+}
+
+#[test]
+fn a_probed_entry_keeps_the_first_stream_for_validation() {
+    let s = spec(8000, SampleFormat::S16, ChannelLayout::mono());
+    let (_, wav) = sine_wav(&s, 100);
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", wav);
+    let mut inputs = Inputs::new();
+    inputs.add("a.wav", probe_path("a.wav", &mut io, &Limits::default()));
+    let entry = inputs.selected().unwrap();
+    let stream = entry.stream().expect("a probed file has a stream");
+    assert_eq!(stream.audio.sample_rate(), 8000);
+    assert_eq!(stream.frames, Some(100));
+    assert_eq!(entry.document().unwrap().format, "wav");
+
+    inputs.add("bad", failed());
+    assert!(inputs.selected().unwrap().stream().is_none());
+    assert!(inputs.selected().unwrap().document().is_none());
 }
 
 #[test]
