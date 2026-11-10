@@ -7,8 +7,8 @@
 //! channel assignments of the frames.
 
 use crossfade_codec::decoder_for;
-use crossfade_codec::flac::frame::{self, ChannelAssignment};
 use crossfade_core::{AudioFrame, Error, Limits, Packet, Samples};
+use crossfade_flac::frame::{self, ChannelAssignment};
 use std::io::Write;
 use std::time::Instant;
 

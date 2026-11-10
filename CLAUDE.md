@@ -15,14 +15,16 @@ and a GPUI desktop app (`crossfade-gui`).
 2. **Commits:** `<type>: <what changed>`, types `feat fix refactor docs test
    chore style`. Stage files by name (never `git add .` or `-A`). End every
    message with the `Co-Authored-By:` trailer.
-3. **Pure Rust engine.** The engine crates (core, format, codec, dsp, graph)
+3. **Pure Rust engine.** The engine crates (core, flac, format, codec, dsp, graph)
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
-4. **Dependency direction:** core <- codec, dsp <- format <- graph <- app <-
-   cli, ui. A demuxer needs a codec's frame-header parser to split packets (as
-   FFmpeg's libavformat uses libavcodec's parsers), so format depends on codec,
-   never the reverse. `appconfig` stands alone and only ui uses it.
+4. **Dependency direction:** core, flac <- codec, dsp <- format <- graph <-
+   app <- cli, ui. Standalone codec crates (`crossfade-flac` first) depend on
+   nothing in the workspace and not even on core; `codec` wraps them in thin
+   adapters. A demuxer needs a codec's frame-header parser to split packets (as
+   FFmpeg's libavformat uses libavcodec's parsers), so format depends on the
+   standalone codec crate directly, never on the engine's `codec`. `appconfig` stands alone and only ui uses it.
    `crossfade-testkit` depends only on core and is only a dev-dependency.
    Nothing points the other way. GPUI is imported only through
    `crossfade_ui::prelude`.
@@ -37,7 +39,8 @@ and a GPUI desktop app (`crossfade-gui`).
 |---|---|
 | `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
 | `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
-| `crossfade-codec` | Codecs: PCM (little- and big-endian), our FLAC decoder, a FLAC encoder wrapping `flacenc`; shared bit-level tools (`bits`, `md5`, `flac::{frame, streaminfo, crc}`); `decoder_for` / `encoder_for` |
+| `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out), its own `Error`. Other projects can use it alone |
+| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), a thin adapter from `crossfade-flac`'s decoder to `crossfade_core::Decoder`, a FLAC encoder wrapping `flacenc`; `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
 | `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |

@@ -1,9 +1,9 @@
 use super::*;
-use crossfade_codec::bits::BitWriter;
-use crossfade_codec::flac::crc::crc16;
-use crossfade_codec::flac::frame::{self, ChannelAssignment, FrameHeader};
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::Packet;
+use crossfade_flac::bits::BitWriter;
+use crossfade_flac::crc::crc16;
+use crossfade_flac::frame::{self, ChannelAssignment, FrameHeader};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use crossfade_testkit::io::FaultySource;
 use std::io::{Cursor, ErrorKind};
 

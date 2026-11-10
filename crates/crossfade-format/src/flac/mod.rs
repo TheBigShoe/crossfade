@@ -6,10 +6,10 @@ mod mux;
 pub use demux::open;
 pub use mux::create;
 
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{
     AudioSpec, Channel, ChannelLayout, CodecId, Error, SampleFormat, StreamInfo, TimeBase,
 };
+use crossfade_flac::streaminfo::StreamInfoBlock;
 
 /// FLAC's default channel orders (RFC 9639 section 9.1.3). Seven channels would need a
 /// back-centre position `Channel` does not have, so that count stays unpositioned.
@@ -54,6 +54,17 @@ pub(crate) fn stream_info(block: &StreamInfoBlock, extradata: &[u8]) -> Result<S
         bits_per_raw_sample: (!matches!(bits, 8 | 16 | 24 | 32)).then_some(bits),
         ..StreamInfo::new(0, CodecId::Flac, audio, time_base)
     })
+}
+
+/// Maps the standalone FLAC crate's error onto the engine's, keeping its text.
+pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
+    match e {
+        crossfade_flac::Error::Malformed(what) => Error::Malformed { what },
+        crossfade_flac::Error::Unsupported(what) => Error::Unsupported { what },
+        crossfade_flac::Error::UnexpectedEof { offset } => Error::UnexpectedEof {
+            offset: offset as u64,
+        },
+    }
 }
 
 #[cfg(test)]

@@ -7,9 +7,9 @@
 //! optimisation cannot change a single output bit unnoticed.
 
 use crossfade_codec::decoder_for;
-use crossfade_codec::md5::Md5;
 use crossfade_core::{AudioFrame, Limits, Packet, Samples};
 use crossfade_corpus::{Cache, Entry, Expect, Manifest, require_from, try_require, workspace_root};
+use crossfade_flac::md5::Md5;
 use sha2::{Digest, Sha256};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;

@@ -30,9 +30,9 @@
 //! blocks of 32 to 32 767 samples.
 
 use crate::EncodeOptions;
-use crate::flac::streaminfo::StreamInfoBlock;
-use crate::md5::Md5;
 use crossfade_core::{AudioFrame, AudioSpec, Encoder, Error, Packet, SampleFormat, Samples};
+use crossfade_flac::md5::Md5;
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use flacenc::bitsink::MemSink;
 use flacenc::component::BitRepr;
 use flacenc::config;

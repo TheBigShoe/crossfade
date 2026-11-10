@@ -1,0 +1,16 @@
+[package]
+name = "crossfade-flac"
+description = "FLAC in pure Rust: frame and STREAMINFO parsing, a verifying decoder, and the bit-level tools they share."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# No dependencies on purpose: other projects can take this crate alone.
+[dependencies]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

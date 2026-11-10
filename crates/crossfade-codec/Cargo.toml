@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 crossfade-core.workspace = true
+crossfade-flac.workspace = true
 flacenc.workspace = true
 
 [lints]

@@ -8,14 +8,17 @@ license.workspace = true
 
 [dependencies]
 crossfade-core.workspace = true
-# Demuxers split packets with a codec's frame-header parser, as libavformat uses libavcodec's.
-crossfade-codec.workspace = true
+# Demuxers split packets with the FLAC crate's frame-header parser, as libavformat uses
+# libavcodec's parsers.
+crossfade-flac.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
 crossfade-testkit.workspace = true
+# Tests, examples and benches build engine decoders and encoders.
+crossfade-codec.workspace = true
 proptest.workspace = true
 criterion.workspace = true
 # Conformance tier only; dev-dependencies do not count against the engine purity gate.
