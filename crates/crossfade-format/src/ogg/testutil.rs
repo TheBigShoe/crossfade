@@ -45,7 +45,12 @@ pub fn lacing_of(len: usize) -> Vec<u8> {
 
 /// Packets as pages. `segments_per_page` cycles; a packet that does not fit is continued
 /// on the next page. The first page is marked BOS and the last EOS. Granules are -1.
-pub fn pages(serial: u32, first_sequence: u32, packets: &[Vec<u8>], per_page: &[usize]) -> Vec<RawPage> {
+pub fn pages(
+    serial: u32,
+    first_sequence: u32,
+    packets: &[Vec<u8>],
+    per_page: &[usize],
+) -> Vec<RawPage> {
     let mut segs: Vec<(u8, &[u8])> = Vec::new();
     for p in packets {
         let lacing = lacing_of(p.len());
@@ -58,11 +63,17 @@ pub fn pages(serial: u32, first_sequence: u32, packets: &[Vec<u8>], per_page: &[
     let mut at = 0;
     let mut i = 0;
     while at < segs.len() {
-        let n = per_page[i % per_page.len()].clamp(1, 255).min(segs.len() - at);
+        let n = per_page[i % per_page.len()]
+            .clamp(1, 255)
+            .min(segs.len() - at);
         i += 1;
         let chunk = &segs[at..at + n];
         out.push(RawPage {
-            flags: if at > 0 && segs[at - 1].0 == 255 { CONTINUED } else { 0 },
+            flags: if at > 0 && segs[at - 1].0 == 255 {
+                CONTINUED
+            } else {
+                0
+            },
             granule: -1,
             serial,
             sequence: first_sequence + out.len() as u32,
