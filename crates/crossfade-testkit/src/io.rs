@@ -14,14 +14,16 @@ pub struct FaultySource<S: MediaSource> {
 }
 
 impl<S: MediaSource> FaultySource<S> {
-    pub fn new(inner: S) -> Self {
+    pub fn new(mut inner: S) -> Self {
+        // Track the position ourselves: faults are keyed on absolute offsets.
+        let pos = inner.seek(SeekFrom::Current(0)).unwrap_or(0);
         Self {
             inner,
             truncate: None,
             max_read: None,
             fail: None,
             seekable: true,
-            pos: 0,
+            pos,
         }
     }
 
@@ -54,21 +56,62 @@ impl<S: MediaSource> FaultySource<S> {
 
 impl<S: MediaSource> MediaSource for FaultySource<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read(buf)?;
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let mut limit = buf.len().min(self.max_read.unwrap_or(usize::MAX));
+        let mut cap = |end: u64| {
+            let room = end.saturating_sub(self.pos);
+            limit = limit.min(usize::try_from(room).unwrap_or(usize::MAX));
+        };
+        if let Some(n) = self.truncate {
+            cap(n);
+        }
+        if let Some((offset, kind)) = self.fail {
+            if self.pos >= offset {
+                return Err(io::Error::from(kind));
+            }
+            cap(offset);
+        }
+        if limit == 0 {
+            return Ok(0);
+        }
+        let n = self.inner.read(&mut buf[..limit])?;
         self.pos += n as u64;
         Ok(n)
     }
 
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.inner.seek(pos)
+        if !self.seekable {
+            return Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "source is not seekable",
+            ));
+        }
+        // From-end must be relative to the truncated length.
+        let target = match (pos, self.byte_len()) {
+            (SeekFrom::End(d), Some(len)) => {
+                let abs = len
+                    .checked_add_signed(d)
+                    .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "seek before start"))?;
+                SeekFrom::Start(abs)
+            }
+            (p, _) => p,
+        };
+        self.pos = self.inner.seek(target)?;
+        Ok(self.pos)
     }
 
     fn byte_len(&self) -> Option<u64> {
-        self.inner.byte_len()
+        if !self.seekable {
+            return None;
+        }
+        let len = self.inner.byte_len()?;
+        Some(self.truncate.map_or(len, |n| n.min(len)))
     }
 
     fn is_seekable(&self) -> bool {
-        self.inner.is_seekable()
+        self.seekable && self.inner.is_seekable()
     }
 }
 
@@ -113,8 +156,17 @@ impl<S: MediaSink> FaultySink<S> {
 
 impl<S: MediaSink> MediaSink for FaultySink<S> {
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.written += buf.len() as u64;
-        self.inner.write_all(buf)
+        let Some((limit, kind)) = self.fail_after else {
+            return self.inner.write_all(buf);
+        };
+        let room = limit.saturating_sub(self.written);
+        let fits = usize::try_from(room).map_or(buf.len(), |r| r.min(buf.len()));
+        self.inner.write_all(&buf[..fits])?;
+        self.written += fits as u64;
+        if fits < buf.len() {
+            return Err(io::Error::from(kind));
+        }
+        Ok(())
     }
 
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -122,6 +174,9 @@ impl<S: MediaSink> MediaSink for FaultySink<S> {
     }
 
     fn finish(&mut self) -> io::Result<()> {
+        if let Some(kind) = self.fail_on_finish {
+            return Err(io::Error::from(kind));
+        }
         self.inner.finish()
     }
 }
