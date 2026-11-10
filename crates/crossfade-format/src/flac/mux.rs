@@ -11,3 +11,6 @@ pub fn create(
         what: "writing flac is not built yet".into(),
     })
 }
+
+#[cfg(test)]
+mod tests;
