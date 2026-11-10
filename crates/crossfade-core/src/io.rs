@@ -206,6 +206,37 @@ mod tests {
         assert_eq!(std::fs::read(tmp.path()).unwrap(), b"HEAD-body");
     }
 
+    struct OneFile(Vec<String>);
+
+    impl crate::JobIo for OneFile {
+        fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, crate::Error> {
+            self.0.push(format!("open {path}"));
+            Ok(Box::new(Cursor::new(vec![1u8])))
+        }
+        fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, crate::Error> {
+            self.0.push(format!("create {path}"));
+            Ok(Box::new(Cursor::new(Vec::new())))
+        }
+        fn commit(&mut self, path: &str) -> Result<(), crate::Error> {
+            self.0.push(format!("commit {path}"));
+            Ok(())
+        }
+        fn discard(&mut self, path: &str) {
+            self.0.push(format!("discard {path}"));
+        }
+    }
+
+    #[test]
+    fn job_io_is_object_safe() {
+        let mut io = OneFile(Vec::new());
+        let dynamic: &mut dyn crate::JobIo = &mut io;
+        assert_eq!(dynamic.open_source("a").unwrap().byte_len(), Some(1));
+        dynamic.create_sink("b").unwrap();
+        dynamic.commit("b").unwrap();
+        dynamic.discard("b");
+        assert_eq!(io.0, ["open a", "create b", "commit b", "discard b"]);
+    }
+
     #[test]
     fn sink_is_object_safe() {
         let mut boxed: Box<dyn MediaSink> = Box::new(Cursor::new(Vec::new()));
