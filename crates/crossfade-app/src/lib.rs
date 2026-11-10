@@ -5,4 +5,5 @@
 mod command;
 mod fsio;
 
+pub use command::{NotExpressible, Request, command_line, convert_args};
 pub use fsio::FsIo;

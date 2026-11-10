@@ -1,3 +1,81 @@
+//! What a front end hands to a runner, and the CLI words that mean the same.
+
+use crossfade_graph::Job;
+
+/// A job plus the one decision the job file does not carry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Request {
+    pub job: Job,
+    pub overwrite: bool,
+}
+
+/// The job has no `crossfade convert` spelling (not one input and one output).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotExpressible;
+
+impl std::fmt::Display for NotExpressible {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not expressible as a convert command")
+    }
+}
+
+impl std::error::Error for NotExpressible {}
+
+/// Arguments after `crossfade`. A dash-leading input would be read as a flag,
+/// so it moves behind `--`; a dash-leading output uses the attached form.
+pub fn convert_args(request: &Request) -> Result<Vec<String>, NotExpressible> {
+    let ([input], [output]) = (
+        request.job.inputs.as_slice(),
+        request.job.outputs.as_slice(),
+    ) else {
+        return Err(NotExpressible);
+    };
+    let (input, out_path) = (&input.path, &output.path);
+    let dashed_input = input.starts_with('-');
+    let mut args = vec!["convert".to_owned()];
+    if !dashed_input {
+        args.push(input.clone());
+    }
+    if out_path.starts_with('-') || dashed_input {
+        args.push(format!("--output={out_path}"));
+    } else {
+        args.extend(["-o".to_owned(), out_path.clone()]);
+    }
+    if let Some(format) = output.audio.sample_format {
+        args.extend(["--sample-format".to_owned(), format.name().to_owned()]);
+    }
+    if request.overwrite {
+        args.push("--force".to_owned());
+    }
+    if dashed_input {
+        args.extend(["--".to_owned(), input.clone()]);
+    }
+    Ok(args)
+}
+
+fn quote(arg: &str) -> String {
+    let safe = !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if safe {
+        arg.to_owned()
+    } else {
+        format!("'{}'", arg.replace('\'', r"'\''"))
+    }
+}
+
+/// A line a person can paste into a POSIX shell.
+pub fn command_line(request: &Request) -> Result<String, NotExpressible> {
+    let args = convert_args(request)?;
+    let mut line = "crossfade".to_owned();
+    for arg in &args {
+        line.push(' ');
+        line.push_str(&quote(arg));
+    }
+    Ok(line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NotExpressible, Request, command_line, convert_args};
@@ -36,7 +114,15 @@ mod tests {
     fn flags_appear_only_when_set() {
         assert_eq!(
             args(&request("a.wav", "b.wav", Some(SampleFormat::S24), true)),
-            ["convert", "a.wav", "-o", "b.wav", "--sample-format", "s24", "--force"]
+            [
+                "convert",
+                "a.wav",
+                "-o",
+                "b.wav",
+                "--sample-format",
+                "s24",
+                "--force"
+            ]
         );
         assert_eq!(
             args(&request("a.wav", "b.wav", Some(SampleFormat::F32), false)),
