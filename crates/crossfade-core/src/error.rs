@@ -19,4 +19,28 @@ pub enum Error {
     ZeroSampleRate,
     #[error("allocation of {requested} bytes exceeds the limit of {max}")]
     AllocLimitExceeded { requested: usize, max: usize },
+    #[error("i/o error: {message}")]
+    Io {
+        kind: std::io::ErrorKind,
+        message: String,
+    },
+    #[error("unexpected end of input at byte {offset}")]
+    UnexpectedEof { offset: u64 },
+    #[error("malformed input: {what}")]
+    Malformed { what: String },
+    #[error("unsupported: {what}")]
+    Unsupported { what: String },
+    #[error("unrecognised format")]
+    UnrecognisedFormat,
+    #[error("cancelled")]
+    Cancelled,
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io {
+            kind: e.kind(),
+            message: e.to_string(),
+        }
+    }
 }
