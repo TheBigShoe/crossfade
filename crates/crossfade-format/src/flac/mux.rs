@@ -7,8 +7,8 @@
 //! nothing is patched.
 
 use crate::vorbis_comment;
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{CodecId, Error, MediaSink, Muxer, Packet, SampleFormat, StreamInfo, Tags};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::SeekFrom;
 
 const MARKER: &[u8; 4] = b"fLaC";
@@ -62,7 +62,7 @@ fn synthesised(stream: &StreamInfo) -> Result<[u8; StreamInfoBlock::LEN], Error>
 }
 
 fn checked(extradata: &[u8]) -> Result<[u8; StreamInfoBlock::LEN], Error> {
-    StreamInfoBlock::parse(extradata)?;
+    StreamInfoBlock::parse(extradata).map_err(super::engine_error)?;
     Ok(extradata.try_into().expect("parse accepted 34 bytes"))
 }
 

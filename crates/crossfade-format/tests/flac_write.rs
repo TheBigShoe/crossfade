@@ -1,15 +1,15 @@
 //! Encoder and writer together: whole-file invariants checked by a reader built only from
 //! the shared parsers, with no decoder.
 
-use crossfade_codec::flac::crc::crc16;
-use crossfade_codec::flac::frame::parse_header;
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
-use crossfade_codec::md5::Md5;
 use crossfade_codec::{EncodeOptions, encoder_for};
 use crossfade_core::{
     AudioFrame, AudioSpec, ChannelLayout, CodecId, Limits, MediaSink, Packet, SampleFormat,
     Samples, StreamInfo, Tags, TimeBase,
 };
+use crossfade_flac::crc::crc16;
+use crossfade_flac::frame::parse_header;
+use crossfade_flac::md5::Md5;
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use crossfade_format::vorbis_comment;
 use crossfade_format::{FormatId, create_muxer};
 use std::io::{Cursor, SeekFrom};

@@ -5,8 +5,8 @@
 mod signals;
 
 use crossfade_codec::decoder_for;
-use crossfade_codec::flac::frame::{self, ChannelAssignment};
 use crossfade_core::{AudioFrame, Error, Limits, Packet, Samples, StreamInfo};
+use crossfade_flac::frame::{self, ChannelAssignment};
 use crossfade_testkit::io::FaultySource;
 use proptest::prelude::*;
 use std::io::Cursor;
@@ -189,7 +189,7 @@ fn a_corrupt_sample_that_keeps_the_frame_crc_is_caught_by_the_md5() {
     assert!(demux.read_packet(&mut p).unwrap());
     let len = p.data.len();
     bad[first + len / 2] ^= 0x01;
-    let crc = crossfade_codec::flac::crc::crc16(&bad[first..first + len - 2]);
+    let crc = crossfade_flac::crc::crc16(&bad[first..first + len - 2]);
     bad[first + len - 2..first + len].copy_from_slice(&crc.to_be_bytes());
     match decode_bytes(bad) {
         Err(Error::Malformed { what }) => assert!(what.contains("MD5"), "{what}"),

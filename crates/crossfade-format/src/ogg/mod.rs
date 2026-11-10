@@ -10,8 +10,8 @@ mod tests;
 #[cfg(test)]
 mod testutil;
 
-use crossfade_codec::flac::frame::{self, HeaderError};
 use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Tags};
+use crossfade_flac::frame::{self, HeaderError};
 use packets::PacketReader;
 use page::PageReader;
 

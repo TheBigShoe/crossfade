@@ -1,8 +1,8 @@
 //! The Ogg FLAC mapping (RFC 9639 section 10.1).
 
 use crate::vorbis_comment;
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{Error, Limits, Tags};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 
 /// `0x7F "FLAC"`, version, header count, `fLaC`, block header, STREAMINFO.
 const ID_LEN: usize = 5 + 2 + 2 + 4 + 4 + StreamInfoBlock::LEN;
@@ -41,7 +41,7 @@ pub(crate) fn parse_first_packet(p: &[u8]) -> Result<MappingHeader, Error> {
     let mut streaminfo = [0; StreamInfoBlock::LEN];
     streaminfo.copy_from_slice(&p[17..ID_LEN]);
     Ok(MappingHeader {
-        block: StreamInfoBlock::parse(&streaminfo)?,
+        block: StreamInfoBlock::parse(&streaminfo).map_err(crate::flac::engine_error)?,
         streaminfo,
     })
 }

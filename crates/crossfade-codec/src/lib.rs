@@ -2,9 +2,7 @@
 //! reverse. Built on the types in `crossfade-core`.
 #![forbid(unsafe_code)]
 
-pub mod bits;
 pub mod flac;
-pub mod md5;
 pub mod pcm;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};

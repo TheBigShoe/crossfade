@@ -5,10 +5,10 @@ use super::*;
 use crate::ogg::packets::PacketReader;
 use crate::ogg::page::PageReader;
 use crate::{FormatId, open_demuxer};
-use crossfade_codec::flac::crc::crc16;
-use crossfade_codec::flac::frame::{self, ChannelAssignment, FrameHeader};
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{CodecId, Packet, Tags};
+use crossfade_flac::crc::crc16;
+use crossfade_flac::frame::{self, ChannelAssignment, FrameHeader};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use crossfade_testkit::io::FaultySource;
 use std::io::Cursor;
 

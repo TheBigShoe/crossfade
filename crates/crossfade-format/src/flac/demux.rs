@@ -7,10 +7,10 @@
 
 use super::stream_info;
 use crate::vorbis_comment;
-use crossfade_codec::flac::crc::crc16_update;
-use crossfade_codec::flac::frame::{self, FrameHeader, HeaderError};
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Tags};
+use crossfade_flac::crc::crc16_update;
+use crossfade_flac::frame::{self, FrameHeader, HeaderError};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::ErrorKind;
 
 /// A frame header is at most 16 bytes: sync, two flag bytes, a 7-byte number, two 2-byte
@@ -152,7 +152,10 @@ fn read_metadata(
             }
             let mut raw = [0u8; StreamInfoBlock::LEN];
             fill_exact(source, pos, &mut raw)?;
-            first = Some((StreamInfoBlock::parse(&raw)?, raw));
+            first = Some((
+                StreamInfoBlock::parse(&raw).map_err(super::engine_error)?,
+                raw,
+            ));
         } else if kind == 4 && tags.is_none() {
             // The first comment block counts, however it turns out: the audio plays without it.
             let mut parsed = Tags::new();

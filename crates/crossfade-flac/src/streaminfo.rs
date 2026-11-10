@@ -1,7 +1,7 @@
 //! The STREAMINFO metadata block body (RFC 9639 section 8.2).
 
 use crate::bits::{BitReader, BitWriter};
-use crossfade_core::Error;
+use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamInfoBlock {
@@ -23,15 +23,13 @@ pub struct StreamInfoBlock {
 }
 
 fn malformed(what: &str) -> Error {
-    Error::Malformed {
-        what: format!("flac streaminfo: {what}"),
-    }
+    Error::Malformed(format!("flac streaminfo: {what}"))
 }
 
 impl StreamInfoBlock {
     pub const LEN: usize = 34;
 
-    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+    pub fn parse(body: &[u8]) -> Result<Self> {
         if body.len() != Self::LEN {
             return Err(malformed("body is not 34 bytes"));
         }
@@ -154,8 +152,8 @@ mod tests {
         }
     }
 
-    fn malformed(r: Result<StreamInfoBlock, Error>) {
-        assert!(matches!(r, Err(Error::Malformed { .. })), "{r:?}");
+    fn malformed(r: Result<StreamInfoBlock>) {
+        assert!(matches!(r, Err(Error::Malformed(_))), "{r:?}");
     }
 
     #[test]

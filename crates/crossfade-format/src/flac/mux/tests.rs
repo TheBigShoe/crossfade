@@ -1,7 +1,7 @@
 use super::*;
 use crate::vorbis_comment;
-use crossfade_codec::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Limits, Packet, SampleFormat, TimeBase};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::{Cursor, SeekFrom};
 use std::sync::{Arc, Mutex};
 

@@ -1,6 +1,6 @@
 use super::*;
-use crate::flac::streaminfo::StreamInfoBlock;
 use crossfade_core::{AudioFrame, ChannelLayout, SampleFormat, Samples};
+use crossfade_flac::streaminfo::StreamInfoBlock;
 
 fn spec(rate: u32, format: SampleFormat, channels: u16) -> AudioSpec {
     AudioSpec::new(rate, format, ChannelLayout::unpositioned(channels).unwrap()).unwrap()
@@ -92,9 +92,9 @@ fn a_frame_of_another_spec_is_an_error() {
     assert!(matches!(e.send_frame(&f), Err(Error::Unsupported { .. })));
 }
 
-use crate::flac::crc::crc16;
-use crate::flac::frame::parse_header;
-use crate::md5::Md5;
+use crossfade_flac::crc::crc16;
+use crossfade_flac::frame::parse_header;
+use crossfade_flac::md5::Md5;
 
 /// Deterministic tone plus a little noise, in range for `bits`.
 pub(super) fn signal(channels: usize, frames: usize, bits: u32, seed: u32) -> Vec<i32> {

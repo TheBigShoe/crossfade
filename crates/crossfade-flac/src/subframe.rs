@@ -5,12 +5,10 @@
 //! hostile stream controls goes through wrapping arithmetic, so corrupt data decodes to noise
 //! (the frame CRC catches that) instead of panicking.
 
-use crossfade_core::Error;
+use crate::error::{Error, Result};
 
 fn malformed(what: &str) -> Error {
-    Error::Malformed {
-        what: format!("flac: {what}"),
-    }
+    Error::Malformed(format!("flac: {what}"))
 }
 
 fn ran_out() -> Error {
@@ -54,7 +52,7 @@ impl<'a> Bits<'a> {
     }
 
     /// `k` up to 56 bits.
-    pub(super) fn read(&mut self, k: u32) -> Result<u64, Error> {
+    pub(super) fn read(&mut self, k: u32) -> Result<u64> {
         debug_assert!(k <= 56);
         if k == 0 {
             return Ok(0);
@@ -70,7 +68,7 @@ impl<'a> Bits<'a> {
     }
 
     /// Two's complement over `k` bits.
-    pub(super) fn read_signed(&mut self, k: u32) -> Result<i64, Error> {
+    pub(super) fn read_signed(&mut self, k: u32) -> Result<i64> {
         if k == 0 {
             return Ok(0);
         }
@@ -79,7 +77,7 @@ impl<'a> Bits<'a> {
     }
 
     /// Zero bits before the next one bit, which is consumed too.
-    fn read_unary(&mut self) -> Result<u32, Error> {
+    fn read_unary(&mut self) -> Result<u32> {
         let mut zeros = 0u32;
         loop {
             if self.n == 0 {
@@ -109,7 +107,7 @@ impl<'a> Bits<'a> {
 }
 
 /// Fills `out[order..]` from the coded residual section.
-fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<(), Error> {
+fn read_residual(r: &mut Bits, out: &mut [i64], order: usize) -> Result<()> {
     let block = out.len();
     let (param_bits, escape) = match r.read(2)? {
         0 => (4, 15),
@@ -211,7 +209,7 @@ pub(super) fn read_subframe(
     out: &mut Vec<i64>,
     block: usize,
     bps: u32,
-) -> Result<(), Error> {
+) -> Result<()> {
     out.clear();
     out.resize(block, 0);
     if r.read(1)? != 0 {

@@ -1,6 +1,6 @@
 //! MSB-first bit reading and writing, shared by the codecs and bit-packed headers.
 
-use crossfade_core::Error;
+use crate::error::{Error, Result};
 
 pub struct BitReader<'a> {
     data: &'a [u8],
@@ -26,16 +26,14 @@ impl<'a> BitReader<'a> {
 
     fn eof(&self) -> Error {
         Error::UnexpectedEof {
-            offset: self.data.len() as u64,
+            offset: self.data.len(),
         }
     }
 
     /// `n` up to 64; more is a caller bug reported as `Malformed`.
-    pub fn read_bits(&mut self, n: u32) -> Result<u64, Error> {
+    pub fn read_bits(&mut self, n: u32) -> Result<u64> {
         if n > 64 {
-            return Err(Error::Malformed {
-                what: format!("cannot read {n} bits at once"),
-            });
+            return Err(Error::Malformed(format!("cannot read {n} bits at once")));
         }
         if u64::from(n) > self.remaining_bits() {
             return Err(self.eof());
@@ -54,12 +52,12 @@ impl<'a> BitReader<'a> {
         Ok(out)
     }
 
-    pub fn read_bit(&mut self) -> Result<bool, Error> {
+    pub fn read_bit(&mut self) -> Result<bool> {
         Ok(self.read_bits(1)? == 1)
     }
 
     /// Two's complement over `n` bits (`n` up to 64).
-    pub fn read_signed(&mut self, n: u32) -> Result<i64, Error> {
+    pub fn read_signed(&mut self, n: u32) -> Result<i64> {
         if n == 0 {
             return Ok(0);
         }
@@ -69,7 +67,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Counts zero bits up to and excluding the terminating one bit.
-    pub fn read_unary(&mut self) -> Result<u32, Error> {
+    pub fn read_unary(&mut self) -> Result<u32> {
         let mut zeros = 0u32;
         while !self.read_bit()? {
             zeros = zeros.saturating_add(1);
@@ -77,7 +75,7 @@ impl<'a> BitReader<'a> {
         Ok(zeros)
     }
 
-    pub fn skip(&mut self, n: u64) -> Result<(), Error> {
+    pub fn skip(&mut self, n: u64) -> Result<()> {
         if n > self.remaining_bits() {
             return Err(self.eof());
         }

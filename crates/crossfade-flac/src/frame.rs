@@ -1,6 +1,6 @@
 //! FLAC frame header parsing and writing (RFC 9639 section 9.1).
 
-use crate::flac::crc::crc8;
+use crate::crc::crc8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelAssignment {
@@ -278,7 +278,7 @@ pub fn write_header(header: &FrameHeader, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flac::crc::crc8;
+    use crate::crc::crc8;
     use ChannelAssignment::{Independent, LeftSide, MidSide, SideRight};
     use proptest::prelude::*;
 
