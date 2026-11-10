@@ -7,7 +7,58 @@ pub use demux::open;
 pub use mux::create;
 
 use crossfade_codec::flac::streaminfo::StreamInfoBlock;
-use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Error, StreamInfo, TimeBase};
+use crossfade_core::{
+    AudioSpec, Channel, ChannelLayout, CodecId, Error, SampleFormat, StreamInfo, TimeBase,
+};
+
+// Unused until the readers call `stream_info`.
+#[allow(dead_code)]
+/// FLAC's default channel orders (RFC 9639 section 9.1.3). Seven channels would need a
+/// back-centre position `Channel` does not have, so that count stays unpositioned.
+fn layout(channels: u8) -> Result<ChannelLayout, Error> {
+    use Channel::*;
+    let positions: &[Channel] = match channels {
+        1 => return Ok(ChannelLayout::mono()),
+        2 => return Ok(ChannelLayout::stereo()),
+        3 => &[FrontLeft, FrontRight, FrontCenter],
+        4 => &[FrontLeft, FrontRight, BackLeft, BackRight],
+        5 => &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
+        6 => &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
+        8 => &[
+            FrontLeft,
+            FrontRight,
+            FrontCenter,
+            Lfe,
+            BackLeft,
+            BackRight,
+            SideLeft,
+            SideRight,
+        ],
+        n => return ChannelLayout::unpositioned(u16::from(n)),
+    };
+    ChannelLayout::from_positions(positions.to_vec())
+}
+
+/// The stream a STREAMINFO block describes; shared by the native and Ogg readers.
+// Unused until the native and Ogg readers call it.
+#[allow(dead_code)]
+pub(crate) fn stream_info(block: &StreamInfoBlock, extradata: &[u8]) -> Result<StreamInfo, Error> {
+    let bits = block.bits_per_sample;
+    let format = match bits {
+        0..=8 => SampleFormat::U8,
+        9..=16 => SampleFormat::S16,
+        17..=24 => SampleFormat::S24,
+        _ => SampleFormat::S32,
+    };
+    let audio = AudioSpec::new(block.sample_rate, format, layout(block.channels)?)?;
+    let time_base = TimeBase::new(1, i64::from(block.sample_rate))?;
+    Ok(StreamInfo {
+        frames: (block.total_samples != 0).then_some(block.total_samples),
+        extradata: extradata.to_vec(),
+        bits_per_raw_sample: (!matches!(bits, 8 | 16 | 24 | 32)).then_some(bits),
+        ..StreamInfo::new(0, CodecId::Flac, audio, time_base)
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -73,13 +124,31 @@ mod tests {
 
     #[test]
     fn channel_orders_follow_rfc_9639() {
-        let positioned: [(u8, &[crossfade_core::Channel]); 6] = [
+        let positioned: [(u8, &[Channel]); 6] = [
             (1, &[FrontCenter]),
             (3, &[FrontLeft, FrontRight, FrontCenter]),
             (4, &[FrontLeft, FrontRight, BackLeft, BackRight]),
-            (5, &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight]),
-            (6, &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight]),
-            (8, &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight, SideLeft, SideRight]),
+            (
+                5,
+                &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
+            ),
+            (
+                6,
+                &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
+            ),
+            (
+                8,
+                &[
+                    FrontLeft,
+                    FrontRight,
+                    FrontCenter,
+                    Lfe,
+                    BackLeft,
+                    BackRight,
+                    SideLeft,
+                    SideRight,
+                ],
+            ),
         ];
         for (n, want) in positioned {
             let s = info(&block(48000, n, 16, 1));
@@ -87,7 +156,10 @@ mod tests {
         }
         // 7 channels need a back-centre position, which `Channel` lacks.
         let seven = info(&block(48000, 7, 16, 1));
-        assert_eq!(seven.audio.layout(), &ChannelLayout::unpositioned(7).unwrap());
+        assert_eq!(
+            seven.audio.layout(),
+            &ChannelLayout::unpositioned(7).unwrap()
+        );
         assert_eq!(info(&block(48000, 2, 16, 1)).audio.layout().channels(), 2);
     }
 
