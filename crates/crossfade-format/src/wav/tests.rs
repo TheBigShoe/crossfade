@@ -418,26 +418,25 @@ fn extensible_valid_bits_must_match_the_container() {
 }
 
 #[test]
-fn oversized_fmt_chunk_is_checked_against_limits_before_allocating() {
+fn oversized_fmt_chunk_is_skipped_not_buffered() {
+    // Room for one packet (4096 mono 16-bit frames) but not for the chunk:
+    // only the fields that matter are read, the rest is skipped.
     let limits = Limits {
-        max_alloc_bytes: 1024,
+        max_alloc_bytes: 10_000,
         ..Limits::default()
     };
     let mut body = Fmt::new(TAG_PCM, 1, 8000, 16).body();
-    body.resize(2000, 0);
-    let bytes = riff(&[chunk(b"fmt ", &body), chunk(b"data", &[])]);
-    assert_eq!(
-        open_with(bytes, &limits).err(),
-        Some(Error::AllocLimitExceeded {
-            requested: 2000,
-            max: 1024
-        })
-    );
-    // A huge declared size must fail on the declaration, not on memory.
-    let bytes = riff(&[raw_chunk(b"fmt ", 0xFFFF_FFF0, &[])]);
+    body.resize(20_000, 0);
+    let bytes = riff(&[chunk(b"fmt ", &body), chunk(b"data", &[1, 2])]);
+    let d = open_with(bytes, &limits).unwrap();
+    assert_eq!(d.streams()[0].audio.sample_rate(), 8000);
+    assert_eq!(d.streams()[0].frames, Some(1));
+
+    // A huge declared size costs no memory: it just runs out of input.
+    let bytes = riff(&[raw_chunk(b"fmt ", 0xFFFF_FFF0, &[0; 16])]);
     assert!(matches!(
         open_with(bytes, &limits).err(),
-        Some(Error::AllocLimitExceeded { .. })
+        Some(Error::UnexpectedEof { .. })
     ));
 }
 
