@@ -1,9 +1,8 @@
-use crate::choice::{can_hold, encode_options, output_codec};
 use crate::job::{AudioSettings, Job};
-use crossfade_codec::{decoder_for, encoder_for};
+use crate::validate::{output_format_for, resolve};
 use crossfade_core::{
-    AudioFrame, AudioSpec, Decoder, Demuxer, Encoder, Error, JobIo, Limits, Muxer, Packet,
-    SampleFormat, StreamInfo, Tags,
+    AudioFrame, Decoder, Demuxer, Encoder, Error, JobIo, Limits, Muxer, Packet, SampleFormat,
+    StreamInfo, Tags,
 };
 use crossfade_dsp::convert::convert_format;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
@@ -73,9 +72,7 @@ impl Pipeline {
                 job.outputs.len()
             )));
         };
-        let ext = output.path.rsplit_once('.').map_or("", |(_, e)| e);
-        let output_format = FormatId::from_extension(ext)
-            .ok_or_else(|| unsupported(format!("output extension {ext:?} of {}", output.path)))?;
+        let output_format = output_format_for(&output.path)?;
 
         let (input_format, demuxer) = open_demuxer(io.open_source(&input.path)?, limits)?;
         if demuxer.streams().len() != 1 {
@@ -99,7 +96,7 @@ impl Pipeline {
         )
     }
 
-    /// Decides copy or transcode and builds the codecs; `make_muxer` runs last, so nothing is
+    /// Decides copy or transcode through `resolve`; `make_muxer` runs last, so nothing is
     /// created for the output if an earlier choice is refused.
     fn build(
         input_format: FormatId,
@@ -111,57 +108,22 @@ impl Pipeline {
         let [stream] = demuxer.streams() else {
             return Err(unsupported("exactly one stream is supported"));
         };
-        let requested = settings.codec.as_deref();
-        let (out_stream, engine) = if requested == Some("copy") {
-            if settings.sample_format.is_some() {
-                return Err(unsupported("--codec copy cannot change the sample format"));
-            }
-            if settings.compression_level.is_some() {
-                return Err(unsupported("--codec copy cannot take a compression level"));
-            }
-            if !can_hold(output_format, stream.codec) {
-                return Err(unsupported(format!(
-                    "cannot copy {} into {}",
-                    stream.codec.name(),
-                    output_format.name()
-                )));
-            }
-            let out = StreamInfo {
-                index: 0,
-                ..stream.clone()
-            };
-            (out, Engine::Copy)
-        } else {
-            let in_spec = &stream.audio;
-            let out_format = settings.sample_format.unwrap_or(in_spec.format());
-            let codec = output_codec(output_format, out_format, requested)?;
-            let options = encode_options(codec, settings.compression_level)?;
-            let out_spec =
-                AudioSpec::new(in_spec.sample_rate(), out_format, in_spec.layout().clone())?;
-            let out = StreamInfo {
-                frames: stream.frames,
-                // Only meaningful while the sample format is unchanged.
-                bits_per_raw_sample: stream
-                    .bits_per_raw_sample
-                    .filter(|_| out_format == in_spec.format()),
-                ..StreamInfo::new(0, codec, out_spec.clone(), stream.time_base)
-            };
-            let decoder = decoder_for(stream)?;
-            let encoder = encoder_for(codec, &out_spec, &options)?;
-            let transcoder = Transcoder {
-                decoder,
-                encoder,
-                decoded: AudioFrame::new(in_spec),
-                converted: AudioFrame::new(&out_spec),
-            };
-            (out, Engine::Transcode(Box::new(transcoder)))
+        let (output, codecs) = resolve(stream, output_format, settings)?;
+        let engine = match codecs {
+            None => Engine::Copy,
+            Some(c) => Engine::Transcode(Box::new(Transcoder {
+                decoder: c.decoder,
+                encoder: c.encoder,
+                decoded: AudioFrame::new(&stream.audio),
+                converted: AudioFrame::new(&output.output.audio),
+            })),
         };
         let plan = Plan {
             input_format,
             output_format,
             input: stream.clone(),
-            output: out_stream,
-            copy: matches!(engine, Engine::Copy),
+            output: output.output,
+            copy: output.copy,
         };
         let muxer = make_muxer(&plan.output, demuxer.tags())?;
         Ok(Self {

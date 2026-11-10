@@ -45,6 +45,8 @@ const MAX_LEVEL: u8 = 8;
 /// What flacenc's `StreamInfo::new` accepts.
 const MAX_RATE: u32 = 96_000;
 const MAX_CHANNELS: u16 = 8;
+/// A raw frame's header, CRC and subframe headers fit well inside this.
+const RAW_SLACK_BITS: usize = 512;
 
 fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
@@ -98,6 +100,23 @@ impl Level {
         }
     }
 
+    /// Raw samples only: the fallback for a block the real settings code worse than raw.
+    fn verbatim_config(&self) -> Result<Verified<config::Encoder>, Error> {
+        use flacenc::error::Verify;
+        let mut c = config::Encoder::default();
+        c.block_size = self.block;
+        c.multithread = false;
+        c.stereo_coding.use_leftside = false;
+        c.stereo_coding.use_rightside = false;
+        c.stereo_coding.use_midside = false;
+        c.subframe_coding.use_constant = false;
+        c.subframe_coding.use_fixed = false;
+        c.subframe_coding.use_lpc = false;
+        c.into_verified().map_err(|(_, e)| Error::Malformed {
+            what: format!("flac encoder settings: {e}"),
+        })
+    }
+
     fn config(&self) -> Result<Verified<config::Encoder>, Error> {
         use flacenc::error::Verify;
         let mut c = config::Encoder::default();
@@ -142,6 +161,7 @@ struct FlacEncoder {
     bits: u8,
     block: usize,
     config: Verified<config::Encoder>,
+    verbatim: Verified<config::Encoder>,
     /// flacenc's own header record; it only has to agree with the frames it is asked to code.
     stream_info: flacenc::component::StreamInfo,
     framebuf: FrameBuf,
@@ -202,6 +222,7 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         bits,
         block: level.block,
         config: level.config()?,
+        verbatim: level.verbatim_config()?,
         stream_info,
         framebuf,
         buf: Vec::with_capacity(level.block * usize::from(channels)),
@@ -268,13 +289,24 @@ impl FlacEncoder {
             .fill_interleaved(&self.buf)
             .map_err(|e| malformed("flac encoder input", e))?;
         self.buf.clear();
-        let frame = flacenc::encode_fixed_size_frame(
+        let mut frame = flacenc::encode_fixed_size_frame(
             &self.config,
             &self.framebuf,
             self.next_frame,
             &self.stream_info,
         )
         .map_err(|e| malformed("flac encoder", e))?;
+        // flacenc's approximate Rice-parameter choice can blow a noisy block up to hundreds of
+        // times its raw size (past STREAMINFO's 24-bit frame-size field); raw is the ceiling.
+        if frame.count_bits() > frames * channels * usize::from(self.bits) + RAW_SLACK_BITS {
+            frame = flacenc::encode_fixed_size_frame(
+                &self.verbatim,
+                &self.framebuf,
+                self.next_frame,
+                &self.stream_info,
+            )
+            .map_err(|e| malformed("flac encoder", e))?;
+        }
         let mut sink = MemSink::<u8>::with_capacity(frame.count_bits());
         frame
             .write(&mut sink)

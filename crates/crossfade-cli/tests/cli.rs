@@ -85,6 +85,50 @@ fn convert_to_an_unknown_container_names_the_extension() {
     let err = text(&out.stderr);
     assert!(err.starts_with("crossfade: "), "{err}");
     assert!(err.contains("mp3"), "{err}");
+    for listed in [
+        ".wav",
+        ".flac",
+        ".aiff/.aif/.aifc",
+        ".ogg can be read but not written yet",
+    ] {
+        assert!(err.contains(listed), "{listed} missing from {err}");
+    }
+}
+
+#[test]
+fn convert_help_snapshot() {
+    let out = run(&["convert", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    insta::assert_snapshot!(text(&out.stdout));
+}
+
+#[test]
+fn convert_help_documents_the_codec_flags() {
+    let help = text(&run(&["convert", "--help"]).stdout);
+    for want in [
+        "--codec <CODEC>",
+        "[possible values: copy, pcm, flac]",
+        "--compression-level <COMPRESSION_LEVEL>",
+        "0 to 8",
+    ] {
+        assert!(help.contains(want), "{want} missing from {help}");
+    }
+}
+
+#[test]
+fn codec_and_level_values_are_checked_by_the_parser() {
+    for (flag, value) in [
+        ("--codec", "mp3"),
+        ("--codec", "FLAC"),
+        ("--compression-level", "9"),
+        ("--compression-level", "fast"),
+    ] {
+        let out = run(&["convert", "in.wav", "-o", "out.flac", flag, value]);
+        assert_eq!(out.status.code(), Some(2), "{flag} {value}");
+        assert!(out.stdout.is_empty());
+        let err = text(&out.stderr);
+        assert!(err.contains(flag) && err.contains(value), "{err}");
+    }
 }
 
 #[test]

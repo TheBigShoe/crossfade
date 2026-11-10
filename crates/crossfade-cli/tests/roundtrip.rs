@@ -33,9 +33,11 @@ fn request() -> impl Strategy<Value = Request> {
         path(),
         path(),
         prop::option::of(prop::sample::select(FORMATS.to_vec())),
+        prop::option::of(prop::sample::select(vec!["copy", "pcm", "flac"])),
+        prop::option::of(0u8..=8),
         any::<bool>(),
     )
-        .prop_map(|(input, output, format, overwrite)| Request {
+        .prop_map(|(input, output, format, codec, level, overwrite)| Request {
             job: Job {
                 version: Job::VERSION,
                 inputs: vec![JobInput { path: input }],
@@ -43,7 +45,8 @@ fn request() -> impl Strategy<Value = Request> {
                     path: output,
                     audio: AudioSettings {
                         sample_format: format,
-                        ..AudioSettings::default()
+                        codec: codec.map(Into::into),
+                        compression_level: level,
                     },
                 }],
             },

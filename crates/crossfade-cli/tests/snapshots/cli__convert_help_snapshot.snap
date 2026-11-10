@@ -1,0 +1,26 @@
+---
+source: crates/crossfade-cli/tests/cli.rs
+expression: text(&out.stdout)
+---
+Convert a media file
+
+Usage: crossfade convert [OPTIONS] --output <OUTPUT> <INPUT>
+
+Arguments:
+  <INPUT>  File to read: wav, flac, aiff/aifc or ogg (FLAC inside)
+
+Options:
+  -o, --output <OUTPUT>
+          File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc
+      --sample-format <SAMPLE_FORMAT>
+          Output sample format; defaults to the input's [possible values: u8, s16, s24, s32, f32, f64]
+      --codec <CODEC>
+          How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the container's own [possible values: copy, pcm, flac]
+      --compression-level <COMPRESSION_LEVEL>
+          FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file
+      --force
+          Replace an existing output file
+      --emit-job
+          Print the job as JSON and exit without touching any file
+  -h, --help
+          Print help

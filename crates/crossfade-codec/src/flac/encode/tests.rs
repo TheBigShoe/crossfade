@@ -393,3 +393,38 @@ fn silence_is_a_tiny_constant_stream() {
     // Raw would be 176 400 bytes; 11 frames of header plus two constant subframes.
     assert!(total < 11 * 16, "{total}");
 }
+
+/// flacenc's approximate order selection picks Rice parameters far too small for full-scale
+/// 24-bit white noise: frames came out hundreds of times the raw size, past the 24-bit
+/// frame-size fields of STREAMINFO.
+#[test]
+fn full_scale_noise_never_codes_larger_than_its_raw_samples() {
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let mut noise = |n: usize, shift: u32| -> Vec<i32> {
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (((x >> 40) as i32) - (1 << 23)) >> shift
+            })
+            .collect()
+    };
+    for (channels, shift) in [(1u16, 0), (1, 1), (2, 0), (2, 1), (1, 3), (3, 1)] {
+        let spec = spec(8000, SampleFormat::S24, channels);
+        let samples = noise(usize::from(channels) * 4096 * 2, shift);
+        for level in 0..=8 {
+            let out = encode(&spec, Some(level), &samples, 4096);
+            for p in &out.packets {
+                let raw = p.duration as usize * usize::from(channels) * 3;
+                assert!(
+                    p.data.len() <= raw + 64,
+                    "{channels} ch >> {shift}, level {level}: {} bytes for {raw} raw",
+                    p.data.len()
+                );
+            }
+            let block = if level <= 2 { 1152 } else { 4096 };
+            check_stream(&spec, &samples, &out, block);
+        }
+    }
+}

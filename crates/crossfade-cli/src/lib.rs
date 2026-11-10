@@ -36,7 +36,9 @@ enum Command {
     },
     /// Convert a media file.
     Convert {
+        /// File to read: wav, flac, aiff/aifc or ogg (FLAC inside).
         input: String,
+        /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc.
         #[arg(short, long)]
         output: String,
         /// Output sample format; defaults to the input's.
@@ -45,6 +47,13 @@ enum Command {
             value_parser = PossibleValuesParser::new(["u8", "s16", "s24", "s32", "f32", "f64"])
         )]
         sample_format: Option<String>,
+        /// How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the
+        /// container's own.
+        #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac"]))]
+        codec: Option<String>,
+        /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
+        compression_level: Option<u8>,
         /// Replace an existing output file.
         #[arg(long)]
         force: bool,
@@ -54,7 +63,13 @@ enum Command {
     },
 }
 
-fn convert_job(input: String, output: String, sample_format: Option<&str>) -> Job {
+struct Choices<'a> {
+    sample_format: Option<&'a str>,
+    codec: Option<&'a str>,
+    compression_level: Option<u8>,
+}
+
+fn convert_job(input: String, output: String, choices: Choices<'_>) -> Job {
     Job {
         version: Job::VERSION,
         inputs: vec![JobInput { path: input }],
@@ -62,8 +77,9 @@ fn convert_job(input: String, output: String, sample_format: Option<&str>) -> Jo
             path: output,
             audio: AudioSettings {
                 // The parser only lets valid names through.
-                sample_format: sample_format.and_then(SampleFormat::from_name),
-                ..AudioSettings::default()
+                sample_format: choices.sample_format.and_then(SampleFormat::from_name),
+                codec: choices.codec.map(str::to_owned),
+                compression_level: choices.compression_level,
             },
         }],
     }
@@ -82,10 +98,20 @@ where
             input,
             output,
             sample_format,
+            codec,
+            compression_level,
             force,
             ..
         } => Some(Request {
-            job: convert_job(input, output, sample_format.as_deref()),
+            job: convert_job(
+                input,
+                output,
+                Choices {
+                    sample_format: sample_format.as_deref(),
+                    codec: codec.as_deref(),
+                    compression_level,
+                },
+            ),
             overwrite: force,
         }),
         Command::Probe { .. } => None,
@@ -106,10 +132,17 @@ fn execute(command: Command, io: &mut dyn JobIo) -> Result<String, String> {
             input,
             output,
             sample_format,
+            codec,
+            compression_level,
             force,
             emit_job,
         } => {
-            let job = convert_job(input, output.clone(), sample_format.as_deref());
+            let choices = Choices {
+                sample_format: sample_format.as_deref(),
+                codec: codec.as_deref(),
+                compression_level,
+            };
+            let job = convert_job(input, output.clone(), choices);
             if emit_job {
                 return Ok(format!("{}\n", job.to_json_pretty()));
             }
