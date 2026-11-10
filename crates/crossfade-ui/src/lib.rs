@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod chrome;
+pub mod config;
 pub mod dialog_footer;
 pub mod icons;
 pub mod keymap;
@@ -12,6 +13,8 @@ pub mod workspace;
 
 #[cfg(test)]
 mod config_test_support;
+#[cfg(test)]
+mod config_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
