@@ -247,8 +247,23 @@ fn file_rows_are_two_lines_with_the_full_width_for_the_name(cx: &mut TestAppCont
         .dir
         .write_wav("interview-take-one-with-a-long-name.wav", 48_000, 2, 480);
     add_paths(cx, &rig, &[&long]);
-    let row = size_of(cx, rig.window, row_id("file-row", 0));
-    assert_eq!(row.height, px(40.));
+    let row = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-row", 0)).bounds()
+        })
+        .unwrap();
+    let summary = cx
+        .update_window(rig.window, |_, window, _| {
+            window.find(row_id("file-summary", 0)).bounds()
+        })
+        .unwrap();
+    // The second line keeps clear of the next row.
+    assert!(
+        row.bottom() - summary.bottom() >= px(4.),
+        "summary ends {:?} above the row's bottom",
+        row.bottom() - summary.bottom()
+    );
+    assert_eq!(summary.size.height, px(16.));
     let name = cx
         .update_window(rig.window, |_, window, _| {
             window.find(row_id("file-name", 0)).bounds()
