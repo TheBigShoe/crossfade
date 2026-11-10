@@ -152,6 +152,23 @@ impl Queue {
         }
     }
 
+    /// For quitting: stop the running job and drop the waiting ones.
+    pub fn cancel_all(&mut self) {
+        let ids: Vec<JobId> = self.items.iter().map(|i| i.id).collect();
+        for id in ids {
+            self.cancel(id);
+        }
+    }
+
+    /// Nothing waiting or running, so nothing can be left half-written. A cancelled
+    /// running job counts as running until its worker reports the end.
+    pub fn is_idle(&self) -> bool {
+        !self
+            .items
+            .iter()
+            .any(|i| matches!(i.state, JobState::Pending | JobState::Running { .. }))
+    }
+
     pub fn retry(&mut self, id: JobId) -> Option<JobId> {
         let item = self.get(id)?;
         matches!(item.state, JobState::Failed { .. } | JobState::Cancelled)

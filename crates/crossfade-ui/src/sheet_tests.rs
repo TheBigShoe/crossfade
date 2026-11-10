@@ -720,3 +720,20 @@ fn flac_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
     let flac = fixtures::flac(44_100, 2, SampleFormat::S16, 4_410);
     run_intents(cx, "in.flac", &flac, FLAC_INTENTS);
 }
+
+#[gpui_test]
+fn level_and_format_are_disabled_when_the_source_cannot_be_saved_as_the_container(
+    cx: &mut TestAppContext,
+) {
+    let rig = open_rig(cx);
+    let input = rig
+        .dir
+        .write("hi.wav", &fixtures::wav(192_000, 2, SampleFormat::S24, 480));
+    add_paths(cx, &rig, &[&input]);
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 1);
+    assert!(!dialog(cx, &rig, |d, _| d.level_enabled()));
+    assert!(!dialog(cx, &rig, |d, _| d.format_enabled()));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
+    assert!(dialog(cx, &rig, |d, _| d.format_enabled()));
+}

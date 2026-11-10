@@ -376,3 +376,56 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn an_empty_queue_and_one_with_only_finished_jobs_is_idle() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    assert!(q.is_idle());
+    let id = q.enqueue(request("a"));
+    assert!(!q.is_idle(), "a pending job is work");
+    q.pump(&mut r);
+    assert!(!q.is_idle(), "a running job is work");
+    q.apply(id, RunnerEvent::Finished { frames: 1 });
+    assert!(q.is_idle());
+    let bad = q.enqueue(request("b"));
+    q.pump(&mut r);
+    q.apply(
+        bad,
+        RunnerEvent::Failed {
+            message: "x".into(),
+        },
+    );
+    assert!(q.is_idle());
+}
+
+#[test]
+fn cancel_all_stops_the_running_job_and_drops_every_pending_one() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let (a, b, c) = (
+        q.enqueue(request("a")),
+        q.enqueue(request("b")),
+        q.enqueue(request("c")),
+    );
+    q.pump(&mut r);
+    q.cancel_all();
+    assert!(r.started[0].2.is_cancelled());
+    assert_eq!(state(&q, a), running(0, None, true));
+    assert_eq!(state(&q, b), JobState::Cancelled);
+    assert_eq!(state(&q, c), JobState::Cancelled);
+    assert!(!q.is_idle(), "the worker has not said it is done");
+    q.pump(&mut r);
+    assert_eq!(r.started.len(), 1, "nothing new starts");
+    q.apply(a, RunnerEvent::Cancelled);
+    assert!(q.is_idle());
+}
+
+#[test]
+fn cancel_all_leaves_finished_and_failed_jobs_alone() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let done = q.enqueue(request("a"));
+    q.pump(&mut r);
+    q.apply(done, RunnerEvent::Finished { frames: 3 });
+    q.cancel_all();
+    assert_eq!(state(&q, done), JobState::Finished { frames: 3 });
+    assert!(q.is_idle());
+}

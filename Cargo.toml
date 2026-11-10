@@ -37,6 +37,8 @@ toml = "0.8"
 libm = "0.2"
 thiserror = "2"
 proptest = "1"
+# Ctrl-C and SIGTERM in the CLI only (MIT OR Apache-2.0); never an engine crate.
+ctrlc = { version = "3", features = ["termination"] }
 clap = { version = "4", features = ["derive"] }
 insta = "1"
 assert_cmd = "2"

@@ -376,7 +376,12 @@ impl ConvertSheet {
     }
 
     pub fn level_enabled(&self) -> bool {
-        self.level_visible() && !self.copy()
+        self.level_visible() && !self.copy() && self.can_save()
+    }
+
+    /// Whether the source can go into this container at all, as audio or as a copy.
+    fn can_save(&self) -> bool {
+        self.copy_available() || !self.format_options().is_empty()
     }
 
     pub fn set_level(&mut self, level: Option<u8>) {
@@ -399,9 +404,10 @@ impl ConvertSheet {
         self.refresh_output();
     }
 
-    /// Copying leaves nothing to choose about the audio.
+    /// Copying leaves nothing to choose about the audio, and neither does a container
+    /// that cannot hold the source.
     pub fn format_enabled(&self) -> bool {
-        !self.copy()
+        !self.copy() && self.can_save()
     }
 
     pub fn set_output(&mut self, path: String) {
