@@ -11,8 +11,6 @@ use crossfade_core::{
     AudioSpec, Channel, ChannelLayout, CodecId, Error, SampleFormat, StreamInfo, TimeBase,
 };
 
-// Unused until the readers call `stream_info`.
-#[allow(dead_code)]
 /// FLAC's default channel orders (RFC 9639 section 9.1.3). Seven channels would need a
 /// back-centre position `Channel` does not have, so that count stays unpositioned.
 fn layout(channels: u8) -> Result<ChannelLayout, Error> {
@@ -40,8 +38,6 @@ fn layout(channels: u8) -> Result<ChannelLayout, Error> {
 }
 
 /// The stream a STREAMINFO block describes; shared by the native and Ogg readers.
-// Unused until the native and Ogg readers call it.
-#[allow(dead_code)]
 pub(crate) fn stream_info(block: &StreamInfoBlock, extradata: &[u8]) -> Result<StreamInfo, Error> {
     let bits = block.bits_per_sample;
     let format = match bits {

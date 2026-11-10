@@ -37,16 +37,8 @@ fn boxed_codecs_round_trip_for_every_pcm_codec() {
     }
 }
 
-fn unsupported_what(r: Result<impl Sized, Error>) -> String {
-    match r {
-        Err(Error::Unsupported { what }) => what,
-        Err(e) => panic!("wrong error {e:?}"),
-        Ok(_) => panic!("expected Unsupported"),
-    }
-}
-
 #[test]
-fn flac_is_routed_to_stubs_that_say_so() {
+fn flac_is_routed_to_the_real_codecs() {
     let audio = AudioSpec::new(8000, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
     let info = StreamInfo::new(
         0,
@@ -54,10 +46,8 @@ fn flac_is_routed_to_stubs_that_say_so() {
         audio.clone(),
         TimeBase::new(1, 8000).unwrap(),
     );
-    assert_eq!(
-        unsupported_what(decoder_for(&info)),
-        "flac decoding is not built yet"
-    );
+    // Routed to the FLAC decoder, which finds no STREAMINFO in the empty extradata.
+    assert!(matches!(decoder_for(&info), Err(Error::Malformed { .. })));
     let opts = EncodeOptions {
         compression_level: Some(5),
     };
