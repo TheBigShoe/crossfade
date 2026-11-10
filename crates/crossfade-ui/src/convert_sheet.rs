@@ -247,14 +247,13 @@ impl Render for ConvertDialog {
             theme.mono_font_family.clone(),
         );
         let problems = self.problem_messages(cx);
-        let command = if problems.is_empty() {
-            self.sheet
-                .build(&*self.exists)
-                .ok()
-                .and_then(|request| command_line(&request).ok())
-        } else {
-            None
-        };
+        // The command stays up while the sheet has a problem: a file that already exists
+        // is a reason to disable the button, not to hide what it would run.
+        let command = self
+            .sheet
+            .build(&|_| false)
+            .ok()
+            .and_then(|request| command_line(&request).ok());
         let overwrite = self.sheet.overwrite();
         v_flex()
             .id("convert-sheet")
@@ -290,7 +289,6 @@ impl Render for ConvertDialog {
                                 .test_support()
                                 .flex_1()
                                 .min_w_0()
-                                .font_family(mono.clone())
                                 .child(Input::new(&self.output).small()),
                         )
                         .child(

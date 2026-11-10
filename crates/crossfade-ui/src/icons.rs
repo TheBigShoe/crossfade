@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use crate::prelude::*;
 
 icon_assets!(pub AppIcons, [
+    ArrowRightLeft,
     Check,
     BrushCleaning,
     Copy,
@@ -17,7 +18,6 @@ icon_assets!(pub AppIcons, [
     PanelBottom,
     PanelLeft,
     PanelRight,
-    Play,
     Plus,
     RotateCcw,
     Settings,

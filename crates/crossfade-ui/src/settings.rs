@@ -33,7 +33,7 @@ pub const BUNDLED_THEMES: &[(&str, &str)] = &[(
     include_str!("../assets/themes/crossfade.json"),
 )];
 
-const DEFAULT_UI_FONT_SIZE: f32 = 14.0;
+const DEFAULT_UI_FONT_SIZE: f32 = 13.0;
 const MIN_UI_FONT_SIZE: f32 = 10.0;
 const MAX_UI_FONT_SIZE: f32 = 24.0;
 

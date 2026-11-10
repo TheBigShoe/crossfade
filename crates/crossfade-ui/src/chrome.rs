@@ -1,11 +1,19 @@
 //! The pieces the window's chrome is built from, so every panel, toolbar and list shares
-//! one rhythm: 28 px rows and headers, a 24 px status bar, 11 px uppercase labels in the
+//! one rhythm: 28 px headers, 24 px inspector rows, a 24 px status bar, 11 px uppercase labels in the
 //! theme's muted text, and icon buttons that are ghost until pressed.
 
 use crate::prelude::*;
 
 /// The height of every list row.
 pub const ROW_HEIGHT: Pixels = px(28.);
+/// The height of an inspector row.
+pub const INSPECTOR_ROW: Pixels = px(24.);
+/// The height of a two-line row of the files list.
+pub const FILE_ROW_HEIGHT: Pixels = px(40.);
+/// The first line of a files row: the name, with the remove button at its end.
+pub const FILE_NAME_LINE: Pixels = px(24.);
+/// The size of the inspector's title; everything else is content size or `LABEL_SIZE`.
+pub const TITLE_SIZE: Pixels = px(15.);
 /// The height of a panel header and of the toolbar.
 pub const HEADER_HEIGHT: Pixels = px(28.);
 /// The height of the status bar.

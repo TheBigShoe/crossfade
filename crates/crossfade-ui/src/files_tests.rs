@@ -286,33 +286,33 @@ fn inspector_rows_are_24_px_tall(cx: &mut TestAppContext) {
     assert_eq!(size_of(cx, rig.window, id).height, px(24.));
 }
 
-/// `top` composited over an opaque `under`.
-fn over(top: Hsla, under: Hsla) -> Hsla {
-    let (t, u) = (top.to_rgb(), under.to_rgb());
-    let mix = |t: f32, u: f32| t * top.a + u * (1.0 - top.a);
-    Hsla::from(Rgba {
-        r: mix(t.r, u.r),
-        g: mix(t.g, u.g),
-        b: mix(t.b, u.b),
-        a: 1.0,
-    })
-}
-
 #[gpui_test]
 fn a_selected_row_is_clearly_distinct_from_a_hovered_one_in_both_themes(cx: &mut TestAppContext) {
     let _rig = open_rig(cx);
     for dark in [true, false] {
         cx.update(|cx| crate::config::set_appearance(dark, cx));
         cx.update(|cx| {
-            let (selected, hover) = crate::files::row_colors(cx.theme());
-            let background = cx.theme().background;
-            let ratio = crate::theme_bridge::contrast_ratio(
-                over(selected, background),
-                over(hover, background),
-            );
+            let (selected, hover) = crate::files::row_colors(cx);
+            let background = cx.theme().background.to_rgb();
+            let flat = |top: Hsla| {
+                let top = top.to_rgb();
+                let mix = |t: f32, u: f32| t * top.a + u * (1.0 - top.a);
+                [
+                    mix(top.r, background.r),
+                    mix(top.g, background.g),
+                    mix(top.b, background.b),
+                ]
+            };
+            let (s, h) = (flat(selected), flat(hover));
+            let distance = s
+                .iter()
+                .zip(h)
+                .map(|(s, h)| (s - h).powi(2))
+                .sum::<f32>()
+                .sqrt();
             assert!(
-                ratio > 1.08,
-                "dark={dark}: selected vs hover contrast {ratio}"
+                distance > 0.08,
+                "dark={dark}: selected vs hover colour distance {distance}"
             );
         });
     }

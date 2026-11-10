@@ -206,13 +206,13 @@ impl Workspace {
         let id = item.id;
         let this = cx.entity();
         let running = matches!(item.state, JobState::Running { .. });
+        // One way out per state: a running job stops, anything else is removed.
         let can_cancel = matches!(
             item.state,
-            JobState::Pending
-                | JobState::Running {
-                    cancelling: false,
-                    ..
-                }
+            JobState::Running {
+                cancelling: false,
+                ..
+            }
         );
         let can_retry = matches!(item.state, JobState::Failed { .. } | JobState::Cancelled);
         let failed = matches!(item.state, JobState::Failed { .. });

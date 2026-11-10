@@ -360,7 +360,7 @@ impl Workspace {
                     .on_click(dispatch(Box::new(OpenFiles), &self.focus)),
             )
             .child(
-                icon_button("toolbar-convert", IconName::Play, "Convert", cx)
+                icon_button("toolbar-convert", IconName::ArrowRightLeft, "Convert", cx)
                     .disabled(!self.can_convert())
                     .on_click(dispatch(Box::new(Convert), &self.focus)),
             )
