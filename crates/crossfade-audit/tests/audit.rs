@@ -1,4 +1,4 @@
-use crossfade_audit::{Metadata, Reason, Violation, audit};
+use crossfade_audit::{Allowed, Metadata, Reason, Violation, audit};
 
 fn fixture(name: &str) -> Metadata {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -63,4 +63,13 @@ fn native_build_helpers_and_sys_crates_are_flagged() {
             ("libfoo-sys", &Reason::SysCrate),
         ]
     );
+}
+
+#[test]
+fn allowlisted_packages_are_not_flagged() {
+    let allow = [Allowed {
+        package: "zlib-native",
+        reason: "fixture only",
+    }];
+    assert_eq!(audit(&fixture("links.json"), ENGINE, &allow), vec![]);
 }
