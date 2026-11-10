@@ -113,3 +113,20 @@ impl AudioFrame {
             .expect("frame holds a valid spec")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_leaves_the_optional_fields_empty() {
+        let audio = AudioSpec::new(44100, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
+        let tb = TimeBase::new(1, 44100).unwrap();
+        let s = StreamInfo::new(2, CodecId::Flac, audio.clone(), tb);
+        assert_eq!((s.index, s.codec, s.time_base), (2, CodecId::Flac, tb));
+        assert_eq!(s.audio, audio);
+        assert_eq!(s.frames, None);
+        assert!(s.extradata.is_empty());
+        assert_eq!(s.bits_per_raw_sample, None);
+    }
+}
