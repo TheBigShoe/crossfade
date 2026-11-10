@@ -317,6 +317,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-app"
+version = "0.0.0"
+dependencies = [
+ "crossfade-core",
+ "crossfade-graph",
+ "crossfade-testkit",
+ "insta",
+ "proptest",
+ "serde_json",
+]
+
+[[package]]
 name = "crossfade-audit"
 version = "0.0.0"
 dependencies = [
@@ -330,11 +342,12 @@ version = "0.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "crossfade-app",
  "crossfade-core",
  "crossfade-graph",
  "crossfade-testkit",
  "insta",
- "serde",
+ "proptest",
  "serde_json",
 ]
 

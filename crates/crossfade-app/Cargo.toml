@@ -1,0 +1,20 @@
+[package]
+name = "crossfade-app"
+description = "What every Crossfade front end shares: file I/O, job runner, queue and screen models."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+crossfade-core.workspace = true
+crossfade-graph.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+crossfade-testkit.workspace = true
+proptest.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true
