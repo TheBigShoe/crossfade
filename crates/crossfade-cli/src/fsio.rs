@@ -1,5 +1,73 @@
 //! `JobIo` over the real file system.
 
+use crossfade_core::{Error, JobIo, MediaSink, MediaSource};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+
+/// Output goes to a hidden temporary file beside the target; `commit` renames
+/// it into place, so a reader never sees a half-written file.
+#[derive(Default)]
+pub(crate) struct FsIo {
+    temps: HashMap<String, PathBuf>,
+}
+
+fn io_error(path: &str, e: &std::io::Error) -> Error {
+    Error::Io {
+        kind: e.kind(),
+        message: format!("{path}: {e}"),
+    }
+}
+
+fn temp_path(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map_or_else(|| "output".into(), |n| n.to_string_lossy());
+    let temp = format!(".{name}.{}.tmp", std::process::id());
+    match target.parent() {
+        Some(dir) => dir.join(temp),
+        None => PathBuf::from(temp),
+    }
+}
+
+impl FsIo {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl JobIo for FsIo {
+    fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, Error> {
+        let file = File::open(path).map_err(|e| io_error(path, &e))?;
+        Ok(Box::new(file))
+    }
+
+    fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, Error> {
+        let temp = temp_path(Path::new(path));
+        let file = File::create(&temp).map_err(|e| io_error(path, &e))?;
+        self.temps.insert(path.to_owned(), temp);
+        Ok(Box::new(file))
+    }
+
+    fn commit(&mut self, path: &str) -> Result<(), Error> {
+        let temp = self.temps.remove(path).ok_or_else(|| Error::Io {
+            kind: ErrorKind::NotFound,
+            message: format!("{path}: no output in progress"),
+        })?;
+        std::fs::rename(&temp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            io_error(path, &e)
+        })
+    }
+
+    fn discard(&mut self, path: &str) {
+        if let Some(temp) = self.temps.remove(path) {
+            let _ = std::fs::remove_file(temp);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::FsIo;
