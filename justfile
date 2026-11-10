@@ -29,10 +29,24 @@ bench:
 deny:
     cargo deny check
 
+# Binary entry points and examples need a display or a process of their own, so they stay
+# out of every line count. Not for code that is merely untested.
+coverage_ignore := '(/main\.rs$|/examples/)'
+
 # Two runs: the workspace floor, then a stricter floor for core alone.
 coverage:
-    cargo llvm-cov --workspace --fail-under-lines 87
-    cargo llvm-cov -p crossfade-core --fail-under-lines 90
+    cargo llvm-cov --workspace --fail-under-lines 87 --ignore-filename-regex '{{coverage_ignore}}'
+    cargo llvm-cov -p crossfade-core --fail-under-lines 90 --ignore-filename-regex '{{coverage_ignore}}'
+
+# Run the desktop app.
+run:
+    cargo run -p crossfade-ui --bin crossfade-gui
+
+# Render the real workspace offscreen with Metal (macOS only) and write PNGs to
+# target/screenshots/. Names pick scenes by file name: `just screenshots 01 light`.
+screenshots *names:
+    cargo run -p crossfade-ui --example screenshots -- --out target/screenshots {{names}}
+    @ls -lh target/screenshots/*.png
 
 # Dependencies run in order and the first failure stops the recipe.
 ci: fmt-check lint test
