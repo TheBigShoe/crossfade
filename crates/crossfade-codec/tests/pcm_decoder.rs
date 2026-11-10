@@ -226,3 +226,16 @@ fn output_buffer_is_swapped_not_copied() {
     };
     assert_eq!(ptr, again, "two buffers ping-pong, nothing reallocates");
 }
+
+#[test]
+fn a_caller_frame_of_another_format_does_not_poison_the_decoder() {
+    let info = stream(SampleFormat::S16, 1, 8000);
+    let other = AudioSpec::new(8000, SampleFormat::F64, ChannelLayout::mono()).unwrap();
+    let mut dec = PcmDecoder::new(&info).unwrap();
+    let mut frame = AudioFrame::new(&other);
+    for _ in 0..3 {
+        dec.send_packet(&packet(0, &[1, 0])).unwrap();
+        assert!(dec.receive_frame(&mut frame).unwrap());
+        assert_eq!(frame.samples, Samples::S16(vec![1]));
+    }
+}
