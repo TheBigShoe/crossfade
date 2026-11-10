@@ -8,7 +8,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+crossbeam-channel.workspace = true
 jsonc-parser.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
 parking_lot.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

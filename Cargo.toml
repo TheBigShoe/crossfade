@@ -20,7 +20,10 @@ crossfade-testkit = { path = "crates/crossfade-testkit", version = "0.0.0" }
 
 serde = "1.0.228"
 serde_json = "1.0.150"
+crossbeam-channel = "0.5"
 jsonc-parser = { version = "0.34", features = ["serde", "cst"] }
+notify = "8"
+notify-debouncer-full = "0.7"
 parking_lot = "0.12"
 tracing = "0.1"
 
