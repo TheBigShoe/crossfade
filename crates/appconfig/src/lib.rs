@@ -11,6 +11,7 @@ pub mod atomic;
 pub mod keymap;
 pub mod paths;
 pub mod settings;
+pub mod theme;
 
 pub use atomic::write_atomic;
 pub use paths::{AppIdentity, ConfigPaths, Platform};
