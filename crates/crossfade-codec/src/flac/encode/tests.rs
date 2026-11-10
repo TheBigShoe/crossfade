@@ -393,3 +393,29 @@ fn silence_is_a_tiny_constant_stream() {
     // Raw would be 176 400 bytes; 11 frames of header plus two constant subframes.
     assert!(total < 11 * 16, "{total}");
 }
+
+/// Found by the `flac_roundtrip` fuzz target: these 312 mono 24-bit samples (raw little-endian
+/// PCM) came out of levels 7 and 8 as one 33 MB frame, a Rice parameter above 14 written as if
+/// it fitted. STREAMINFO's 24-bit frame sizes cannot describe such a frame.
+#[test]
+fn hostile_24_bit_samples_never_code_larger_than_raw_samples() {
+    let pcm = include_bytes!("../../../tests/fixtures/rice-param-overflow-24bit.pcm");
+    let samples: Vec<i32> = pcm
+        .chunks_exact(3)
+        .map(|c| i32::from_le_bytes([c[0], c[1], c[2], 0]) << 8 >> 8)
+        .collect();
+    assert_eq!(samples.len(), 312);
+    let spec = spec(11025, SampleFormat::S24, 1);
+    for level in 0..=8 {
+        let out = encode(&spec, Some(level), &samples, 100_000);
+        for p in &out.packets {
+            // Header, one verbatim subframe and the CRC-16, with slack for the header.
+            assert!(
+                p.data.len() <= 16 + 1 + samples.len() * 3 + 2,
+                "level {level}: {} bytes",
+                p.data.len()
+            );
+        }
+        check_stream(&spec, &samples, &out, if level <= 2 { 1152 } else { 4096 });
+    }
+}
