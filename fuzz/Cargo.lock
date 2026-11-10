@@ -76,6 +76,7 @@ name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-flac",
  "flacenc",
 ]
 
@@ -87,11 +88,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-flac"
+version = "0.0.0"
+
+[[package]]
 name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
- "crossfade-codec",
  "crossfade-core",
+ "crossfade-flac",
 ]
 
 [[package]]
