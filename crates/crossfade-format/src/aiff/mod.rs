@@ -12,6 +12,8 @@ use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, Stre
 
 pub use demux::AiffDemuxer;
 pub use mux::AiffMuxer;
+// The WAV reader decodes its tag text the same way.
+pub(crate) use demux::decode_text;
 
 /// Whole frames per packet; the last packet of a stream may be shorter.
 pub const FRAMES_PER_PACKET: usize = 4096;

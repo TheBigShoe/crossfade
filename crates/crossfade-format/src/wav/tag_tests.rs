@@ -237,7 +237,7 @@ fn truncation_at_every_byte_never_panics_and_keeps_whole_frames() {
         }
     }
     // Cut inside the audio: the whole frames come out, then the error.
-    let data_at = f.len() - 8 - 14 - PCM.len();
+    let data_at = f.windows(4).position(|w| w == b"data").unwrap();
     let mut d = open_with(f[..data_at + 8 + 5].to_vec(), true, &Limits::default()).unwrap();
     let mut p = Packet::default();
     assert!(d.read_packet(&mut p).unwrap());
