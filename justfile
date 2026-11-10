@@ -25,6 +25,13 @@ mobile:
 bench:
     cargo bench -p crossfade-graph
 
+# Download the conformance corpus into .corpus-cache (once; needs curl and the network).
+corpus:
+    cargo run --release -p crossfade-corpus -- fetch
+
+corpus-verify:
+    cargo run --release -p crossfade-corpus -- verify
+
 # Needs the network the first time (advisory database).
 deny:
     cargo deny check
