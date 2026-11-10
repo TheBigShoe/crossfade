@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod atomic;
+pub mod keymap;
 pub mod paths;
 pub mod settings;
 
