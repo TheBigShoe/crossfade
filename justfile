@@ -25,5 +25,10 @@ mobile:
 deny:
     cargo deny check
 
+# Two runs: the workspace floor, then a stricter floor for core alone.
+coverage:
+    cargo llvm-cov --workspace --fail-under-lines 87
+    cargo llvm-cov -p crossfade-core --fail-under-lines 90
+
 # Dependencies run in order and the first failure stops the recipe.
 ci: fmt-check lint test
