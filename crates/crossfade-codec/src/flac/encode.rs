@@ -8,3 +8,6 @@ pub fn encoder(_spec: &AudioSpec, _options: &EncodeOptions) -> Result<Box<dyn En
         what: "flac encoding is not built yet".into(),
     })
 }
+
+#[cfg(test)]
+mod tests;
