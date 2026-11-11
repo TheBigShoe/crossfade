@@ -570,7 +570,7 @@ impl Encoder {
             if !self.pending.is_empty() {
                 self.check_open()?;
                 let job = self.job_from_pending();
-                self.submit(job, out, ends.as_deref_mut())?;
+                self.submit_with(job, out, ends.as_deref_mut(), true)?;
             }
             return self.take_all(out, ends);
         }
@@ -630,11 +630,17 @@ impl Encoder {
 
     /// Hands a block (whole sample frames, at most a block) to the pool, first taking frames
     /// out while it is full.
-    fn submit(
+    fn submit(&mut self, job: Job, out: &mut Vec<u8>, ends: Option<&mut Vec<usize>>) -> Result<()> {
+        self.submit_with(job, out, ends, false)
+    }
+
+    /// `last`: the caller drains right after, so the block is not worth a new thread.
+    fn submit_with(
         &mut self,
         mut job: Job,
         out: &mut Vec<u8>,
         mut ends: Option<&mut Vec<usize>>,
+        last: bool,
     ) -> Result<()> {
         let n = job.samples.len() / usize::from(self.config.channels);
         self.check_length(n)?;
@@ -669,7 +675,11 @@ impl Encoder {
         let Some(pool) = &mut self.pool else {
             unreachable!("made above")
         };
-        pool.submit(job);
+        if last {
+            pool.submit_last(job);
+        } else {
+            pool.submit(job);
+        }
         let started = pool.workers() > 0;
         self.frame_number += 1;
         self.total += n as u64;

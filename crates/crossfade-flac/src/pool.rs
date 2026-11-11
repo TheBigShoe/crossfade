@@ -174,6 +174,16 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
     /// Queues `item`. The caller keeps the pool from overfilling: when it [`is_full`]
     /// (Self::is_full), take a result first.
     pub(crate) fn submit(&mut self, item: I) {
+        self.push(item, true);
+    }
+
+    /// As [`submit`](Self::submit), for an item the caller is about to wait for (the end of a
+    /// stream): it starts no worker, since the caller would run it itself as soon.
+    pub(crate) fn submit_last(&mut self, item: I) {
+        self.push(item, false);
+    }
+
+    fn push(&mut self, item: I, may_spawn: bool) {
         debug_assert!(!self.is_full(), "submit to a full pool");
         let mut state = self.shared.lock();
         state.queue.push_back((self.next_in, item));
@@ -181,7 +191,9 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
         self.next_in += 1;
         // One item waiting is left for the caller, which runs it when it wants the result;
         // a second with nobody free to take it is worth a thread.
-        let spawn = state.queue.len() >= state.idle + 2 && self.handles.len() < self.max_workers;
+        let spawn = may_spawn
+            && state.queue.len() >= state.idle + 2
+            && self.handles.len() < self.max_workers;
         if state.idle > 0 {
             self.shared.work.notify_one();
         }
