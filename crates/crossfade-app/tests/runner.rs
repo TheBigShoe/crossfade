@@ -299,3 +299,39 @@ fn a_worker_that_panics_still_reports_how_the_job_ended() {
         "{events:?}"
     );
 }
+
+#[test]
+fn a_job_that_clips_reports_the_count_before_it_finishes() {
+    let d = Dir::new("clip");
+    s16_input(&d);
+    let (mut r, rx) = runner();
+    let id = job_id();
+    let mut req = request(&d.path("in.wav"), &d.path("out.wav"), None, false);
+    req.job.outputs[0].audio.filters = vec![crossfade_graph::filter::FilterSpec::Gain { db: 40.0 }];
+    r.start(id, &req, CancelToken::new());
+    let events = collect(&rx, id);
+    let at = events
+        .iter()
+        .position(|e| matches!(e, RunnerEvent::Clipped { .. }))
+        .expect("a clipped event");
+    assert!(matches!(&events[at], RunnerEvent::Clipped { samples } if *samples > 0));
+    assert!(matches!(events[at + 1], RunnerEvent::Finished { .. }));
+}
+
+#[test]
+fn a_job_that_does_not_clip_reports_nothing() {
+    let d = Dir::new("noclip");
+    s16_input(&d);
+    let (mut r, rx) = runner();
+    let id = job_id();
+    r.start(
+        id,
+        &request(&d.path("in.wav"), &d.path("out.wav"), None, false),
+        CancelToken::new(),
+    );
+    assert!(
+        !collect(&rx, id)
+            .iter()
+            .any(|e| matches!(e, RunnerEvent::Clipped { .. }))
+    );
+}
