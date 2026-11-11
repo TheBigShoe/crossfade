@@ -188,21 +188,18 @@ fn problems_are_named() {
     s.set_output("b.mp3".into());
     assert_eq!(
         s.problems(&nothing_exists),
-        [Problem::Extension { ogg: false }]
+        [Problem::Extension]
     );
     s.set_output("b.WAV".into());
     assert!(s.problems(&nothing_exists).is_empty());
     s.set_output("b".into());
     assert_eq!(
         s.problems(&nothing_exists),
-        [Problem::Extension { ogg: false }]
+        [Problem::Extension]
     );
     for ogg in ["b.ogg", "b.OGA"] {
         s.set_output(ogg.into());
-        assert_eq!(
-            s.problems(&nothing_exists),
-            [Problem::Extension { ogg: true }]
-        );
+        assert!(s.problems(&nothing_exists).is_empty(), "{ogg}");
     }
 }
 
@@ -222,7 +219,7 @@ fn every_problem_has_a_message() {
         Problem::NoOutput,
         Problem::OutputIsInput,
         Problem::OutputExists,
-        Problem::Extension { ogg: false },
+        Problem::Extension,
         Problem::Source("x".into()),
     ] {
         assert!(!problem.message().is_empty());
@@ -325,26 +322,61 @@ fn typing_a_writable_extension_switches_the_container() {
         ("a.aif", Container::Aiff),
         ("a.aifc", Container::Aiff),
         ("a.wav", Container::Wav),
+        ("a.oga", Container::OggFlac),
+        ("a.OGG", Container::OggFlac),
     ] {
         s.set_output(typed.into());
         assert_eq!(s.container(), container, "{typed}");
     }
     // Not writable: the container stays and the path is the problem.
     s.set_output("a.flac".into());
-    s.set_output("a.ogg".into());
+    s.set_output("a.mp3".into());
     assert_eq!(s.container(), Container::Flac);
+    assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     assert_eq!(
-        s.problems(&nothing_exists),
-        [Problem::Extension { ogg: true }]
+        Problem::Extension.message(),
+        "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files."
     );
+}
+
+#[test]
+fn ogg_flac_is_a_container_with_flac_levels_and_flac_rules() {
+    let mut s = sheet(&p(&["music", "song.wav"]));
+    s.set_container(Container::OggFlac);
+    assert_eq!(s.output(), p(&["music", "song.oga"]));
+    assert_eq!(Container::OggFlac.label(), "Ogg FLAC");
+    assert!(Container::ALL.contains(&Container::OggFlac));
+    assert!(s.level_visible() && s.level_enabled());
+    s.set_level(Some(3));
+    assert_eq!(s.level(), Some(3));
+    let request = s.build(&nothing_exists).unwrap();
+    let line = crossfade_app::command::command_line(&request).unwrap();
+    assert!(line.contains("--compression-level 3"), "{line}");
+    assert!(line.contains("song.oga"), "{line}");
+    // Whole numbers only, like FLAC.
+    assert!(!s.format_options().contains(&FormatChoice::Format(SampleFormat::F32)));
+    s.set_format(FormatChoice::Format(SampleFormat::F32));
+    assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
     assert_eq!(
-        Problem::Extension { ogg: false }.message(),
-        "Crossfade can save .wav, .flac and .aiff files."
+        s.hint().as_deref(),
+        Some("FLAC stores whole-number samples, so this will be saved as 24-bit.")
     );
-    assert_eq!(
-        Problem::Extension { ogg: true }.message(),
-        "Crossfade can save .wav, .flac and .aiff files. Ogg files can be opened but not saved yet."
-    );
+    s.set_container(Container::Wav);
+    assert_eq!(s.level(), None);
+}
+
+#[test]
+fn a_flac_source_can_be_copied_into_ogg_and_a_wav_cannot() {
+    let flac = converted_entry("a.wav", "a.flac");
+    let mut s = ConvertSheet::for_input(&flac);
+    s.set_container(Container::OggFlac);
+    assert!(s.copy_available());
+    s.set_copy(true);
+    assert!(s.copy() && !s.level_enabled());
+    let wav = entry("a.wav");
+    let mut s = ConvertSheet::for_input(&wav);
+    s.set_container(Container::OggFlac);
+    assert!(!s.copy_available());
 }
 
 #[test]
