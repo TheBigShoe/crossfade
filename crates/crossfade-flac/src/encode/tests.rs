@@ -289,23 +289,47 @@ fn bounded_search_chooses_what_the_exhaustive_order_chose() {
     }
 }
 
-/// The ridge search scores every coefficient set by the error energy the block's covariance
-/// predicts and codes only the best `ridge_exact` of them: two at each level that has one.
+/// How many LPC candidates each level codes for real, an explicit table. Ordinary audio: the
+/// best `lpc_exact` of each window's orders by predicted bits, nothing from the pool. A block
+/// as predictable as a pure tone also refines and, from level 5, searches ridges: the pool's
+/// best two by predicted bits are coded on top.
 #[test]
-fn the_ridge_search_codes_only_its_best_predicted_candidates() {
+fn exact_lpc_codings_per_level() {
+    let music: Vec<i32> = (0..4096)
+        .map(|t| {
+            let t = f64::from(t);
+            let tone =
+                (t * 0.06).sin() * 0.4 + (t * 0.0007).sin() * 0.25 + (t * 0.0213).sin() * 0.1;
+            (tone * 20_000.0) as i32
+        })
+        .zip(pseudo(10, 4096, 5))
+        .map(|(a, b)| a + b)
+        .collect();
     // A 1 kHz sine at 192 kHz, 24 bits: about as predictable as audio gets.
-    let x: Vec<i32> = (0..4096)
+    let tone: Vec<i32> = (0..4096)
         .map(|t| {
             let phase = f64::from(t) * std::f64::consts::TAU * 1000.0 / 192_000.0;
             (phase.sin() * 0.99 * 8_388_607.0) as i32
         })
         .collect();
+    let window = [0usize, 0, 0, 1, 1, 2, 3, 2, 3];
+    let pool = [0usize, 0, 0, 1, 1, 2, 2, 2, 2];
     for level in 0..=8u8 {
-        let mut analyzer = Analyzer::new(Level::new(level), 24, false);
         let mut plan = Plan::new(4096);
-        analyzer.analyze(&x, 24, &mut plan);
-        let want = if level >= 5 { 2 } else { 0 };
-        assert_eq!(analyzer.ridge_codings, want, "level {level}");
-        assert_eq!(Level::new(level).ridge_exact, 2);
+        let mut a = Analyzer::new(Level::new(level), 16, false);
+        a.analyze(&music, 16, &mut plan);
+        let l = usize::from(level);
+        assert_eq!(
+            (a.window_codings, a.pool_codings),
+            (window[l], 0),
+            "music, level {level}"
+        );
+        let mut a = Analyzer::new(Level::new(level), 24, false);
+        a.analyze(&tone, 24, &mut plan);
+        assert_eq!(
+            (a.window_codings, a.pool_codings),
+            (window[l], pool[l]),
+            "tone, level {level}"
+        );
     }
 }
