@@ -111,7 +111,30 @@ impl<'a> Bits<'a> {
         // every code, putting a store and a reload on the chain from one code to the next.
         let data = self.data;
         let (mut acc, mut n, mut next) = (self.acc, self.n, self.next);
-        for v in out {
+        macro_rules! code {
+            ($v:expr) => {
+                let lead = acc.leading_zeros();
+                let used = lead + 1 + k;
+                let folded = if used <= n {
+                    // `t` starts with the stop bit; the `k` bits after it are the low part.
+                    let t = acc << lead;
+                    let low = (t ^ (1 << 63)) >> (63 - k);
+                    acc = t << (k + 1);
+                    n -= used;
+                    (u64::from(lead) << k) | low
+                } else {
+                    (self.acc, self.n, self.next) = (acc, n, next);
+                    let q = u64::from(self.read_unary()?);
+                    let folded = (q << k) | self.read(k)?;
+                    (acc, n, next) = (self.acc, self.n, self.next);
+                    folded
+                };
+                *$v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
+            };
+        }
+        // Two codes per top-up: after one the window holds at least 56 bits, which nearly
+        // always covers both, and a code that does not fit takes the slow path.
+        for pair in out.chunks_mut(2) {
             if let Some(word) = data.get(next..).and_then(|d| d.first_chunk::<8>()) {
                 acc |= u64::from_be_bytes(*word) >> n;
                 let take = (63 - n) >> 3;
@@ -122,23 +145,9 @@ impl<'a> Bits<'a> {
                 self.refill();
                 (acc, n, next) = (self.acc, self.n, self.next);
             }
-            let lead = acc.leading_zeros();
-            let used = lead + 1 + k;
-            let folded = if used <= n {
-                // `t` starts with the stop bit; the `k` bits after it are the low part.
-                let t = acc << lead;
-                let low = (t ^ (1 << 63)) >> (63 - k);
-                acc = t << (k + 1);
-                n -= used;
-                (u64::from(lead) << k) | low
-            } else {
-                (self.acc, self.n, self.next) = (acc, n, next);
-                let q = u64::from(self.read_unary()?);
-                let folded = (q << k) | self.read(k)?;
-                (acc, n, next) = (self.acc, self.n, self.next);
-                folded
-            };
-            *v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
+            for v in pair {
+                code!(v);
+            }
         }
         (self.acc, self.n, self.next) = (acc, n, next);
         Ok(())
