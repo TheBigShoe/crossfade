@@ -374,3 +374,27 @@ fn failure_is_one_muted_line() {
     assert_eq!(r.text(), "Could not analyse: not a wave file");
     assert!(!r.warns());
 }
+
+#[test]
+fn failure_drops_the_engines_category_words_and_keeps_the_specific_reason() {
+    for (raw, shown) in [
+        (
+            "unsupported: flac: bit depth changed from 20 to 24 mid-stream",
+            "Could not analyse: flac: bit depth changed from 20 to 24 mid-stream",
+        ),
+        (
+            "malformed input: bad chunk size",
+            "Could not analyse: bad chunk size",
+        ),
+        ("i/o error: disk gone", "Could not analyse: disk gone"),
+        (
+            "unexpected end of input at byte 9",
+            "Could not analyse: unexpected end of input at byte 9",
+        ),
+    ] {
+        let snapshot = snap(State::Failed(raw.into()), 0, None, Loudness::default());
+        assert_eq!(readout(&snapshot).text(), shown);
+        // The model keeps the whole text.
+        assert!(matches!(&snapshot.state, State::Failed(t) if t == raw));
+    }
+}
