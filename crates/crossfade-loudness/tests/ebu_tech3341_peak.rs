@@ -154,23 +154,31 @@ fn silence_peaks_at_zero_and_minus_infinity_db() {
     assert!((to_db(1.0)).abs() < 1e-12);
 }
 
-/// Worst-case error of the oversampled peak over frequency and phase, at every rate class.
+/// Worst-case error of the oversampled peak over frequency and phase. No oversampling is
+/// done from 176.4 kHz up (the standard says it is not needed): there only 20 kHz-ish content
+/// is judged, against the 0.44 dB a plain sample peak can miss at 19.2 kHz.
 #[test]
 fn oversampling_error_over_frequency_and_phase() {
-    for rate in [44_100u32, 48_000, 96_000, 192_000] {
-        for div in [8.0, 6.0, 4.0, 3.5, 3.0] {
+    let cases: [(u32, &[f64], f64); 4] = [
+        (44_100, &[8.0, 6.0, 4.0, 3.5, 3.0], 0.1),
+        (48_000, &[8.0, 6.0, 4.0, 3.5, 3.0], 0.1),
+        (96_000, &[8.0, 6.0, 4.0, 3.5, 3.0], 0.1),
+        (192_000, &[10.0, 16.0], 0.5),
+    ];
+    for (rate, divs, tol) in cases {
+        for &div in divs {
             let mut worst = 0.0f64;
             for phase in (0..180).step_by(3) {
                 let mut m = peak_meter(rate, &[ChannelRole::Left]);
-                let s: Vec<f64> = faded_sine(rate, f64::from(rate) / div, 1.0, f64::from(phase), 200, 50)
-                    .chunks(2)
-                    .map(|p| p[0])
-                    .collect();
+                let s: Vec<f64> =
+                    faded_sine(rate, f64::from(rate) / div, 1.0, f64::from(phase), 200, 50)
+                        .chunks(2)
+                        .map(|p| p[0])
+                        .collect();
                 m.push(&s);
                 worst = worst.max(db(m.true_peak().unwrap()).abs());
             }
-            // The fade lowers the true crest a hair; judge against the clean envelope peak.
-            assert!(worst < 0.1, "rate {rate} fs/{div}: error {worst} dB");
+            assert!(worst < tol, "rate {rate} fs/{div}: error {worst} dB");
         }
     }
 }
