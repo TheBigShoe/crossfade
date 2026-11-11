@@ -92,9 +92,12 @@
 //!   most negative value; a predictor or stereo mode that would break that is passed over, down
 //!   to verbatim, which always works. The side channel of a 32-bit stream is 33 bits wide and
 //!   is handled in `i64`.
-//! - **Deterministic.** No threads. Floating point is used only for the window,
-//!   autocorrelation, Levinson-Durbin and quantisation, through operations IEEE 754 defines
-//!   exactly (`+ - * /`, comparisons, conversions): no `sin`, `cos`, `exp`, `ln`, `powf` or
+//! - **Deterministic.** No threads. The autocorrelation and covariance sums are exact
+//!   integers wherever they fit (any order of summing gives the same result, so the compiler
+//!   may vectorise them). Floating point is used only for the window, the autocorrelation of
+//!   samples too wide for that, Levinson-Durbin, quantisation, refinement and the size
+//!   estimates, through operations IEEE 754 defines exactly (`+ - * /`, comparisons,
+//!   conversions) in an order fixed in the source: no `sin`, `cos`, `exp`, `ln`, `powf` or
 //!   fused multiply-add, whose results differ between platforms' maths libraries. The same
 //!   input and configuration give the same bytes everywhere.
 //! - **No panics, bounded memory.** One block of working memory, allocated in

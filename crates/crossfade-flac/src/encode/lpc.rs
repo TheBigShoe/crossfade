@@ -1,7 +1,9 @@
 //! Linear prediction (RFC 9639 section 9.2.9): window, autocorrelation, Levinson-Durbin,
-//! coefficient quantisation and the residual.
+//! coefficient quantisation and refinement, the covariance that scores a predictor without
+//! coding it, and the residual.
 //!
-//! Floating point appears only here, and only through `+ - * /`, `sqrt`, comparisons and
+//! Floating point appears only here (and in the analysis's size estimates), and only through
+//! `+ - * /`, `sqrt`, comparisons and
 //! conversions, which IEEE 754 defines exactly: no `sin`, `exp`, `ln` or fused multiply-add,
 //! whose results differ between platform maths libraries. The same input therefore gives the
 //! same bytes everywhere.
