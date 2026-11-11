@@ -5,7 +5,7 @@ use crossfade_core::{
     ChannelLayout, CodecId, Error, Limits, SampleFormat, StreamInfo, Tags, TimeBase,
 };
 use crossfade_format::FormatId;
-use crossfade_graph::{ProbeReport, probe};
+use crossfade_graph::{ProbeOptions, ProbeReport, probe, probe_with};
 use crossfade_testkit::memory::MemoryIo;
 use std::io::ErrorKind;
 
@@ -89,6 +89,7 @@ fn tags_and_raw_bits_reach_the_document_in_order() {
         size_bytes: None,
         streams: vec![stream],
         tags,
+        loudness: None,
     }
     .document();
     assert_eq!(doc.streams[0].bits_per_raw_sample, Some(20));
@@ -101,6 +102,78 @@ fn tags_and_raw_bits_reach_the_document_in_order() {
     let json = serde_json::to_string(&doc).unwrap();
     assert!(json.contains(r#""bits_per_raw_sample":20"#), "{json}");
     assert!(json.ends_with(r#""tags":[{"key":"ARTIST","value":"A"},{"key":"ARTIST","value":"B"},{"key":"TITLE","value":"T"}]}"#), "{json}");
+    let back: crossfade_graph::ProbeDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, doc);
+}
+
+fn tone_wav(rate: u32, seconds: u32, amp: f64) -> Vec<u8> {
+    let s = spec(rate, SampleFormat::S16, ChannelLayout::stereo());
+    let mut pcm = Vec::new();
+    for i in 0..rate * seconds {
+        let v = (amp
+            * 32767.0
+            * (2.0 * std::f64::consts::PI * 1000.0 * f64::from(i) / f64::from(rate)).sin())
+        .round() as i16;
+        pcm.extend_from_slice(&v.to_le_bytes());
+        pcm.extend_from_slice(&v.to_le_bytes());
+    }
+    common::wav_bytes(&s, &pcm)
+}
+
+#[test]
+fn probe_with_loudness_reads_an_ebu_tone() {
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", tone_wav(48_000, 20, 10f64.powf(-23.0 / 20.0)));
+    let report = probe_with(
+        "a.wav",
+        &mut io,
+        &Limits::default(),
+        &ProbeOptions { loudness: true },
+    )
+    .unwrap();
+    let l = report.loudness.expect("asked for");
+    assert!((l.integrated_lufs.unwrap() + 23.0).abs() < 0.1, "{l:?}");
+    assert!(l.true_peak_dbtp.unwrap() >= l.sample_peak_dbfs.unwrap());
+    assert!((l.sample_peak_dbfs.unwrap() + 23.0).abs() < 0.01);
+    assert!(l.range_lu.is_some());
+    assert_eq!(report.document().loudness, Some(Box::new(l)));
+}
+
+#[test]
+fn probe_with_no_options_is_probe_and_json_has_no_loudness_key() {
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", tone_wav(8000, 1, 0.5));
+    let plain = probe("a.wav", &mut io, &Limits::default()).unwrap();
+    let with = probe_with(
+        "a.wav",
+        &mut io,
+        &Limits::default(),
+        &ProbeOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(plain, with);
+    assert_eq!(plain.loudness, None);
+    let json = serde_json::to_string(&plain.document()).unwrap();
+    assert!(!json.contains("loudness"), "{json}");
+}
+
+#[test]
+fn silence_gives_nulls_in_the_json() {
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", tone_wav(48_000, 1, 0.0));
+    let doc = probe_with(
+        "a.wav",
+        &mut io,
+        &Limits::default(),
+        &ProbeOptions { loudness: true },
+    )
+    .unwrap()
+    .document();
+    let json = serde_json::to_string(&doc).unwrap();
+    assert!(
+        json.ends_with(r#""loudness":{"integrated_lufs":null,"range_lu":null,"true_peak_dbtp":null,"sample_peak_dbfs":null}}"#),
+        "{json}"
+    );
     let back: crossfade_graph::ProbeDocument = serde_json::from_str(&json).unwrap();
     assert_eq!(back, doc);
 }

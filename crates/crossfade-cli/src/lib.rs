@@ -14,7 +14,8 @@ use crossfade_graph::filter::{
     parse_lufs, parse_rate, parse_time,
 };
 use crossfade_graph::{
-    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, probe, run,
+    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, ProbeOptions,
+    probe_with_cancel, run,
 };
 use std::path::Path;
 use std::process::ExitCode;
@@ -60,6 +61,9 @@ enum Command {
         /// Machine-readable output (schema 1).
         #[arg(long)]
         json: bool,
+        /// Also decode the file and measure loudness (LUFS, LU range) and peaks (dBTP, dBFS).
+        #[arg(long)]
+        loudness: bool,
     },
     /// Convert a media file.
     #[command(after_help = PROCESSING_HELP)]
@@ -321,12 +325,23 @@ fn execute(
     on_event: &mut dyn FnMut(&Event),
 ) -> Outcome {
     match command {
-        Command::Probe { input, json } => match probe(&input, io, &Limits::default()) {
+        Command::Probe {
+            input,
+            json,
+            loudness,
+        } => match probe_with_cancel(
+            &input,
+            io,
+            &Limits::default(),
+            &ProbeOptions { loudness },
+            cancel,
+        ) {
             Ok(report) => Outcome::Done(if json {
                 format!("{}\n", probe_report::to_json(&report))
             } else {
                 probe_report::to_text(&report)
             }),
+            Err(Error::Cancelled) => Outcome::Cancelled,
             Err(e) => Outcome::Failed(e.to_string()),
         },
         Command::Convert { input, out } => convert(vec![input], &out, io, cancel, on_event),

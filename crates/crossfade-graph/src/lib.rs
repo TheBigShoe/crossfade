@@ -6,6 +6,7 @@ mod choice;
 mod decode;
 pub mod filter;
 mod job;
+mod measure;
 mod pipeline;
 mod probe;
 mod run;
@@ -16,7 +17,11 @@ pub use crossfade_core::JobIo;
 pub use crossfade_dsp::dither::Dither;
 pub use decode::decode_frames;
 pub use job::{AudioSettings, Job, JobInput, JobOutput};
+pub use measure::{Measurements, measure_loudness};
 pub use pipeline::{Pipeline, Plan, Step};
-pub use probe::{ProbeDocument, ProbeReport, ProbeStream, ProbeTag, probe};
+pub use probe::{
+    Loudness, ProbeDocument, ProbeOptions, ProbeReport, ProbeStream, ProbeTag, probe, probe_with,
+    probe_with_cancel,
+};
 pub use run::{CancelToken, Event, run};
 pub use validate::{OutputPlan, describe, describe_concat, validate, validate_concat};

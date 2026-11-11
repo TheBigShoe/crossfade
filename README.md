@@ -74,7 +74,7 @@ crossfade concat a.wav b.wav -o both.flac                        # several input
 | gain | `gain -6dB` | built |
 | trim | `trim start=10s end=1:30`, `trim duration=500ms` | built (sample-accurate) |
 | fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | built (a fade-out holds its length in memory: at most 10 minutes) |
-| normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; not built yet |
+| normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; the measuring pieces and `probe --loudness` are built, the two-pass run is not yet |
 | resample | `resample 48kHz quality=best`; also `--sample-rate` | parses and plans; not built yet |
 | mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | built: standard down- and up-mixes by speaker position (BS.775, LFE dropped, level-normalised), or a matrix |
 | concat | `crossfade concat a.wav b.wav -o out.flac` | parses and plans; not built yet |
