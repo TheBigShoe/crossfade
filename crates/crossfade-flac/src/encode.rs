@@ -157,7 +157,9 @@ pub struct EncoderConfig {
     /// up to `threads - 1` worker threads, started only as blocks queue up, and hash the audio
     /// on one more; frames then come out a few blocks later (see
     /// [`frames_in_flight`](Encoder::frames_in_flight)). [`AUTO_THREADS`](Self::AUTO_THREADS)
-    /// (0) takes the machine's parallelism, at most [`MAX_AUTO_THREADS`](Self::MAX_AUTO_THREADS).
+    /// (0) takes the machine's parallelism less three, at least 2 and at most
+    /// [`MAX_AUTO_THREADS`](Self::MAX_AUTO_THREADS): the MD5 thread, and the caller's reading
+    /// and writing, need cores of their own.
     /// Values above [`MAX_THREADS`](Self::MAX_THREADS) count as that.
     pub threads: usize,
 }
@@ -166,8 +168,8 @@ impl EncoderConfig {
     pub const DEFAULT_LEVEL: u8 = 5;
     /// `threads` value that means "as many as the machine runs at once".
     pub const AUTO_THREADS: usize = 0;
-    /// The most [`AUTO_THREADS`](Self::AUTO_THREADS) picks: past it the reader, the writer
-    /// and the MD5 thread, not the frames, set the pace.
+    /// The most [`AUTO_THREADS`](Self::AUTO_THREADS) picks: past it the MD5 thread, not the
+    /// frames, sets the pace.
     pub const MAX_AUTO_THREADS: usize = 8;
     /// The most threads an encoder uses, whatever `threads` says.
     pub const MAX_THREADS: usize = 64;
@@ -185,11 +187,20 @@ impl EncoderConfig {
     /// The thread count `threads` stands for on this machine.
     fn resolved_threads(&self) -> usize {
         match self.threads {
-            Self::AUTO_THREADS => std::thread::available_parallelism()
-                .map_or(1, std::num::NonZero::get)
-                .min(Self::MAX_AUTO_THREADS),
+            Self::AUTO_THREADS => {
+                auto_threads(std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
+            }
             n => n.min(Self::MAX_THREADS),
         }
+    }
+}
+
+/// Threads for [`EncoderConfig::AUTO_THREADS`] on a machine that runs `cores` at once.
+fn auto_threads(cores: usize) -> usize {
+    if cores <= 2 {
+        cores
+    } else {
+        (cores - 3).clamp(2, EncoderConfig::MAX_AUTO_THREADS)
     }
 }
 
