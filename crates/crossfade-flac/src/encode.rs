@@ -33,20 +33,21 @@
 //! `level` runs from 0 (fastest) to 8 (smallest); each row adds to the ones above it. The
 //! sizes track the reference encoder's presets at the same level (see the crate README).
 //!
-//! | level | block | stereo | fixed orders coded | LPC max order | LPC windows (orders coded) | max Rice partition order |
+//! | level | block | stereo | fixed orders coded | LPC max order | LPC windows (orders tried, coded) | max Rice partition order |
 //! |---|---|---|---|---|---|---|
 //! | 0 | 1152 | independent | all 5 | none | none | 3 |
 //! | 1 | 1152 | adaptive | all 5 | none | none | 3 |
 //! | 2 | 1152 | exhaustive | all 5 | none | none | 3 |
-//! | 3 | 4096 | adaptive | best 2 | 6 | full (1) | 4 |
-//! | 4 | 4096 | adaptive | best 2 | 8 | full (1) | 4 |
-//! | 5 | 4096 | exhaustive | best 2 | 8 | full (2) | 5 |
-//! | 6 | 4096 | exhaustive | best 2 | 8 | full (3) | 6 |
-//! | 7 | 4096 | exhaustive | best 2 | 12 | full (4) | 6 |
-//! | 8 | 4096 | exhaustive | best 2 | 12 | full (3), first and last two thirds (1 each) | 6 |
+//! | 3 | 4096 | adaptive | best 2 | 6 | full (1, 1) | 4 |
+//! | 4 | 4096 | adaptive | best 2 | 8 | full (1, 1) | 4 |
+//! | 5 | 4096 | exhaustive | best 2 | 8 | full (2, 2) | 5 |
+//! | 6 | 4096 | exhaustive | best 2 | 8 | full (3, 3) | 6 |
+//! | 7 | 4096 | exhaustive | best 2 | 12 | full (4, 2) | 6 |
+//! | 8 | 4096 | exhaustive | best 2 | 12 | full (3, 1), first and last two thirds (1, 1 each) | 6 |
 //!
-//! Every level also does the following, and every choice between candidates is made on exact
-//! bit counts, never on an estimate:
+//! Every level also does the following. The candidates that get coded are compared on exact
+//! bit counts; where a level tries more than it codes, the ones coded are the best by a
+//! prediction:
 //!
 //! - **Constant and verbatim subframes**, and **wasted bits**: low zero bits common to every
 //!   sample of a channel are shifted out and signalled.
@@ -58,14 +59,21 @@
 //!   coefficients quantised with the largest shift that fits. The precision follows the
 //!   reference encoder: below 16 bits `2 + depth / 2` (at least 5); at 16 bits 7 to 13 by block
 //!   size (12 at 4096); above 16 bits 12, 13, then 15 by block size (15 at 4096); never over
-//!   15. The best few orders by the reference encoder's size estimate (the count in the table)
-//!   are coded for real; the cheapest wins.
-//!   A block whose best fit still lands more than 3.5 bits per sample above its own estimate
-//!   (predictable, band-limited audio at a high rate, where coefficients of a wide dynamic
-//!   range quantise coarsely) gets a closer look: a search for a better integer point near the
-//!   rounded coefficients, and from level 5 a few more coefficient sets from a ridge added to
-//!   the autocorrelation (2 extra at levels 5 and 6, 3 at 7, 5 at 8), each coded for real.
-//!   Ordinary audio never gets there, so it pays nothing for it.
+//!   15. The best few orders by the reference encoder's size estimate (the first count in the
+//!   table) are tried. Where a level codes fewer than it tries, each is scored by the error
+//!   energy the block's covariance predicts for it (an exact quadratic form over a covariance
+//!   built from one integer autocorrelation, no pass over the block per candidate) and the best
+//!   by that score are coded for real (the second count); the cheapest coded wins.
+//!   A coded fit that lands more than 3.5 bits per sample above its own estimate (predictable,
+//!   band-limited audio at a high rate, where coefficients of a wide dynamic range quantise
+//!   coarsely) gets a closer look: a search for a better integer point near the rounded
+//!   coefficients, and from level 5 a few more coefficient sets from a ridge added to the
+//!   autocorrelation (2 extra amounts at levels 5 and 6, 3 at 7, 4 at 8), each rounded and
+//!   refined. All of those are scored the same way and the best one is coded; and a window
+//!   whose coded fits all land that far above their estimates codes the rest of the orders it
+//!   tried, since there the prediction ranks them less surely. Ordinary audio never gets
+//!   there, so it pays nothing for it. (A 32-bit stream, whose covariance could overflow,
+//!   codes every candidate it tries.)
 //! - **Rice coding** with the partition order searched from 0 up to the level's maximum (and
 //!   as far as the block size and predictor order allow). Each partition's parameter is the
 //!   exact optimum; 5-bit parameters are used when a partition wants one above 14 and they
@@ -84,9 +92,12 @@
 //!   most negative value; a predictor or stereo mode that would break that is passed over, down
 //!   to verbatim, which always works. The side channel of a 32-bit stream is 33 bits wide and
 //!   is handled in `i64`.
-//! - **Deterministic.** No threads. Floating point is used only for the window,
-//!   autocorrelation, Levinson-Durbin and quantisation, through operations IEEE 754 defines
-//!   exactly (`+ - * /`, comparisons, conversions): no `sin`, `cos`, `exp`, `ln`, `powf` or
+//! - **Deterministic.** No threads. The autocorrelation and covariance sums are exact
+//!   integers wherever they fit (any order of summing gives the same result, so the compiler
+//!   may vectorise them). Floating point is used only for the window, the autocorrelation of
+//!   samples too wide for that, Levinson-Durbin, quantisation, refinement and the size
+//!   estimates, through operations IEEE 754 defines exactly (`+ - * /`, comparisons,
+//!   conversions) in an order fixed in the source: no `sin`, `cos`, `exp`, `ln`, `powf` or
 //!   fused multiply-add, whose results differ between platforms' maths libraries. The same
 //!   input and configuration give the same bytes everywhere.
 //! - **No panics, bounded memory.** One block of working memory, allocated in
@@ -293,7 +304,11 @@ impl Encoder {
         let bps = u32::from(self.config.bits_per_sample);
         if bps < 32 {
             let (lo, hi) = (-(1i32 << (bps - 1)), (1i32 << (bps - 1)) - 1);
-            if samples.iter().any(|&s| s < lo || s > hi) {
+            // A min/max fold vectorises; an early-exit `any` does not.
+            let (min, max) = samples
+                .iter()
+                .fold((i32::MAX, i32::MIN), |(a, b), &s| (a.min(s), b.max(s)));
+            if min < lo || max > hi {
                 return Err(malformed("sample outside the configured bit depth"));
             }
         }

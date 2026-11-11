@@ -232,3 +232,110 @@ fn band_limited_high_rate_audio_needs_fine_coefficients() {
     // Pinned from the fixed encoder plus 1%: a regression in precision fails this.
     assert!(size <= PINNED + PINNED / 100, "{size} bytes");
 }
+
+/// The search with lower bounds and fixed predictors last picks exactly what coding every
+/// candidate in the old order picked, ties included: same kind, same bits, same residual.
+#[test]
+fn bounded_search_chooses_what_the_exhaustive_order_chose() {
+    let mut cases: Vec<(u32, Vec<i32>)> = Vec::new();
+    for (i, bits) in [9u32, 16, 16, 24, 24].into_iter().enumerate() {
+        cases.push((bits, pseudo(bits as u8, 4096, i as u64 + 20)));
+        // Smooth signals, where fixed predictors and LPC are close and ties happen.
+        let ramp: Vec<i32> = (0..4096)
+            .map(|t| ((t * 37 + i as i32 * 11) % 401 - 200) * (1 << (bits - 9)))
+            .collect();
+        cases.push((bits, ramp));
+        let quiet: Vec<i32> = pseudo(4, 1152, i as u64 + 40);
+        cases.push((bits, quiet));
+    }
+    cases.push((16, band_limited(4096).iter().map(|&v| v >> 8).collect()));
+    // Short blocks of small values, where candidates often tie to the bit.
+    let mut s = 0x5eed_u64;
+    for i in 0..4000usize {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        let n = 5 + (s % 100) as usize;
+        let range = [2i32, 3, 5, 9, 17, 40][i % 6];
+        let step = (i % 3) as i32;
+        let x: Vec<i32> = (0..n)
+            .map(|t| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                t as i32 * step + (s % range as u64) as i32 - range / 2
+            })
+            .collect();
+        cases.push((8, x));
+    }
+    cases.push((24, band_limited(4096).iter().step_by(2).copied().collect()));
+    let (mut fast, mut slow) = (Plan::new(4096), Plan::new(4096));
+    for level in 0..=8 {
+        let mut analyzers = std::collections::HashMap::new();
+        for (bits, x) in &cases {
+            let (search, reference) = analyzers.entry(*bits).or_insert_with(|| {
+                let mut reference = Analyzer::new(Level::new(level), *bits, false);
+                reference.reference = true;
+                (Analyzer::new(Level::new(level), *bits, false), reference)
+            });
+            search.analyze(x, *bits, &mut fast);
+            reference.analyze(x, *bits, &mut slow);
+            assert_eq!(
+                (fast.kind, fast.bits, &fast.res),
+                (slow.kind, slow.bits, &slow.res),
+                "level {level} bits {bits}"
+            );
+        }
+    }
+}
+
+/// How many LPC candidates each level codes for real, an explicit table. Ordinary audio: the
+/// best `lpc_exact` of each window's orders by predicted bits, nothing from the pool. A block
+/// as predictable as a pure tone codes all of a window's orders, refines and, from level 5,
+/// searches ridges: the pool's best by predicted bits is coded on top.
+#[test]
+fn exact_lpc_codings_per_level() {
+    let music: Vec<i32> = (0..4096)
+        .map(|t| {
+            let t = f64::from(t);
+            let tone =
+                (t * 0.06).sin() * 0.4 + (t * 0.0007).sin() * 0.25 + (t * 0.0213).sin() * 0.1;
+            (tone * 20_000.0) as i32
+        })
+        .zip(pseudo(10, 4096, 5))
+        .map(|(a, b)| a + b)
+        .collect();
+    // A 1 kHz sine at 192 kHz, 24 bits: about as predictable as audio gets.
+    let tone: Vec<i32> = (0..4096)
+        .map(|t| {
+            let phase = f64::from(t) * std::f64::consts::TAU * 1000.0 / 192_000.0;
+            (phase.sin() * 0.99 * 8_388_607.0) as i32
+        })
+        .collect();
+    // Ordinary audio: the best few of each window's orders.
+    let window = [0usize, 0, 0, 1, 1, 2, 3, 2, 3];
+    // A window whose coded fits all land far above their estimates codes the rest of its
+    // orders too (levels 7 and 8 try more than they code); the pool's best one is coded.
+    let tone_window = [0usize, 0, 0, 1, 1, 2, 3, 4, 5];
+    let pool = [0usize, 0, 0, 1, 1, 1, 1, 1, 1];
+    let ridges = [0usize, 0, 0, 0, 0, 2, 2, 3, 4];
+    for level in 0..=8u8 {
+        let mut plan = Plan::new(4096);
+        let mut a = Analyzer::new(Level::new(level), 16, false);
+        a.analyze(&music, 16, &mut plan);
+        let l = usize::from(level);
+        assert_eq!(
+            (a.window_codings, a.pool_codings),
+            (window[l], 0),
+            "music, level {level}"
+        );
+        let mut a = Analyzer::new(Level::new(level), 24, false);
+        a.analyze(&tone, 24, &mut plan);
+        assert_eq!(
+            (a.window_codings, a.pool_codings),
+            (tone_window[l], pool[l]),
+            "tone, level {level}"
+        );
+        assert_eq!(Level::new(level).ridges.len(), ridges[l], "level {level}");
+    }
+}

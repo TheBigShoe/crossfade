@@ -91,6 +91,47 @@ fn log2_q8(x: u64) -> u64 {
 /// Sums of absolute values of the order 0 to 4 residuals over `x[4..]`, the same samples for
 /// every order so the sums compare; for n < 5 only order 0 is meaningful.
 pub(super) fn abs_sums<T: Sample>(x: &[T]) -> [u64; 5] {
+    if let Some(x) = T::as_i32(x) {
+        let peak = x.iter().fold(0u32, |m, &v| m.max(v.unsigned_abs()));
+        // Below 2^26 every difference up to order 4 (at most 16 times the peak) fits an
+        // i32 and a run of them a u32 sum.
+        if peak < 1 << 26 && x.len() >= 5 {
+            return abs_sums_narrow(x, peak);
+        }
+    }
+    abs_sums_wide(x)
+}
+
+/// [`abs_sums`] in 32-bit lanes: sums of `2^31 / (16 peak)` differences at a time cannot
+/// overflow, and then go into the 64-bit totals.
+fn abs_sums_narrow(x: &[i32], peak: u32) -> [u64; 5] {
+    let biggest = 16 * u64::from(peak.max(1));
+    let run = ((1u64 << 31) / biggest).clamp(1, 4096) as usize;
+    let mut sums = [0u64; 5];
+    let (a, b, c, d, e) = (&x[4..], &x[3..], &x[2..], &x[1..], x);
+    let mut at = 0;
+    while at < a.len() {
+        let end = (at + run).min(a.len());
+        let mut part = [0u32; 5];
+        for i in at..end {
+            let (a, b, c, d, e) = (a[i], b[i], c[i], d[i], e[i]);
+            let d1 = a - b;
+            let d2 = d1 - (b - c);
+            let d3 = d2 - (b - c - (c - d));
+            let d4 = d3 - (b - c - (c - d) - (c - d - (d - e)));
+            for (p, v) in part.iter_mut().zip([a, d1, d2, d3, d4]) {
+                *p += v.unsigned_abs();
+            }
+        }
+        for (s, p) in sums.iter_mut().zip(part) {
+            *s += u64::from(p);
+        }
+        at = end;
+    }
+    sums
+}
+
+fn abs_sums_wide<T: Sample>(x: &[T]) -> [u64; 5] {
     let n = x.len();
     let mut sums = [0u64; 5];
     let g = |i: usize| -> i64 { x[i].into() };
@@ -131,6 +172,34 @@ pub(super) fn estimate<T: Sample>(x: &[T]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        /// The 32-bit-lane sums equal the 64-bit ones, up to the largest peak they take.
+        #[test]
+        fn narrow_abs_sums_equal_the_wide_ones(
+            seed in proptest::prelude::any::<u64>(),
+            bits in 1u32..=27,
+            n in 5usize..5000,
+            extreme in proptest::prelude::any::<bool>(),
+        ) {
+            let mut s = seed | 1;
+            let half = 1i64 << (bits - 1);
+            let x: Vec<i32> = (0..n)
+                .map(|i| {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    let v = if extreme {
+                        if i % 2 == 0 { -half + 1 } else { half - 1 }
+                    } else {
+                        (s % (2 * half as u64)) as i64 - half
+                    };
+                    v.clamp(-(1 << 26) + 1, (1 << 26) - 1) as i32
+                })
+                .collect();
+            proptest::prop_assert_eq!(abs_sums(&x), abs_sums_wide(&x));
+        }
+    }
 
     /// The definition: the order-`k` difference, by binomial coefficients, in `i128`.
     fn slow(x: &[i64], order: usize) -> Vec<i128> {
