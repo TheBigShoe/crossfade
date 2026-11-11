@@ -62,6 +62,23 @@ pub struct Summary {
     pub cancelled: usize,
 }
 
+/// What a front end tells the user before quitting would discard work: `None` when no
+/// job is running or waiting, so there is nothing to ask about.
+pub fn quit_warning(summary: Summary) -> Option<String> {
+    let total = summary.running + summary.pending;
+    let state = match (summary.running, summary.pending) {
+        (0, 0) => return None,
+        (_, 0) => "running",
+        (0, _) => "waiting",
+        _ => "running or waiting",
+    };
+    Some(if total == 1 {
+        format!("1 conversion is still {state}. Quitting will cancel it.")
+    } else {
+        format!("{total} conversions are still {state}. Quitting will cancel them.")
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct Queue {
     items: Vec<QueueItem>,
