@@ -80,9 +80,9 @@ impl WaveformStrip {
         self.strip.analyzer().is_some()
     }
 
-    /// Block until the shown file's analysis has ended (tests).
-    #[cfg(test)]
-    pub(crate) fn wait(&self) {
+    /// Block until the shown file's analysis has ended: tests and screenshots, which must not
+    /// race the worker.
+    pub fn wait(&self) {
         if let Some(analyzer) = self.strip.analyzer() {
             analyzer.wait();
         }
@@ -117,7 +117,9 @@ impl WaveformStrip {
         self.select_with(path, auto, cx, start);
     }
 
-    pub(crate) fn select_with(
+    /// [`select`](Self::select) with the analysis `start` makes: a seam for tests and
+    /// screenshots, which hand in an analysis they control.
+    pub fn select_with(
         &mut self,
         path: Option<&str>,
         auto: bool,

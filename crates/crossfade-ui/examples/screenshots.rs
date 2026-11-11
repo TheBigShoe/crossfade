@@ -17,11 +17,13 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+use crossfade_app::FsIo;
+use crossfade_app::analysis::{Analyzer, State};
 use crossfade_app::queue::RunnerEvent;
-use crossfade_core::SampleFormat;
+use crossfade_core::{Limits, SampleFormat};
 use crossfade_ui::config::{self, Config, ConfigPiece};
 use crossfade_ui::prelude::gpui_test::TestWindowExt;
 use crossfade_ui::prelude::*;
@@ -286,6 +288,49 @@ const SCENES: &[Scene] = &[
             );
         },
     },
+    Scene {
+        file: "19-waveform-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+        },
+    },
+    Scene {
+        file: "20-waveform-light.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Light);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+        },
+    },
+    Scene {
+        file: "21-waveform-zoomed-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+            stage.click("waveform-strip");
+            for _ in 0..3 {
+                stage.press("+");
+            }
+            stage.press("right");
+            stage.press("right");
+        },
+    },
+    Scene {
+        file: "22-waveform-analysing-narrow-dark.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.settings_text("{ \"analyze_on_select\": false }");
+            stage.add_programme("interview-take-1.wav");
+            stage.analyse_partway("interview-take-1.wav", 42);
+        },
+    },
 ];
 
 /// A scratch directory for generated inputs, removed when the scene ends.
@@ -343,6 +388,8 @@ struct Stage {
     cx: HeadlessAppContext,
     script: Script,
     dir: Scratch,
+    /// Parked analysis workers; dropping one lets its worker go on.
+    gates: Vec<mpsc::Sender<()>>,
 }
 
 impl Stage {
@@ -387,6 +434,7 @@ impl Stage {
             cx,
             script,
             dir,
+            gates: Vec::new(),
         }
     }
 
@@ -407,6 +455,67 @@ impl Stage {
         .expect("write settings.json");
         self.cx
             .update(|cx| config::reload(ConfigPiece::Settings, cx));
+        self.cx.run_until_parked();
+    }
+
+    /// Save `settings.json` as `text` and reload it.
+    fn settings_text(&mut self, text: &str) {
+        std::fs::create_dir_all(self.dir.config()).expect("create the config directory");
+        std::fs::write(self.dir.config().join("settings.json"), text).expect("write settings.json");
+        self.cx
+            .update(|cx| config::reload(ConfigPiece::Settings, cx));
+        self.cx.run_until_parked();
+    }
+
+    /// Add a few seconds of programme-like stereo audio under `name`.
+    fn add_programme(&mut self, name: &str) {
+        self.add_bytes(&[(name, fixtures::programme_wav(48_000, 8))]);
+    }
+
+    /// Wait for the shown file's analysis to end, then deliver its last wake-up.
+    fn wait_analysis(&mut self) {
+        let strip = self.workspace.read_with(&self.cx, |w, _| w.strip().clone());
+        strip.read_with(&self.cx, |s, _| s.wait());
+        self.cx.run_until_parked();
+        self.draw().expect("draw");
+    }
+
+    /// Show `name` mid-analysis: the worker parks once `percent` of the file is analysed and
+    /// stays there until the scene ends, so the picture is the same every run.
+    fn analyse_partway(&mut self, name: &str, percent: u64) {
+        let path = self.dir.path(name);
+        let (hold, held) = mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let strip = self.workspace.read_with(&self.cx, |w, _| w.strip().clone());
+        let (reached, at_gate) = mpsc::channel::<()>();
+        let reached = Mutex::new(reached);
+        self.cx.update(|cx| {
+            strip.update(cx, |strip, cx| {
+                strip.select_with(None, true, cx, |_| unreachable!("nothing is shown"));
+                strip.select_with(Some(&path), true, cx, |p| {
+                    Analyzer::start(p, Box::new(FsIo::new()), Limits::default(), move |snap| {
+                        let total = snap.stream.as_ref().and_then(|s| s.frames).unwrap_or(0);
+                        if snap.state == State::Running && snap.frames_done * 100 >= total * percent
+                        {
+                            let _ = reached.lock().expect("lock").send(());
+                            let _ = held.lock().expect("lock").recv();
+                        }
+                    })
+                });
+            });
+        });
+        at_gate.recv().expect("the worker reaches the gate");
+        self.gates.push(hold);
+        self.cx.run_until_parked();
+        self.draw().expect("draw");
+    }
+
+    /// Press `keys` in the window.
+    fn press(&mut self, keys: &str) {
+        self.draw().expect("draw");
+        self.cx
+            .update_window(self.window, |_, window, cx| window.press(keys, cx))
+            .expect("the window is open");
         self.cx.run_until_parked();
     }
 
