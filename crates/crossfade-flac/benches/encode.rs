@@ -1,6 +1,7 @@
 //! Encoder speed on synthetic audio: 60 s of 44.1 kHz 16-bit stereo and 10 s of 96 kHz 24-bit
 //! stereo, a sine mix plus seeded noise (the signals `crossfade-format`'s benches use), at
-//! levels 0, 5 and 8. Throughput is the PCM size, so the numbers read in MB/s of audio.
+//! levels 0, 5 and 8, on the calling thread and (`/auto`) with the automatic thread count.
+//! Throughput is the PCM size, so the numbers read in MB/s of audio.
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use crossfade_flac::{Encoder, EncoderConfig};
 use std::hint::black_box;
@@ -46,10 +47,17 @@ fn bench(c: &mut Criterion) {
     for s in &signals {
         let bytes = s.samples.len() * usize::from(s.config.bits_per_sample).div_ceil(8);
         group.throughput(Throughput::Bytes(bytes as u64));
-        for level in [0u8, 5, 8] {
-            let config = EncoderConfig { level, ..s.config };
+        for (level, threads, suffix) in [0u8, 5, 8]
+            .into_iter()
+            .flat_map(|l| [(l, 1, ""), (l, EncoderConfig::AUTO_THREADS, "/auto")])
+        {
+            let config = EncoderConfig {
+                level,
+                threads,
+                ..s.config
+            };
             let mut out = Vec::with_capacity(s.samples.len() * 4);
-            group.bench_function(format!("{}/level{level}", s.name), |b| {
+            group.bench_function(format!("{}/level{level}{suffix}", s.name), |b| {
                 b.iter(|| {
                     out.clear();
                     let mut enc = Encoder::new(config).unwrap();

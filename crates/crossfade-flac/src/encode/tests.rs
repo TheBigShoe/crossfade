@@ -438,7 +438,17 @@ fn a_long_stream_codes_and_hashes_on_threads_of_its_own() {
 /// falling at 7 threads and only CPU time grows past it.
 #[test]
 fn auto_threads_leave_room_for_the_serial_stages() {
-    let table = [(1, 1), (2, 2), (3, 2), (4, 2), (6, 3), (8, 5), (10, 7), (11, 8), (64, 8)];
+    let table = [
+        (1, 1),
+        (2, 2),
+        (3, 2),
+        (4, 2),
+        (6, 3),
+        (8, 5),
+        (10, 7),
+        (11, 8),
+        (64, 8),
+    ];
     for (cores, threads) in table {
         assert_eq!(auto_threads(cores), threads, "{cores} cores");
     }
