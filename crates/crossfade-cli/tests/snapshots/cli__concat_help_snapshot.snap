@@ -38,7 +38,7 @@ Processing:
       --end <TIME>        End at this time
       --duration <TIME>   Keep this long from the start
       --fade-in <TIME>    Fade in from silence over this long
-      --fade-out <TIME>   Fade out to silence over this long, ending at the end
+      --fade-out <TIME>   Fade out to silence over this long, ending at the end (at most 10 minutes)
       --normalize <LUFS>  Bring the integrated loudness to this target, such as -16LUFS (measures the whole programme first)
       --true-peak <dBTP>  The true peak --normalize may not pass [default: -1dBTP]
       --dither <DITHER>   How processed audio is rounded to an integer format: tpdf (triangular dither, the default) or none. Only used when something is processed; float output is never dithered [possible values: tpdf, none]

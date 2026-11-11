@@ -100,5 +100,10 @@ impl Filter for Trim {
         Ok(true)
     }
 
+    /// Past its end, nothing more can come out: the pipeline may stop reading.
+    fn ignores_further_input(&self) -> bool {
+        self.finished()
+    }
+
     fn drain(&mut self) {}
 }

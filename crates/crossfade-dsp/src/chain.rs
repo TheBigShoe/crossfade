@@ -7,7 +7,9 @@
 
 use crate::convert::convert_format;
 use crate::dither::{Dither, Quantiser};
-use crate::filters::{FilterPlan, build};
+use crate::filters::gain::GainPlan;
+use crate::filters::normalize::NormalizePlan;
+use crate::filters::{FilterPlan, build_threads};
 use crossfade_core::{AudioFrame, AudioSpec, Error, Filter, SampleFormat, Samples};
 use std::collections::VecDeque;
 
@@ -32,6 +34,41 @@ impl ChainPlan {
             spec = f.output_spec(&spec)?;
         }
         Ok((spec, frames))
+    }
+}
+
+impl ChainPlan {
+    /// The `normalize` stage, if the chain has one: its index and plan.
+    pub fn normalize(&self) -> Option<(usize, NormalizePlan)> {
+        self.filters.iter().enumerate().find_map(|(i, f)| match f {
+            FilterPlan::Normalize(p) => Some((i, *p)),
+            _ => None,
+        })
+    }
+
+    /// The stages before the `normalize` stage: what its measuring pass runs.
+    pub fn before_normalize(&self) -> Option<ChainPlan> {
+        let (i, _) = self.normalize()?;
+        Some(ChainPlan {
+            filters: self.filters[..i].to_vec(),
+            dither: self.dither,
+        })
+    }
+
+    /// This chain with its `normalize` stage replaced by the gain its measuring pass gave.
+    pub fn with_measured_gain(&self, gain: GainPlan) -> ChainPlan {
+        let filters = self
+            .filters
+            .iter()
+            .map(|f| match f {
+                FilterPlan::Normalize(_) => FilterPlan::Gain(gain),
+                other => other.clone(),
+            })
+            .collect();
+        ChainPlan {
+            filters,
+            dither: self.dither,
+        }
     }
 }
 
@@ -85,10 +122,21 @@ impl Chain {
     /// Builds every filter in `plan` for `input`; the output is the last filter's rate and
     /// layout in `format`. Fails if any filter cannot be built.
     pub fn new(input: &AudioSpec, plan: &ChainPlan, format: SampleFormat) -> Result<Self, Error> {
+        Self::with_threads(input, plan, format, 1)
+    }
+
+    /// [`Self::new`], with filters that can use threads (the resampler) using up to
+    /// `threads` (`0`: the machine's parallelism; `1` starts none). The bytes are the same.
+    pub fn with_threads(
+        input: &AudioSpec,
+        plan: &ChainPlan,
+        format: SampleFormat,
+        threads: usize,
+    ) -> Result<Self, Error> {
         let mut spec = working(input)?;
         let mut stages = Vec::with_capacity(plan.filters.len());
         for p in &plan.filters {
-            let stage = build(p, &spec)?;
+            let stage = build_threads(p, &spec, threads)?;
             spec = stage.output_spec().clone();
             stages.push(stage);
         }

@@ -14,8 +14,8 @@ use crossfade_graph::filter::{
     parse_lufs, parse_rate, parse_time,
 };
 use crossfade_graph::{
-    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, ProbeOptions,
-    probe_with_cancel, run,
+    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, Normalization,
+    ProbeOptions, probe_with_cancel, run,
 };
 use std::path::Path;
 use std::process::ExitCode;
@@ -130,7 +130,7 @@ struct OutputArgs {
     /// Fade in from silence over this long.
     #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
     fade_in: Option<f64>,
-    /// Fade out to silence over this long, ending at the end.
+    /// Fade out to silence over this long, ending at the end (at most 10 minutes).
     #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
     fade_out: Option<f64>,
     /// Bring the integrated loudness to this target, such as -16LUFS (measures the whole
@@ -283,6 +283,25 @@ where
     }))
 }
 
+/// What the CLI prints, after `crossfade: note: `, about a normalisation: `None` when it
+/// reached its target.
+pub fn normalize_note(n: &Normalization) -> Option<String> {
+    let Some(reached) = n.reached_lufs() else {
+        return Some(
+            "nothing to normalise (silence, or under 400 ms): the level is left as it is".into(),
+        );
+    };
+    n.limited_by_ceiling.then(|| {
+        format!(
+            "normalised to {reached:.1} LUFS, {:.1} LU short of {} LUFS: the true peak may not \
+             pass {} dBTP (lower the target or raise --true-peak)",
+            n.target_lufs - reached,
+            n.target_lufs,
+            n.ceiling_dbtp
+        )
+    })
+}
+
 /// What the CLI prints, after `crossfade: warning: `, when a run saturated samples.
 pub fn clip_warning(samples: u64) -> String {
     let (noun, pronoun) = if samples == 1 {
@@ -424,10 +443,19 @@ pub fn main() -> ExitCode {
     ) {
         install_interrupt_handler(&cancel);
     }
-    let mut on_event = |e: &Event| {
-        if let Event::Clipped { samples } = e {
-            eprintln!("crossfade: warning: {}", clip_warning(*samples));
+    let mut on_event = |e: &Event| match e {
+        Event::Clipped { samples } => eprintln!("crossfade: warning: {}", clip_warning(*samples)),
+        Event::Started { plan } => {
+            for note in &plan.notes {
+                eprintln!("crossfade: note: {note}");
+            }
         }
+        Event::Normalized(n) => {
+            if let Some(note) = normalize_note(n) {
+                eprintln!("crossfade: note: {note}");
+            }
+        }
+        _ => {}
     };
     let outcome = execute(cli.command, &mut FsIo::new(), &cancel, &mut on_event);
     match &outcome {

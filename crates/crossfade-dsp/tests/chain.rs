@@ -162,25 +162,23 @@ fn the_bytes_do_not_depend_on_how_the_input_is_split() {
 }
 
 #[test]
-fn a_filter_not_built_yet_says_so_by_name() {
+fn a_normalize_stage_builds_only_once_its_measured_gain_replaces_it() {
     let input = spec(48000, SampleFormat::F64, ChannelLayout::stereo());
-    let cases = [(
-        FilterPlan::Normalize(NormalizePlan {
-            target_lufs: -16.0,
-            ceiling_dbtp: -1.0,
-        }),
-        "normalize",
-    )];
-    for (p, name) in cases {
-        assert_eq!(p.name(), name);
-        let want = Error::Unsupported {
-            what: format!("the {name} filter is not built yet"),
-        };
-        assert_eq!(build(&p, &input).err(), Some(want.clone()), "{name}");
-        let chain = Chain::new(&input, &plan(vec![p], Dither::Tpdf), SampleFormat::S16);
-        assert_eq!(chain.err(), Some(want), "{name}");
-    }
-    assert!(build(&gain(2.0), &input).is_ok());
+    let normalize = FilterPlan::Normalize(NormalizePlan {
+        target_lufs: -16.0,
+        ceiling_dbtp: -1.0,
+    });
+    assert_eq!(normalize.name(), "normalize");
+    let err = build(&normalize, &input).err().unwrap();
+    assert!(err.to_string().contains("measuring pass"), "{err}");
+    let chain = plan(vec![gain(0.5), normalize, gain(2.0)], Dither::Tpdf);
+    assert!(Chain::new(&input, &chain, SampleFormat::S16).is_err());
+    assert_eq!(chain.normalize().map(|(i, _)| i), Some(1));
+    assert_eq!(chain.before_normalize().unwrap().filters, [gain(0.5)]);
+    let measured = chain.with_measured_gain(GainPlan { linear: 4.0 });
+    assert_eq!(measured.filters, [gain(0.5), gain(4.0), gain(2.0)]);
+    assert!(Chain::new(&input, &measured, SampleFormat::S16).is_ok());
+    assert_eq!(plan(vec![gain(1.0)], Dither::Tpdf).before_normalize(), None);
 }
 
 #[test]

@@ -4,6 +4,13 @@
 use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
 use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
+use crate::two_pass::{Measuring, Pass, for_pass};
+use crossfade_dsp::filters::FilterPlan;
+use crossfade_dsp::filters::gain::GainPlan;
+use crossfade_dsp::filters::mix::assumption;
+
+/// Stands in for a normalising job's gain when only checking that the job builds.
+const UNITY: GainPlan = GainPlan { linear: 1.0 };
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
 };
@@ -27,6 +34,37 @@ pub struct OutputPlan {
     pub output: StreamInfo,
     /// Packets go straight from demuxer to muxer.
     pub copy: bool,
+    /// Assumptions the job makes that a person should hear about, e.g. "treating 6
+    /// unlabelled channels as 5.1".
+    pub notes: Vec<String>,
+}
+
+/// What `chain` assumes about `input` along the way.
+fn notes(input: &AudioSpec, chain: Option<&ChainPlan>) -> Vec<String> {
+    let mut notes = Vec::new();
+    let (Some(chain), Ok(mut spec)) = (
+        chain,
+        AudioSpec::new(
+            input.sample_rate(),
+            SampleFormat::F64,
+            input.layout().clone(),
+        ),
+    ) else {
+        return notes;
+    };
+    for f in &chain.filters {
+        if let FilterPlan::Mix(m) = f
+            && m.matrix.is_none()
+            && let Some(note) = assumption(spec.layout(), &m.layout)
+        {
+            notes.push(note);
+        }
+        match f.output_spec(&spec) {
+            Ok(next) => spec = next,
+            Err(_) => break,
+        }
+    }
+    notes
 }
 
 /// The codecs a transcode runs, and its chain when it processes; a copy has none.
@@ -34,6 +72,8 @@ pub(crate) struct Codecs {
     pub decoder: Box<dyn Decoder>,
     pub encoder: Box<dyn Encoder>,
     pub chain: Option<Chain>,
+    /// A measuring pass's meter (its encoder writes nothing).
+    pub measuring: Option<Measuring>,
 }
 
 /// The true bit depth of what a transcode writes: the input's while the sample format stays as
@@ -129,6 +169,7 @@ fn plan_output(
             output_format,
             output,
             copy: true,
+            notes: Vec::new(),
         };
         return Ok((plan, None));
     }
@@ -177,6 +218,7 @@ fn output_plan(
         output_format,
         output,
         copy: false,
+        notes: notes(in_spec, chain),
     })
 }
 
@@ -217,25 +259,40 @@ pub(crate) fn resolve(
     output_format: FormatId,
     settings: &AudioSettings,
     threads: usize,
+    pass: Pass,
 ) -> Result<(OutputPlan, Option<Codecs>), Error> {
     let (plan, chain) = plan_output(input, output_format, settings)?;
     if plan.copy {
         return Ok((plan, None));
     }
+    let (chain, measuring) = for_pass(chain, &input.audio, pass)?;
     let out = &plan.output;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
         ..encode_options(out.codec, settings.compression_level)?
     };
     let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
+    let chain_format = if measuring.is_some() {
+        SampleFormat::F64
+    } else {
+        out.audio.format()
+    };
     let chain = match &chain {
-        Some(c) => Some(Chain::new(&input.audio, c, out.audio.format())?),
+        Some(c) => Some(Chain::with_threads(&input.audio, c, chain_format, threads)?),
         None => None,
+    };
+    let (encoder, measuring) = match measuring {
+        Some((encoder, m)) => (encoder, Some(m)),
+        None => (
+            encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?,
+            None,
+        ),
     };
     let codecs = Codecs {
         decoder: decoder_for_threads(input, decoder_threads)?,
-        encoder: encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?,
+        encoder,
         chain,
+        measuring,
     };
     Ok((plan, Some(codecs)))
 }
@@ -273,8 +330,9 @@ pub fn validate(
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
     let format = output_format_for(output_path)?;
-    // The encoder is only looked at, never fed, so it stays on this thread.
-    let (plan, _) = resolve(input, format, settings, 1)?;
+    // The encoder is only looked at, never fed, so it stays on this thread. A normalising
+    // job's gain is not known until it runs: any gain builds the same chain.
+    let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     // A muxer writes its header on creation, so a scratch buffer shows whether it would refuse.
     create_muxer(
         format,
@@ -382,7 +440,15 @@ pub(crate) fn plan_join(
             dither: settings.dither,
         });
     }
-    let plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    let mut plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    let conform_notes = inputs
+        .iter()
+        .zip(&conform)
+        .flat_map(|(i, c)| notes(&i.audio, c.as_ref()));
+    let mut all: Vec<String> = conform_notes.collect();
+    all.append(&mut plan.notes);
+    all.dedup();
+    plan.notes = all;
     Ok(Join {
         plan,
         joined,
@@ -396,6 +462,7 @@ pub(crate) fn plan_join(
 pub(crate) struct JoinCodecs {
     pub encoder: Box<dyn Encoder>,
     pub main: Option<Chain>,
+    pub measuring: Option<Measuring>,
     /// Per input.
     pub decoder_threads: Vec<usize>,
 }
@@ -406,8 +473,11 @@ pub(crate) fn resolve_join(
     output_format: FormatId,
     settings: &AudioSettings,
     threads: usize,
+    pass: Pass,
 ) -> Result<(Join, JoinCodecs), Error> {
-    let join = plan_join(inputs, output_format, settings)?;
+    let mut join = plan_join(inputs, output_format, settings)?;
+    let (main, measuring) = for_pass(join.main.take(), &join.joined.audio, pass)?;
+    join.main = main;
     for (input, c) in inputs.iter().zip(&join.conform) {
         if let Some(c) = c {
             Chain::new(&input.audio, c, SampleFormat::F64)?;
@@ -424,16 +494,33 @@ pub(crate) fn resolve_join(
         bits_per_sample: out.bits_per_raw_sample,
         ..encode_options(out.codec, settings.compression_level)?
     };
+    let chain_format = if measuring.is_some() {
+        SampleFormat::F64
+    } else {
+        out.audio.format()
+    };
     let main = match &join.main {
-        Some(c) => Some(Chain::new(&join.joined.audio, c, out.audio.format())?),
+        Some(c) => Some(Chain::with_threads(
+            &join.joined.audio,
+            c,
+            chain_format,
+            threads,
+        )?),
         None => None,
     };
-    let encoder = encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?;
+    let (encoder, measuring) = match measuring {
+        Some((encoder, m)) => (encoder, Some(m)),
+        None => (
+            encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?,
+            None,
+        ),
+    };
     Ok((
         join,
         JoinCodecs {
             encoder,
             main,
+            measuring,
             decoder_threads,
         },
     ))
@@ -457,7 +544,7 @@ pub fn validate_concat(
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
     let format = output_format_for(output_path)?;
-    let (join, _) = resolve_join(inputs, format, settings, 1)?;
+    let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,
         Box::new(Cursor::new(Vec::new())),

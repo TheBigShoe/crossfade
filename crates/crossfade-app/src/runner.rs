@@ -143,6 +143,8 @@ fn work(
                 }
             }
             Event::Clipped { samples } => send(RunnerEvent::Clipped { samples: *samples }),
+            // The queue has no place for these yet.
+            Event::Measuring | Event::Normalized(_) => {}
             Event::Finished { frames } => {
                 // The last state always goes out, whatever the throttle said.
                 if latest.0 > throttle.last_emitted() {
