@@ -34,16 +34,26 @@ fn io_with(path: &str, wav: Vec<u8>) -> MemoryIo {
 
 #[test]
 fn ebu_3341_case_1_reads_minus_23_lufs() {
-    let mut io = io_with("a.wav", tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 20.0));
+    let mut io = io_with(
+        "a.wav",
+        tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 20.0),
+    );
     let m = measure(&mut io, "a.wav").unwrap();
-    assert!((m.integrated.unwrap() + 23.0).abs() < 0.1, "{:?}", m.integrated);
+    assert!(
+        (m.integrated.unwrap() + 23.0).abs() < 0.1,
+        "{:?}",
+        m.integrated
+    );
     assert_eq!(m.frames, 960_000);
     assert!(m.true_peak.unwrap() >= m.sample_peak);
 }
 
 #[test]
 fn the_same_signal_through_flac_measures_the_same_bits() {
-    let mut io = io_with("a.wav", tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 20.0));
+    let mut io = io_with(
+        "a.wav",
+        tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 20.0),
+    );
     run(
         &job("a.wav", "a.flac", None),
         &mut io,
@@ -52,15 +62,27 @@ fn the_same_signal_through_flac_measures_the_same_bits() {
         &mut |_| {},
     )
     .unwrap();
-    assert_eq!(measure(&mut io, "a.flac").unwrap(), measure(&mut io, "a.wav").unwrap());
+    assert_eq!(
+        measure(&mut io, "a.flac").unwrap(),
+        measure(&mut io, "a.wav").unwrap()
+    );
 }
 
 #[test]
 fn silence_and_short_programmes_have_no_loudness() {
-    let mut io = io_with("s.wav", tone_wav(48_000, ChannelLayout::stereo(), &[], -23.0, 3.0));
+    let mut io = io_with(
+        "s.wav",
+        tone_wav(48_000, ChannelLayout::stereo(), &[], -23.0, 3.0),
+    );
     let m = measure(&mut io, "s.wav").unwrap();
-    assert_eq!((m.integrated, m.loudness_range, m.sample_peak), (None, None, 0.0));
-    let mut io = io_with("t.wav", tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -10.0, 0.2));
+    assert_eq!(
+        (m.integrated, m.loudness_range, m.sample_peak),
+        (None, None, 0.0)
+    );
+    let mut io = io_with(
+        "t.wav",
+        tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -10.0, 0.2),
+    );
     assert_eq!(measure(&mut io, "t.wav").unwrap().integrated, None);
 }
 
@@ -80,7 +102,13 @@ fn mono_and_the_extreme_rates_measure() {
 fn a_5_1_file_leaves_the_lfe_out_of_loudness_but_not_the_peaks() {
     let mut io = io_with(
         "a.wav",
-        tone_wav(48_000, ChannelLayout::default_for(6).unwrap(), &[3], -6.0, 5.0),
+        tone_wav(
+            48_000,
+            ChannelLayout::default_for(6).unwrap(),
+            &[3],
+            -6.0,
+            5.0,
+        ),
     );
     let m = measure(&mut io, "a.wav").unwrap();
     assert_eq!(m.integrated, None);
@@ -89,7 +117,10 @@ fn a_5_1_file_leaves_the_lfe_out_of_loudness_but_not_the_peaks() {
 
 #[test]
 fn a_rate_below_8_khz_is_unsupported_and_named() {
-    let mut io = io_with("a.wav", tone_wav(4_000, ChannelLayout::stereo(), &[0, 1], -20.0, 1.0));
+    let mut io = io_with(
+        "a.wav",
+        tone_wav(4_000, ChannelLayout::stereo(), &[0, 1], -20.0, 1.0),
+    );
     let Err(Error::Unsupported { what }) = measure(&mut io, "a.wav") else {
         panic!("expected Unsupported")
     };
@@ -98,7 +129,10 @@ fn a_rate_below_8_khz_is_unsupported_and_named() {
 
 #[test]
 fn a_cancelled_pass_stops() {
-    let mut io = io_with("a.wav", tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 2.0));
+    let mut io = io_with(
+        "a.wav",
+        tone_wav(48_000, ChannelLayout::stereo(), &[0, 1], -23.0, 2.0),
+    );
     let cancel = CancelToken::new();
     cancel.cancel();
     assert_eq!(

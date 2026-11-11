@@ -24,6 +24,7 @@ fn doc(size: Option<u64>, streams: Vec<ProbeStream>) -> ProbeDocument {
         size_bytes: size,
         streams,
         tags: vec![],
+        loudness: None,
     }
 }
 

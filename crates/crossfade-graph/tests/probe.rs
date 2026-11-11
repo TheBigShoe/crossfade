@@ -89,6 +89,7 @@ fn tags_and_raw_bits_reach_the_document_in_order() {
         size_bytes: None,
         streams: vec![stream],
         tags,
+        loudness: None,
     }
     .document();
     assert_eq!(doc.streams[0].bits_per_raw_sample, Some(20));
@@ -109,8 +110,10 @@ fn tone_wav(rate: u32, seconds: u32, amp: f64) -> Vec<u8> {
     let s = spec(rate, SampleFormat::S16, ChannelLayout::stereo());
     let mut pcm = Vec::new();
     for i in 0..rate * seconds {
-        let v = (amp * 32767.0 * (2.0 * std::f64::consts::PI * 1000.0 * f64::from(i) / f64::from(rate)).sin())
-            .round() as i16;
+        let v = (amp
+            * 32767.0
+            * (2.0 * std::f64::consts::PI * 1000.0 * f64::from(i) / f64::from(rate)).sin())
+        .round() as i16;
         pcm.extend_from_slice(&v.to_le_bytes());
         pcm.extend_from_slice(&v.to_le_bytes());
     }
@@ -141,7 +144,13 @@ fn probe_with_no_options_is_probe_and_json_has_no_loudness_key() {
     let mut io = MemoryIo::new();
     io.insert("a.wav", tone_wav(8000, 1, 0.5));
     let plain = probe("a.wav", &mut io, &Limits::default()).unwrap();
-    let with = probe_with("a.wav", &mut io, &Limits::default(), &ProbeOptions::default()).unwrap();
+    let with = probe_with(
+        "a.wav",
+        &mut io,
+        &Limits::default(),
+        &ProbeOptions::default(),
+    )
+    .unwrap();
     assert_eq!(plain, with);
     assert_eq!(plain.loudness, None);
     let json = serde_json::to_string(&plain.document()).unwrap();

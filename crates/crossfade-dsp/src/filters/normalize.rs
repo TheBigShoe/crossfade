@@ -7,7 +7,8 @@
 
 use super::gain::GainPlan;
 use crossfade_core::{AudioFrame, AudioSpec, Channel, ChannelLayout, Error, Samples};
-use crossfade_loudness::{ChannelRole, Measurements, Meter, Options, normalisation_gain};
+use crossfade_loudness::{ChannelRole, Meter, normalisation_gain};
+pub use crossfade_loudness::{Measurements, Options, to_db};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalizePlan {
