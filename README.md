@@ -3,8 +3,9 @@
 An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
-Crossfade is early. It handles lossless audio today; lossy codecs, DSP and
-video are planned. It has only been run on macOS so far.
+Crossfade is early. It handles lossless audio today, with the first audio
+processing (gain) built and more on the way; lossy codecs and video are
+planned. It has only been run on macOS so far.
 
 ## What works
 
@@ -52,6 +53,39 @@ several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
 existing output is never replaced without `--force`.
+
+## Processing
+
+Filters run in the order given, one per `--filter`: a name, an optional value,
+then `key=value` words. Units are always written (`dB`, `s`, `ms`, `1:30`,
+`LUFS`, `dBTP`, `Hz`, `kHz`), and a mistake names the word and what was expected.
+
+```sh
+crossfade convert in.wav -o out.flac --gain -6dB                 # shortcut for --filter "gain -6dB"
+crossfade convert in.wav -o out.flac --filter "gain -6dB" --filter "fade out=3s curve=equal-power"
+crossfade convert in.wav -o out.flac --start 10s --end 1:30      # one trim filter
+crossfade convert in.wav -o out.flac --normalize -16LUFS --true-peak -1dBTP
+crossfade convert in.wav -o out.flac --sample-rate 48000 --channels stereo
+crossfade concat a.wav b.wav -o both.flac                        # several inputs: a separate command
+```
+
+| Filter | Example | State |
+|---|---|---|
+| gain | `gain -6dB` | built |
+| trim | `trim start=10s end=1:30`, `trim duration=500ms` | parses and plans; not built yet |
+| fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | parses and plans; not built yet |
+| normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; not built yet |
+| resample | `resample 48kHz quality=best`; also `--sample-rate` | parses and plans; not built yet |
+| mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | parses and plans; not built yet |
+| concat | `crossfade concat a.wav b.wav -o out.flac` | parses and plans; not built yet |
+
+A filter that is not built yet is refused before any file is written. A job
+with no filters and no rate or channel change takes exactly the path it took
+before, bit for bit. When something is processed, integer output gets TPDF
+dither (`--dither none` turns it off; float output is never dithered) from a
+fixed-seed generator, so the same input gives the same bytes on every machine
+and at every thread count. Samples pushed past full scale are clipped and
+counted, and the command line prints a warning with the count.
 
 ## Desktop app
 
