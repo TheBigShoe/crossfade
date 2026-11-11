@@ -429,3 +429,53 @@ fn cancel_all_leaves_finished_and_failed_jobs_alone() {
     assert_eq!(state(&q, done), JobState::Finished { frames: 3 });
     assert!(q.is_idle());
 }
+
+fn counts(running: usize, pending: usize) -> Summary {
+    Summary {
+        running,
+        pending,
+        ..Summary::default()
+    }
+}
+
+#[test]
+fn the_quit_sentence_counts_running_and_waiting_jobs() {
+    use crossfade_app::queue::quit_warning;
+    assert_eq!(quit_warning(counts(0, 0)), None);
+    assert_eq!(
+        quit_warning(counts(1, 0)).as_deref(),
+        Some("1 conversion is still running. Quitting will cancel it.")
+    );
+    assert_eq!(
+        quit_warning(counts(0, 1)).as_deref(),
+        Some("1 conversion is still waiting. Quitting will cancel it.")
+    );
+    assert_eq!(
+        quit_warning(counts(1, 2)).as_deref(),
+        Some("3 conversions are still running or waiting. Quitting will cancel them.")
+    );
+    assert_eq!(
+        quit_warning(counts(0, 2)).as_deref(),
+        Some("2 conversions are still waiting. Quitting will cancel them.")
+    );
+    assert_eq!(
+        quit_warning(counts(2, 0)).as_deref(),
+        Some("2 conversions are still running. Quitting will cancel them.")
+    );
+}
+
+#[test]
+fn finished_jobs_are_not_part_of_the_quit_sentence() {
+    use crossfade_app::queue::quit_warning;
+    let summary = Summary {
+        running: 1,
+        finished: 4,
+        failed: 2,
+        cancelled: 1,
+        ..Summary::default()
+    };
+    assert_eq!(
+        quit_warning(summary).as_deref(),
+        Some("1 conversion is still running. Quitting will cancel it.")
+    );
+}
