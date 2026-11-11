@@ -114,9 +114,14 @@ fn panicked(p: Panicked) -> Error {
 }
 
 impl Decoder {
-    /// `threads` value that means "as many as the machine runs at once"
-    /// ([`auto_thread_count`](crate::auto_thread_count)).
+    /// `threads` value that means "as many as help": the machine's
+    /// [`auto_thread_count`](crate::auto_thread_count), at most
+    /// [`MAX_AUTO_THREADS`](Self::MAX_AUTO_THREADS).
     pub const AUTO_THREADS: usize = 0;
+    /// The most [`AUTO_THREADS`](Self::AUTO_THREADS) picks: a frame decodes several times
+    /// faster than the MD5 hashes it, so two or three threads keep up with the MD5's thread and
+    /// more only cost CPU time.
+    pub const MAX_AUTO_THREADS: usize = 3;
     /// The most threads a decoder uses, whatever `threads` says.
     pub const MAX_THREADS: usize = 64;
 
@@ -131,7 +136,7 @@ impl Decoder {
     /// decodes on the calling thread and starts no thread at all. More hand frames to up to
     /// `threads - 1` workers, started only as frames queue up, and hash the audio on one more;
     /// blocks then come out a few frames later, in order. [`AUTO_THREADS`](Self::AUTO_THREADS)
-    /// (0) takes [`auto_thread_count`](crate::auto_thread_count); counts above
+    /// (0) picks for the machine; counts above
     /// [`MAX_THREADS`](Self::MAX_THREADS) count as that.
     pub fn with_threads(info: &StreamInfoBlock, threads: usize) -> Result<Self> {
         if !(1..=8).contains(&info.channels) {
@@ -157,7 +162,7 @@ impl Decoder {
             finished: false,
             error: None,
             threads: match threads {
-                Self::AUTO_THREADS => crate::auto_thread_count(),
+                Self::AUTO_THREADS => crate::auto_thread_count().min(Self::MAX_AUTO_THREADS),
                 n => n.min(Self::MAX_THREADS),
             },
             pool: None,
