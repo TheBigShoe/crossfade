@@ -2,8 +2,8 @@ use super::FRAMES_PER_PACKET;
 use super::INFO_CAP;
 use crate::aiff::decode_text;
 use crossfade_core::{
-    AudioSpec, Channel, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet,
-    SampleFormat, StreamInfo, Tags, TimeBase, tag_keys,
+    AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet, SampleFormat,
+    StreamInfo, Tags, TimeBase, tag_keys,
 };
 use std::io::{ErrorKind, SeekFrom};
 
@@ -150,7 +150,7 @@ fn parse_fmt(f: &[u8]) -> Result<(AudioSpec, Option<u8>), Error> {
     }
     let unpositioned = || ChannelLayout::unpositioned(channels);
     let layout = match (mask, channels) {
-        (Some(m), _) => match layout_from_mask(m, channels) {
+        (Some(m), _) => match ChannelLayout::from_mask(m, channels) {
             Some(l) => l,
             None => unpositioned()?,
         },
@@ -161,31 +161,6 @@ fn parse_fmt(f: &[u8]) -> Result<(AudioSpec, Option<u8>), Error> {
     // Valid bits never exceed 32 here: the container is at most 32 bits for integers.
     let raw = raw.and_then(|v| u8::try_from(v).ok());
     Ok((AudioSpec::new(rate, format, layout)?, raw))
-}
-
-/// Bit order of the WAVE channel mask; `None` unless every set bit is known
-/// and their count equals the channel count.
-fn layout_from_mask(mask: u32, channels: u16) -> Option<ChannelLayout> {
-    const BITS: [(u32, Channel); 8] = [
-        (0, Channel::FrontLeft),
-        (1, Channel::FrontRight),
-        (2, Channel::FrontCenter),
-        (3, Channel::Lfe),
-        (4, Channel::BackLeft),
-        (5, Channel::BackRight),
-        (9, Channel::SideLeft),
-        (10, Channel::SideRight),
-    ];
-    let known = BITS.iter().fold(0u32, |m, (b, _)| m | 1 << b);
-    if mask & !known != 0 || mask.count_ones() != u32::from(channels) {
-        return None;
-    }
-    let positions = BITS
-        .iter()
-        .filter(|(b, _)| mask & (1 << b) != 0)
-        .map(|&(_, c)| c)
-        .collect();
-    ChannelLayout::from_positions(positions).ok()
 }
 
 fn info_key(id: &[u8]) -> Option<&'static str> {
