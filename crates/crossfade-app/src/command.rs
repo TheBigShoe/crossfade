@@ -84,9 +84,10 @@ pub fn command_line(request: &Request) -> Result<String, NotExpressible> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NotExpressible, Request, command_line, convert_args};
+    use super::{NotExpressible, Request, command_args, command_line, convert_args};
     use crossfade_core::SampleFormat;
-    use crossfade_graph::{AudioSettings, Job, JobInput, JobOutput};
+    use crossfade_graph::filter::parse_channels;
+    use crossfade_graph::{AudioSettings, Dither, Job, JobInput, JobOutput};
 
     fn request(input: &str, output: &str, format: Option<SampleFormat>, force: bool) -> Request {
         Request {
@@ -237,5 +238,84 @@ mod tests {
                 "-in.wav"
             ]
         );
+    }
+
+    fn processed() -> Request {
+        let mut r = request("a.wav", "b.flac", None, true);
+        let audio = &mut r.job.outputs[0].audio;
+        audio.sample_rate = Some(48000);
+        audio.channels = Some(parse_channels("5.1").unwrap());
+        audio.dither = Dither::None;
+        audio.filters = vec![
+            "gain -3dB".parse().unwrap(),
+            "fade out=2s curve=s-curve".parse().unwrap(),
+        ];
+        r
+    }
+
+    #[test]
+    fn processing_renders_as_flags_and_every_filter_as_its_text() {
+        assert_eq!(
+            args(&processed()),
+            [
+                "convert",
+                "a.wav",
+                "-o",
+                "b.flac",
+                "--sample-rate",
+                "48000",
+                "--channels",
+                "5.1",
+                "--dither",
+                "none",
+                "--filter",
+                "gain -3dB",
+                "--filter",
+                "fade out=2s curve=s-curve",
+                "--force"
+            ]
+        );
+        assert_eq!(
+            command_line(&processed()).unwrap(),
+            "crossfade convert a.wav -o b.flac --sample-rate 48000 --channels 5.1 --dither none \
+             --filter 'gain -3dB' --filter 'fade out=2s curve=s-curve' --force"
+        );
+    }
+
+    #[test]
+    fn several_inputs_render_as_concat() {
+        let mut r = request("a.wav", "all.flac", None, false);
+        r.job.inputs.push(JobInput {
+            path: "b.flac".into(),
+        });
+        assert_eq!(convert_args(&r), Err(NotExpressible));
+        assert_eq!(
+            command_args(&r).unwrap(),
+            ["concat", "a.wav", "b.flac", "-o", "all.flac"]
+        );
+        assert_eq!(
+            command_line(&r).unwrap(),
+            "crossfade concat a.wav b.flac -o all.flac"
+        );
+        r.job.inputs.push(JobInput {
+            path: "-c.wav".into(),
+        });
+        assert_eq!(
+            command_args(&r).unwrap(),
+            [
+                "concat",
+                "--output=all.flac",
+                "--",
+                "a.wav",
+                "b.flac",
+                "-c.wav"
+            ]
+        );
+        // One input is a convert, whichever function renders it.
+        let one = request("a.wav", "b.wav", None, false);
+        assert_eq!(command_args(&one), convert_args(&one));
+        let mut none = one.clone();
+        none.job.inputs.clear();
+        assert_eq!(command_args(&none), Err(NotExpressible));
     }
 }
