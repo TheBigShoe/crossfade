@@ -291,8 +291,8 @@ fn bounded_search_chooses_what_the_exhaustive_order_chose() {
 
 /// How many LPC candidates each level codes for real, an explicit table. Ordinary audio: the
 /// best `lpc_exact` of each window's orders by predicted bits, nothing from the pool. A block
-/// as predictable as a pure tone also refines and, from level 5, searches ridges: the pool's
-/// best two by predicted bits are coded on top.
+/// as predictable as a pure tone codes all of a window's orders, refines and, from level 5,
+/// searches ridges: the pool's best by predicted bits is coded on top.
 #[test]
 fn exact_lpc_codings_per_level() {
     let music: Vec<i32> = (0..4096)
@@ -312,8 +312,13 @@ fn exact_lpc_codings_per_level() {
             (phase.sin() * 0.99 * 8_388_607.0) as i32
         })
         .collect();
+    // Ordinary audio: the best few of each window's orders.
     let window = [0usize, 0, 0, 1, 1, 2, 3, 2, 3];
-    let pool = [0usize, 0, 0, 1, 1, 2, 2, 2, 2];
+    // A window whose coded fits all land far above their estimates codes the rest of its
+    // orders too (levels 7 and 8 try more than they code); the pool's best one is coded.
+    let tone_window = [0usize, 0, 0, 1, 1, 2, 3, 4, 5];
+    let pool = [0usize, 0, 0, 1, 1, 1, 1, 1, 1];
+    let ridges = [0usize, 0, 0, 0, 0, 2, 2, 3, 4];
     for level in 0..=8u8 {
         let mut plan = Plan::new(4096);
         let mut a = Analyzer::new(Level::new(level), 16, false);
@@ -328,8 +333,9 @@ fn exact_lpc_codings_per_level() {
         a.analyze(&tone, 24, &mut plan);
         assert_eq!(
             (a.window_codings, a.pool_codings),
-            (window[l], pool[l]),
+            (tone_window[l], pool[l]),
             "tone, level {level}"
         );
+        assert_eq!(Level::new(level).ridges.len(), ridges[l], "level {level}");
     }
 }
