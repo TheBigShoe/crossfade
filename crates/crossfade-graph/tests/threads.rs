@@ -74,3 +74,35 @@ fn decoding_and_reencoding_flac_change_no_byte_at_any_budget() {
         assert!(outputs(threads) == one, "{threads} threads");
     }
 }
+
+/// Ogg FLAC goes through the same threaded decoder: the same WAV at any budget, and a stream
+/// cut short fails the same way.
+#[test]
+fn ogg_flac_decodes_the_same_at_any_budget() {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../crossfade-format/tests/fixtures/ogg"
+    );
+    for name in ["smallblock", "stereo16", "mono24", "noise8"] {
+        let ogg = std::fs::read(format!("{dir}/{name}.oga")).unwrap();
+        let cut = ogg[..ogg.len() * 2 / 3].to_vec();
+        for input in [ogg, cut] {
+            let outcome = |threads| {
+                let mut io = MemoryIo::new();
+                io.insert("in.oga", input.clone());
+                let mut j = job("in.oga", "out.wav", None);
+                j.outputs[0].audio.compression_level = None;
+                let limits = Limits {
+                    max_threads: threads,
+                    ..Limits::default()
+                };
+                let r = run(&j, &mut io, &limits, &CancelToken::new(), &mut |_| {});
+                (r.map_err(|e| e.to_string()), io.get("out.wav"))
+            };
+            let one = outcome(1);
+            for threads in [2, 3, 8, 0] {
+                assert!(outcome(threads) == one, "{name}, {threads} threads");
+            }
+        }
+    }
+}
