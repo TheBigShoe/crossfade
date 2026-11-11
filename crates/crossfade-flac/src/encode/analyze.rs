@@ -362,7 +362,11 @@ impl Analyzer {
             self.trivial(x, bps, plan);
             return;
         }
-        let any = x.iter().fold(0i64, |acc, &v| acc | v.into());
+        let any = match T::as_i32(x) {
+            // In 32-bit lanes when it can: the same bits, four to a register.
+            Some(x) => i64::from(x.iter().fold(0i32, |acc, &v| acc | v)),
+            None => x.iter().fold(0i64, |acc, &v| acc | v.into()),
+        };
         // Not constant, so some sample is non-zero and the shift is below the depth.
         let wasted = any.trailing_zeros();
         if wasted == 0 {
@@ -389,7 +393,10 @@ impl Analyzer {
             self.search_fixed_first(x, bps, head, plan);
         }
         if self.level.max_lpc > 0 && n >= 16 {
-            self.peak = x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs()));
+            self.peak = match T::as_i32(x) {
+                Some(x) => u64::from(x.iter().fold(0u32, |m, &v| m.max(v.unsigned_abs()))),
+                None => x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs())),
+            };
             self.reg = BASE_RIDGE;
             if T::as_i32(x).is_some() && lpc::int_scale(n, self.peak).is_some() {
                 self.search_lpc_scored(x, bps, head, plan);
