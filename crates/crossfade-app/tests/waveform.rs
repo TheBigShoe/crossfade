@@ -48,9 +48,7 @@ fn oracle(
     let e = (s + fpc.max(1)).min(len);
     let b = p.block_frames(p.level_for(fpc));
     let (from, to) = (s / b * b, ((e - 1) / b + 1) * b);
-    minmax(
-        (from..to.min(len)).map(|f| samples[f as usize * channels + ch]),
-    )
+    minmax((from..to.min(len)).map(|f| samples[f as usize * channels + ch]))
 }
 
 fn signal() -> impl Strategy<Value = (u16, Vec<f64>)> {
@@ -124,7 +122,7 @@ proptest! {
 #[test]
 fn levels_halve_up_to_one_block_and_each_merges_its_children() {
     let samples: Vec<f64> = (0..100_000 * 2)
-        .map(|i| ((i * 7919) % 2001) as f64 / 1000.0 - 1.0)
+        .map(|i| f64::from((i * 7919) % 2001) / 1000.0 - 1.0)
         .collect();
     let mut p = Pyramid::new(2);
     push_chunked(&mut p, 2, &samples, &[12_345, 999]);
@@ -175,7 +173,8 @@ fn the_union_spans_all_channels() {
 #[test]
 fn nan_counts_as_silence_and_infinity_saturates() {
     let mut p = Pyramid::new(1);
-    p.push(&frame(1, &[f64::NAN, f64::INFINITY, -1e300])).unwrap();
+    p.push(&frame(1, &[f64::NAN, f64::INFINITY, -1e300]))
+        .unwrap();
     let (lo, hi) = p.columns(0, 0, 3, 1)[0].unwrap();
     assert_eq!((lo, hi), (f32::NEG_INFINITY, f32::INFINITY));
     let mut q = Pyramid::new(1);
@@ -207,11 +206,19 @@ fn one_hour_of_48k_stereo_fits_in_22_mb_and_a_query_costs_its_columns() {
     assert_eq!(p.heap_bytes_level(0), 675_000 * 2 * 8);
     assert!(p.heap_bytes() < 22_000_000, "{}", p.heap_bytes());
     // Work is proportional to the column count, not to the range it spans.
-    for (fpc, n) in [(1u64, 1000usize), (BASE, 1000), (172_800, 1000), (hour, 1000)] {
+    for (fpc, n) in [
+        (1u64, 1000usize),
+        (BASE, 1000),
+        (172_800, 1000),
+        (hour, 1000),
+    ] {
         let (cols, reads) = p.columns_counting(0, 0, fpc, n);
         assert_eq!(cols.len(), n);
-        assert!(reads <= 4 * n, "{reads} reads for {n} columns of {fpc} frames");
+        assert!(
+            reads <= 4 * n,
+            "{reads} reads for {n} columns of {fpc} frames"
+        );
     }
-    let (_, whole_hour) = p.columns_counting(0, 0, hour as u64 / 100, 100);
+    let (_, whole_hour) = p.columns_counting(0, 0, hour / 100, 100);
     assert!(whole_hour <= 400);
 }

@@ -3,9 +3,7 @@ mod common;
 use common::{spec, wav_bytes};
 use crossfade_app::analysis::{Analysis, Analyzer, State, analyze, roles_for};
 use crossfade_app::waveform::Pyramid;
-use crossfade_core::{
-    AudioFrame, ChannelLayout, Limits, SampleFormat, Samples,
-};
+use crossfade_core::{AudioFrame, ChannelLayout, Limits, SampleFormat, Samples};
 use crossfade_graph::{CancelToken, decode_frames};
 use crossfade_loudness::{ChannelRole, Meter, Options};
 use crossfade_testkit::memory::MemoryIo;
@@ -20,7 +18,7 @@ fn pcm(frames: usize) -> Vec<u8> {
             let t = i as f64 / f64::from(RATE);
             let level = if i < frames / 2 { 0.5 } else { 0.05 };
             let l = (level * (t * 2.0 * std::f64::consts::PI * 440.0).sin() * 32767.0) as i16;
-            let r = (l as f64 * 0.5) as i16;
+            let r = (f64::from(l) * 0.5) as i16;
             [l.to_le_bytes(), r.to_le_bytes()].concat()
         })
         .collect()
@@ -82,18 +80,24 @@ fn the_pyramid_and_loudness_match_the_decoded_samples() {
     let mut io = io_with(n);
     let (frames, _) = decoded(&mut io);
     let mut pyramid = Pyramid::new(2);
-    let mut meter = Meter::new(RATE, &[ChannelRole::Left, ChannelRole::Right], Options::default())
-        .unwrap();
+    let mut meter = Meter::new(
+        RATE,
+        &[ChannelRole::Left, ChannelRole::Right],
+        Options::default(),
+    )
+    .unwrap();
     let mut curve = Vec::new();
     let mut fed = 0usize;
     for f in &frames {
         pyramid.push(f).unwrap();
-        let Samples::F64(s) = &f.samples else { panic!() };
+        let Samples::F64(s) = &f.samples else {
+            panic!()
+        };
         // The curve is read every 100 ms of programme (800 frames here).
         for pair in s.chunks(2) {
             meter.push(pair);
             fed += 1;
-            if fed % 800 == 0 {
+            if fed.is_multiple_of(800) {
                 curve.push(meter.short_term().map_or(f32::NEG_INFINITY, |v| v as f32));
             }
         }
@@ -121,9 +125,14 @@ fn progress_is_reported_by_frame_count_and_ends_with_done() {
     let (_, biggest) = decoded(&mut io_with(n));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
-    let a = Analyzer::start("in.wav", Box::new(io_with(n)), Limits::default(), move |s| {
-        sink.lock().unwrap().push((s.frames_done, s.state.clone()));
-    });
+    let a = Analyzer::start(
+        "in.wav",
+        Box::new(io_with(n)),
+        Limits::default(),
+        move |s| {
+            sink.lock().unwrap().push((s.frames_done, s.state.clone()));
+        },
+    );
     a.wait();
     // The terminal notification is sent after the state is final; wait for it by polling the
     // recorded list through a final snapshot barrier.
@@ -178,7 +187,12 @@ fn cancel_is_a_method_and_dropping_cancels() {
     );
     drop(a);
     assert!(token.is_cancelled());
-    let a = Analyzer::start("in.wav", Box::new(io_with(8000 * 20)), Limits::default(), |_| {});
+    let a = Analyzer::start(
+        "in.wav",
+        Box::new(io_with(8000 * 20)),
+        Limits::default(),
+        |_| {},
+    );
     a.cancel();
     let s = a.wait();
     assert!(matches!(s.state, State::Cancelled | State::Done));
@@ -186,7 +200,12 @@ fn cancel_is_a_method_and_dropping_cancels() {
 
 #[test]
 fn a_missing_or_bad_file_fails_with_the_engines_message() {
-    let a = Analyzer::start("nope.wav", Box::new(MemoryIo::new()), Limits::default(), |_| {});
+    let a = Analyzer::start(
+        "nope.wav",
+        Box::new(MemoryIo::new()),
+        Limits::default(),
+        |_| {},
+    );
     let State::Failed(msg) = a.wait().state else {
         panic!("not failed")
     };
@@ -207,14 +226,10 @@ fn a_rate_the_meter_cannot_take_still_gets_a_waveform() {
             &[1, 2, 3, 4, 5, 6, 7, 8],
         ),
     );
-    let a = run_path(io);
+    let a = run(io);
     assert_eq!(a.loudness.integrated, None);
     assert_eq!(a.loudness.true_peak, None);
     assert_eq!(a.pyramid.frames(), 4);
-}
-
-fn run_path(io: MemoryIo) -> Analysis {
-    run(io)
 }
 
 #[test]
@@ -243,5 +258,32 @@ fn roles_follow_the_layout() {
         roles_for(&ChannelLayout::unpositioned(3).unwrap()),
         [Left, Right, Centre]
     );
-    assert_eq!(roles_for(&ChannelLayout::unpositioned(9).unwrap()), [Unweighted; 9]);
+    assert_eq!(
+        roles_for(&ChannelLayout::unpositioned(9).unwrap()),
+        [Unweighted; 9]
+    );
+}
+
+/// By hand: `CROSSFADE_ANALYSIS_FILE=big.wav cargo test --release -p crossfade-app --test
+/// analysis -- --ignored --nocapture`. Prints the time; asserts nothing about it.
+#[test]
+#[ignore]
+fn time_one_real_file() {
+    let path = std::env::var("CROSSFADE_ANALYSIS_FILE").expect("set CROSSFADE_ANALYSIS_FILE");
+    let started = std::time::Instant::now();
+    let a = analyze(
+        &path,
+        &mut crossfade_app::FsIo::new(),
+        &Limits::default(),
+        &CancelToken::new(),
+    );
+    println!(
+        "{:?}: {} frames in {:?}, pyramid {} bytes, integrated {:?}",
+        a.state,
+        a.frames_done,
+        started.elapsed(),
+        a.pyramid.heap_bytes(),
+        a.loudness.integrated
+    );
+    assert_eq!(a.state, State::Done);
 }
