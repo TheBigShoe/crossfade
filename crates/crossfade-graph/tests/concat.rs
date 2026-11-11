@@ -388,41 +388,26 @@ fn thread_count_never_changes_a_join() {
     assert_eq!(outs[0], outs[2]);
 }
 
-/// Mono into a stereo join needs the `mix` filter, which is being built in parallel. This
-/// test passes either way and says which: once `mix` lands, the join works with no change.
+/// Mono into a stereo join: the mono input is mixed to both sides at unity.
 #[test]
-fn a_layout_change_waits_only_for_the_mix_filter() {
+fn a_mono_input_joins_a_stereo_one_on_both_sides() {
+    let a = ramp(100, 2, 0.0);
+    let m = ramp(100, 1, 0.5);
     let mut io = MemoryIo::new();
-    io.insert(
-        "a.wav",
-        wav(48_000, SampleFormat::F64, stereo(), &ramp(100, 2, 0.0)),
-    );
+    io.insert("a.wav", wav(48_000, SampleFormat::F64, stereo(), &a));
     io.insert(
         "m.wav",
-        wav(
-            48_000,
-            SampleFormat::F64,
-            ChannelLayout::mono(),
-            &ramp(100, 1, 0.0),
-        ),
+        wav(48_000, SampleFormat::F64, ChannelLayout::mono(), &m),
     );
-    match join(&mut io, &["a.wav", "m.wav"], "am.wav", f64_out()) {
-        Err(e) => {
-            assert_eq!(
-                e.to_string(),
-                "unsupported: the mix filter is not built yet"
-            );
-            eprintln!("mix not built yet: the layout-changing join is refused, as planned");
-        }
-        Ok(_) => {
-            let s = &probe("am.wav", &mut io, &Limits::default())
-                .unwrap()
-                .streams[0];
-            assert_eq!(s.audio.layout(), &stereo());
-            assert_eq!(s.frames, Some(200));
-            eprintln!("mix is built: the layout-changing join works");
-        }
-    }
+    join(&mut io, &["a.wav", "m.wav"], "am.wav", f64_out()).unwrap();
+    let out = f64s(&io.get("am.wav").unwrap());
+    let mut want = a.clone();
+    want.extend(m.iter().flat_map(|&x| [x, x]));
+    assert_eq!(out, want);
+    let s = &probe("am.wav", &mut io, &Limits::default())
+        .unwrap()
+        .streams[0];
+    assert_eq!(s.audio.layout(), &stereo());
 }
 
 #[test]
