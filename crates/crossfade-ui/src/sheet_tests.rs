@@ -1066,3 +1066,22 @@ fn choosing_a_preset_keeps_adjust_and_the_preset_row_says_custom_as_before(
         Some("Fade out 3 s")
     );
 }
+
+#[gpui_test]
+fn a_plan_note_shows_in_the_hint_area_and_does_not_block(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let input = rig
+        .dir
+        .write("six.wav", &fixtures::wav(8_000, 6, SampleFormat::S16, 480));
+    add_paths(cx, &rig, &[&input]);
+    open_sheet(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-notes"));
+    pick_label(cx, &rig, "sheet-channels", "Mono");
+    assert!(has(cx, rig.window, "sheet-notes"));
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.notes()),
+        ["treating 6 unlabelled channels as 5.1"]
+    );
+    assert!(!has(cx, rig.window, "sheet-problems"));
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+}

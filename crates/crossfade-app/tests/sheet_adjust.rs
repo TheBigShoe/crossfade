@@ -403,3 +403,17 @@ fn adjust_opens_and_closes_without_touching_the_values() {
     s.set_adjust_open(false);
     assert_eq!(filters(&s), ["fade out=3s"]);
 }
+
+#[test]
+fn the_plans_notes_are_offered_and_are_never_problems() {
+    let six = entry(8_000, ChannelLayout::unpositioned(6).unwrap(), 200);
+    let mut s = ConvertSheet::for_input(&six);
+    assert!(s.notes().is_empty());
+    s.set_channels(Some(parse_channels("mono").unwrap()));
+    assert_eq!(s.notes(), ["treating 6 unlabelled channels as 5.1"]);
+    assert!(s.build(&nothing_exists).is_ok());
+    // Nothing to say under copy, or once the choice is gone.
+    s.set_channels(None);
+    assert!(s.notes().is_empty());
+    assert!(sheet().notes().is_empty());
+}
