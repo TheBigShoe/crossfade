@@ -18,7 +18,7 @@ mod time;
 pub use audio::{AudioSpec, Channel, ChannelLayout, SampleFormat};
 pub use clock::{Clock, SystemClock};
 pub use codec::CodecId;
-pub use engine::{Decoder, Demuxer, Encoder, Muxer};
+pub use engine::{Decoder, Demuxer, Encoder, Filter, Muxer};
 pub use error::Error;
 pub use io::{JobIo, MediaSink, MediaSource};
 pub use limits::Limits;

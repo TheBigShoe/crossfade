@@ -10,7 +10,6 @@ struct Decimate {
     seen: u64,
     next_pts: Option<i64>,
     ready: Option<Vec<f64>>,
-    draining: bool,
 }
 
 impl Decimate {
@@ -26,7 +25,6 @@ impl Decimate {
             seen: 0,
             next_pts: None,
             ready: None,
-            draining: false,
         }
     }
 }
@@ -46,7 +44,7 @@ impl Filter for Decimate {
         self.next_pts.get_or_insert(frame.pts / 2);
         let mut kept = Vec::new();
         for f in s.chunks(ch) {
-            if self.seen % 2 == 0 {
+            if self.seen.is_multiple_of(2) {
                 kept.extend_from_slice(f);
             }
             self.seen += 1;
@@ -70,9 +68,8 @@ impl Filter for Decimate {
         Ok(true)
     }
 
-    fn drain(&mut self) {
-        self.draining = true;
-    }
+    /// Holds nothing back, so there is nothing to flush.
+    fn drain(&mut self) {}
 }
 
 fn frame(spec: &AudioSpec, pts: i64, samples: Vec<f64>) -> AudioFrame {

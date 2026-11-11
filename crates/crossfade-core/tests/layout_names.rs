@@ -35,12 +35,20 @@ fn every_name_maps_to_its_mask_and_back() {
         );
     }
     assert_eq!(ChannelLayout::NAMES.len(), TABLE.len());
-    assert!(ChannelLayout::NAMES.iter().zip(TABLE).all(|(n, (t, _))| *n == t));
+    assert!(
+        ChannelLayout::NAMES
+            .iter()
+            .zip(TABLE)
+            .all(|(n, (t, _))| *n == t)
+    );
 }
 
 #[test]
 fn mono_and_stereo_are_the_existing_constructors() {
-    assert_eq!(ChannelLayout::from_name("mono"), Some(ChannelLayout::mono()));
+    assert_eq!(
+        ChannelLayout::from_name("mono"),
+        Some(ChannelLayout::mono())
+    );
     assert_eq!(
         ChannelLayout::from_name("stereo"),
         Some(ChannelLayout::stereo())
@@ -49,7 +57,15 @@ fn mono_and_stereo_are_the_existing_constructors() {
 
 #[test]
 fn names_are_exact() {
-    for bad in ["", "Stereo", "5.1(side)", "5.1 ", "6", "7.1-wide", "surround"] {
+    for bad in [
+        "",
+        "Stereo",
+        "5.1(side)",
+        "5.1 ",
+        "6",
+        "7.1-wide",
+        "surround",
+    ] {
         assert_eq!(ChannelLayout::from_name(bad), None, "{bad:?}");
     }
 }
@@ -61,7 +77,9 @@ fn layouts_without_a_name_have_none() {
         ChannelLayout::from_positions(vec![Channel::FrontRight, Channel::FrontLeft]).unwrap();
     assert_eq!(swapped.name(), None);
     assert_eq!(
-        ChannelLayout::from_positions(vec![Channel::FrontLeft]).unwrap().name(),
+        ChannelLayout::from_positions(vec![Channel::FrontLeft])
+            .unwrap()
+            .name(),
         None
     );
 }

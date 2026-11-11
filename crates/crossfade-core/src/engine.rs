@@ -1,4 +1,4 @@
-use crate::{AudioFrame, Error, NO_TAGS, Packet, StreamInfo, Tags};
+use crate::{AudioFrame, AudioSpec, Error, NO_TAGS, Packet, StreamInfo, Tags};
 
 /// Reads packets out of a container.
 pub trait Demuxer {
@@ -69,6 +69,30 @@ pub trait Encoder {
     fn extradata(&self) -> &[u8] {
         &[]
     }
+}
+
+/// Frames in, frames out; same protocol as [`Decoder`]: call `receive_frame` until it returns
+/// `Ok(false)` before the next `send_frame`, and after `drain` until it returns `Ok(false)`.
+///
+/// - Every frame sent matches the spec the filter was built for (rate, layout and sample
+///   format); every frame received matches [`output_spec`](Self::output_spec), which is fixed
+///   at construction. A filter may change rate, layout and length, and may hold frames back
+///   (a look-ahead) until more input or `drain` arrives. It never returns an empty frame.
+/// - Timing: output pts count output frames at the output rate, with no gaps. The first frame
+///   out carries the first input pts rescaled to the output rate (rounded down), and each
+///   later one the previous pts plus its frame count. So a trim's output starts where its
+///   input started, and a resampler's output stays aligned with its input.
+pub trait Filter {
+    fn output_spec(&self) -> &AudioSpec;
+
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error>;
+
+    /// Clears and refills `out`. `Ok(false)`: nothing more until more input (or, after
+    /// `drain`, nothing at all).
+    fn receive_frame(&mut self, out: &mut AudioFrame) -> Result<bool, Error>;
+
+    /// Signals end of input; `receive_frame` then returns what is left and finally `Ok(false)`.
+    fn drain(&mut self);
 }
 
 #[cfg(test)]
