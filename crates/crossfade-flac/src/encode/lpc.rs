@@ -1038,10 +1038,18 @@ mod tests {
                 }
             }
         }
-        // Too wide for exact sums, or not i32 samples: no screening.
+        // Too wide for exact sums: no screening.
         let wide = vec![i32::MIN, i32::MAX, 5, 7];
         assert!(!Covariance::new().compute(&wide, 2, 1 << 31, &mut scratch));
-        assert!(!Covariance::new().compute(&[1i64, 2, 3, 4], 2, 4, &mut scratch));
+        // The 33-bit side channel of a 32-bit stream comes as i64; small enough, it gets the
+        // same exact covariance as the same values in i32.
+        let x32: Vec<i32> = (0..500).map(|t| ((t * 7919) % 2001) - 1000).collect();
+        let x64: Vec<i64> = x32.iter().map(|&v| i64::from(v)).collect();
+        let (mut a, mut b) = (Covariance::new(), Covariance::new());
+        assert!(a.compute(&x32, 8, 1000, &mut scratch));
+        assert!(b.compute(&x64, 8, 1000, &mut scratch));
+        let q = [3000, -1200, 400, 7, -9, 11, 0, 2];
+        assert_eq!(a.scaled_energy(&q, 12), b.scaled_energy(&q, 12));
     }
 
     #[test]
