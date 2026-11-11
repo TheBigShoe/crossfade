@@ -53,7 +53,9 @@ constant and verbatim subframes, wasted bits, fixed predictors, linear predictio
 3, exact Rice partition search, and left/side, side/right and mid/side stereo.
 
 - **Never worse than raw**: a frame is never larger than a verbatim one.
-- **Exact decisions**: sizes are counted, not estimated, wherever two codings compete.
+- **Exact decisions where they count**: the codings that compete for a subframe are compared
+  by their exact sizes; where a level tries more linear predictors than it codes, the ones it
+  codes are chosen by the error energy the block's covariance predicts for each.
 - **Deterministic**: no threads, and floating point only through operations IEEE 754 defines
   exactly, so the same input gives the same bytes on every platform.
 - **Bounded**: one block of working memory, reused; nothing is allocated per block.
@@ -62,10 +64,12 @@ Measured against the reference `flac` 1.5.0 on the same PCM (development only; n
 the tests calls it), output sizes at the same level are within 0.3% on music (usually a
 little smaller, up to 2% smaller on a 5.1 file), and every output passes `flac -t` and
 decodes back to the source. On 60 s of 44.1 kHz 16-bit stereo this encoder takes about
-68 / 125 / 273 ms at levels 0 / 5 / 8 on an Apple M-series laptop, against 120 / 204 / 300 ms
-for the third-party encoder the engine used before. At levels 0 to 5 a good part of the time is
-the MD5 of the audio. `examples/flac_encode.rs` writes a `.flac` from raw PCM or WAV for such
-comparisons; `cargo bench -p crossfade-flac` has the speed baselines.
+40 / 70 / 131 ms at levels 0 / 5 / 8 in-process on an Apple M1 Max, where the reference `flac`
+takes 61 / 98 / 206 ms for the same audio (wall time, file in and out); on 10 s of 96 kHz
+24-bit stereo, 21 / 37 / 63 ms against 32 / 45 / 91 ms. At levels 0 to 5 about a fifth of the
+time is the MD5 of the audio, which no encoder can skip. `examples/flac_encode.rs` writes a
+`.flac` from raw PCM or WAV for such comparisons (`--time N` gives the best of N runs);
+`cargo bench -p crossfade-flac` has the speed baselines.
 
 ## Licence
 
