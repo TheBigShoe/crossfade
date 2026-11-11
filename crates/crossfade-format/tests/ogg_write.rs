@@ -465,3 +465,36 @@ fn a_sink_that_fails_surfaces_the_error_wherever_it_fails() {
     }
     assert!(m.finish().is_err());
 }
+
+fn mask_tags(tags: &Tags) -> Vec<String> {
+    tags.iter()
+        .filter(|t| {
+            t.key
+                .eq_ignore_ascii_case("WAVEFORMATEXTENSIBLE_CHANNEL_MASK")
+        })
+        .map(|t| t.value.clone())
+        .collect()
+}
+
+#[test]
+fn the_speaker_layout_travels_as_the_native_flac_writer_writes_it() {
+    let six = |mask: u32| {
+        let layout = ChannelLayout::from_mask(mask, 6).unwrap();
+        AudioSpec::new(48000, SampleFormat::S16, layout).unwrap()
+    };
+    let samples = tone(6, 5000, 16);
+    // Back surrounds are not FLAC's default 5.1, so the layout needs the tag; a stale one goes.
+    let mut stale = tags();
+    stale.push("waveformatextensible_channel_mask", "0x060F");
+    let w = write(&six(0x3F), &samples, &stale, true, 1);
+    let (stream, read, _) = read_back(&w.file);
+    assert_eq!(mask_tags(&read), ["0x003F"]);
+    assert_eq!(stream.audio.layout().to_mask(), Some(0x3F));
+    // FLAC's default 5.1 (side surrounds) needs none.
+    let mut stale = tags();
+    stale.push("WAVEFORMATEXTENSIBLE_CHANNEL_MASK", "0x003F");
+    let w = write(&six(0x60F), &samples, &stale, true, 1);
+    let (stream, read, _) = read_back(&w.file);
+    assert_eq!(mask_tags(&read), Vec::<String>::new());
+    assert_eq!(stream.audio.layout().to_mask(), Some(0x60F));
+}
