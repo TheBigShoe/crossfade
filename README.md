@@ -19,6 +19,22 @@ Conversions between these are bit-exact. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
 container to another without decoding it.
 
+## Speed
+
+Measured against the reference `flac` 1.5.0 on an Apple M1 Max, whole process
+against whole process, best of 11 runs (milliseconds):
+
+| 60 s of 16-bit 44.1 kHz stereo | `crossfade` | `crossfade --threads 1` | `flac` | `flac -j8` |
+|---|---|---|---|---|
+| Encode, level 0 | 22.5 | 46.0 | 62.0 | 26.2 |
+| Encode, level 5 | 22.5 | 75.6 | 100.7 | 24.4 |
+| Encode, level 8 | 23.9 | 139.3 | 205.0 | 33.3 |
+| Decode (level 5 file) | 21.4 | 45.8 | 70.3 | |
+
+Files are the same size as the reference's or smaller, and the thread count
+never changes a byte. [docs/performance.md](docs/performance.md) has the full
+tables, the method, the caveats and the script that repeats the measurement.
+
 ## Command line
 
 ```sh

@@ -93,6 +93,13 @@ never skips, when a corpus file is missing (the error says to run `just corpus`)
 `CROSSFADE_CORPUS_DIR` points it at a shared cache. Plain `cargo test --workspace`
 never needs the corpus: the conformance tests are `#[ignore]`d.
 
+Speed claims are made whole process against whole process:
+`scripts/compare-with-flac.py` times `crossfade convert` against the reference
+`flac` and prints the tables in `docs/performance.md` (update them when the
+numbers move). In-process timings alone once hid 20 ms of pipeline overhead.
+Check a hot-loop change under `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` too:
+auto-vectorisation must not depend on how the crate is split.
+
 `fuzz/` is its own workspace (libFuzzer is C++) with its own lockfile. Without
 nightly, a target still runs unsanitised on the pinned toolchain:
 `RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none <target>`.
