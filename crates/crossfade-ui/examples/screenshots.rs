@@ -231,6 +231,24 @@ const SCENES: &[Scene] = &[
         },
     },
     Scene {
+        file: "17-quit-confirm-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            stage.enqueue(&["interview-take-1.wav", "take-1-24bit.wav", "s24"]);
+            stage.enqueue(&["interview-take-1.wav", "take-1-float.wav", "f32"]);
+            stage.send(
+                0,
+                RunnerEvent::Progress {
+                    frames_done: 21_000_000,
+                    frames_total: Some(50_000_000),
+                },
+            );
+            stage.quit();
+        },
+    },
+    Scene {
         file: "09-narrow-900x600-dark.png",
         size: NARROW,
         drive: |stage| {
@@ -430,6 +448,20 @@ impl Stage {
         self.cx.run_until_parked();
         self.cx.advance_clock(FRAME);
         self.cx.run_until_parked();
+    }
+
+    /// Ask the app to quit, as Cmd-Q does.
+    fn quit(&mut self) {
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                window.dispatch_action(Box::new(crossfade_ui::actions::Quit), cx);
+            })
+            .expect("the window is open");
+        self.cx.run_until_parked();
+        for _ in 0..3 {
+            self.cx.advance_clock(FRAME);
+            self.cx.run_until_parked();
+        }
     }
 
     /// Queue `[input, output, sample format]` as the CLI would spell it.

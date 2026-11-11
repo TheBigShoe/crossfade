@@ -114,3 +114,12 @@ fn the_identity_names_the_crossfade_config() {
     assert_eq!(IDENTITY.project_dir, ".crossfade");
     assert_eq!(IDENTITY.fallback_dir, "crossfade-config");
 }
+
+#[test]
+fn quitting_asks_first_unless_the_setting_says_not_to() {
+    assert!(Settings::default().confirm_quit);
+    let layer = SettingsLayer::new("settings.json", r#"{ "confirm_quit": false }"#);
+    let loaded = load_layers::<Settings>(DEFAULT_SETTINGS, &[layer]).expect("parses");
+    assert!(!loaded.value.confirm_quit);
+    assert!(DEFAULT_SETTINGS.contains("\"confirm_quit\": true"));
+}

@@ -10,6 +10,7 @@ pub mod files;
 pub mod icons;
 pub mod keymap;
 pub mod queue_view;
+mod quit_confirm;
 pub mod scripted;
 pub mod settings;
 pub mod theme_bridge;

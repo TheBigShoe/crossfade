@@ -30,5 +30,9 @@
     "preset": "same",
     // Replace an output file that already exists instead of asking.
     "overwrite": false
-  }
+  },
+
+  // Ask before quitting (or closing the window) while conversions are running or
+  // waiting. false cancels them and quits without asking.
+  "confirm_quit": true
 }
