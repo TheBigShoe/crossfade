@@ -3,7 +3,7 @@
 //! which keeps it testable without threads.
 
 use crate::command::{Request, command_line};
-use crossfade_graph::CancelToken;
+use crossfade_graph::{CancelToken, Normalization};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JobId(u64);
@@ -32,6 +32,10 @@ pub enum RunnerEvent {
         frames_done: u64,
         frames_total: Option<u64>,
     },
+    /// The normalising job's first pass has begun.
+    Measuring,
+    /// What that pass found; the conversion follows.
+    Normalized(Normalization),
     /// Samples the output's format saturated; sent before `Finished`, only when there were any.
     Clipped {
         samples: u64,
@@ -56,6 +60,10 @@ pub struct QueueItem {
     pub state: JobState,
     /// Samples the finished job saturated; 0 when it did not clip.
     pub clipped: u64,
+    /// The first pass of a normalising job is running.
+    pub measuring: bool,
+    /// What a normalising job's measuring pass found.
+    pub normalization: Option<Normalization>,
     token: Option<CancelToken>,
 }
 
@@ -104,6 +112,8 @@ impl Queue {
             request,
             state: JobState::Pending,
             clipped: 0,
+            measuring: false,
+            normalization: None,
             token: None,
         });
         id
@@ -142,6 +152,15 @@ impl Queue {
         };
         let next = match event {
             RunnerEvent::Started => return,
+            RunnerEvent::Measuring => {
+                item.measuring = true;
+                return;
+            }
+            RunnerEvent::Normalized(found) => {
+                item.measuring = false;
+                item.normalization = Some(found);
+                return;
+            }
             RunnerEvent::Clipped { samples } => {
                 item.clipped = samples;
                 return;
@@ -159,6 +178,7 @@ impl Queue {
             RunnerEvent::Cancelled => JobState::Cancelled,
         };
         if !matches!(next, JobState::Running { .. }) {
+            item.measuring = false;
             item.token = None;
         }
         item.state = next;

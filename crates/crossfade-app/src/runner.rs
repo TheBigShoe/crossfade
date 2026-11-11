@@ -142,6 +142,8 @@ fn work(
                     });
                 }
             }
+            Event::Measuring => send(RunnerEvent::Measuring),
+            Event::Normalized(found) => send(RunnerEvent::Normalized(*found)),
             Event::Clipped { samples } => send(RunnerEvent::Clipped { samples: *samples }),
             // The queue has no place for these yet.
             Event::Measuring | Event::Normalized(_) => {}
