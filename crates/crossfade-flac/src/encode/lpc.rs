@@ -137,6 +137,7 @@ pub(super) fn quantize(coefs: &[f64], precision: u32, out: &mut [i32]) -> Option
 /// predictable and the matrix badly conditioned, where it matters: one more bit of residual per
 /// sample for every halving of the coefficients' accuracy. Steps of one unit, passes over every
 /// coefficient, at most `passes` of them.
+#[allow(clippy::needless_range_loop)]
 pub(super) fn refine(
     coefs: &[f64],
     q: &mut [i32],
@@ -467,6 +468,56 @@ mod tests {
         // Huge coefficients are clamped at shift 0.
         assert_eq!(quantize(&[1e9], 8, &mut q), Some(0));
         assert_eq!(q[0], 127);
+    }
+
+    /// The added error energy of quantised coefficients: d' R d with d the difference.
+    fn added_error(coefs: &[f64], q: &[i32], shift: u32, autoc: &[f64]) -> f64 {
+        let scale = f64::from(1u32 << shift);
+        let d: Vec<f64> = coefs
+            .iter()
+            .zip(q)
+            .map(|(&c, &v)| c - f64::from(v) / scale)
+            .collect();
+        let mut total = 0.0;
+        for i in 0..d.len() {
+            for j in 0..d.len() {
+                total += d[i] * d[j] * autoc[i.abs_diff(j)];
+            }
+        }
+        total
+    }
+
+    #[test]
+    fn refinement_never_adds_error_and_keeps_the_range() {
+        // A narrow-band signal: autocorrelation of a few sines, so the matrix is ill-conditioned.
+        let n = 2048;
+        let x: Vec<f64> = (0..n)
+            .map(|t| {
+                let t = f64::from(t);
+                (t * 0.05).sin() * 3000.0 + (t * 0.13).sin() * 1500.0 + (t * 0.31).sin() * 700.0
+            })
+            .collect();
+        let mut autoc = [0.0; 9];
+        autocorrelation(&x, &mut autoc);
+        autoc[0] *= 1.0 + 1e-12;
+        let (mut c, mut e) = ([[0.0; MAX_ORDER]; MAX_ORDER], [0.0; MAX_ORDER]);
+        let orders = levinson(&autoc, 8, &mut c, &mut e);
+        for order in 2..=orders {
+            for precision in [8u32, 12, 15] {
+                let coefs = &c[order - 1][..order];
+                let mut q = vec![0i32; order];
+                let shift = quantize(coefs, precision, &mut q).unwrap();
+                let before = added_error(coefs, &q, shift, &autoc);
+                refine(coefs, &mut q, shift, precision, &autoc, 8);
+                let after = added_error(coefs, &q, shift, &autoc);
+                assert!(
+                    after <= before * (1.0 + 1e-9),
+                    "order {order} p {precision}: {before} -> {after}"
+                );
+                let lim = 1i32 << (precision - 1);
+                assert!(q.iter().all(|&v| v >= -lim && v < lim));
+            }
+        }
     }
 
     #[test]
