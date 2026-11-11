@@ -20,9 +20,32 @@ pub(crate) fn dot<S: Sample>(a: &[S], b: &[S]) -> S {
             *s = *s + p * q;
         }
     }
-    let a = acc;
+    tree(acc)
+}
+
+/// The fixed order lanes are combined in; it matches how two-lane vectors fold.
+#[inline(always)]
+fn tree<S: Sample>(a: [S; LANES]) -> S {
     (((a[0] + a[8]) + (a[4] + a[12])) + ((a[2] + a[10]) + (a[6] + a[14])))
         + (((a[1] + a[9]) + (a[5] + a[13])) + ((a[3] + a[11]) + (a[7] + a[15])))
+}
+
+/// [`dot`] of `a` with two sequences at once, sharing the loads of `a`; each result is the
+/// same bits [`dot`] gives.
+#[inline(never)]
+pub(crate) fn dot2<S: Sample>(a: &[S], b: &[S], c: &[S]) -> (S, S) {
+    let (a, _) = a.as_chunks::<LANES>();
+    let (b, _) = b.as_chunks::<LANES>();
+    let (c, _) = c.as_chunks::<LANES>();
+    let mut x = [S::ZERO; LANES];
+    let mut y = [S::ZERO; LANES];
+    for ((p, q), r) in a.iter().zip(b).zip(c) {
+        for ((((s, t), &p), &q), &r) in x.iter_mut().zip(y.iter_mut()).zip(p).zip(q).zip(r) {
+            *s = *s + p * q;
+            *t = *t + p * r;
+        }
+    }
+    (tree(x), tree(y))
 }
 
 /// `acc[k] += x * coefs[k]`: one input sample spread over the outputs it reaches.

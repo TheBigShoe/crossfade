@@ -136,8 +136,16 @@ impl<S: Sample> Gather<S> {
             for _ in 0..count {
                 let row = self.table.coefs(self.phase, self.up);
                 let from = (self.at as i64 - half + 1 - self.start) as usize;
-                for (ch, h) in self.hist.iter().enumerate() {
-                    output.push(ch, kernel::dot(row, &h[from..from + self.taps]));
+                let taps = self.taps;
+                for (pair, h) in self.hist.chunks(2).enumerate() {
+                    if let [l, r] = h {
+                        let (y0, y1) =
+                            kernel::dot2(row, &l[from..from + taps], &r[from..from + taps]);
+                        output.push(2 * pair, y0);
+                        output.push(2 * pair + 1, y1);
+                    } else {
+                        output.push(2 * pair, kernel::dot(row, &h[0][from..from + taps]));
+                    }
                 }
                 self.phase += self.down;
                 self.at += self.phase / self.up;
