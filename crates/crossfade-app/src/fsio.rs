@@ -247,6 +247,56 @@ mod tests {
     }
 
     #[test]
+    fn a_large_file_reads_back_whole_and_seeks_back_after_its_end() {
+        let d = Dir::new("large");
+        let bytes: Vec<u8> = (0..3_000_017u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(d.path("in.bin"), &bytes).unwrap();
+        let mut src = FsIo::new().open_source(&d.path("in.bin")).unwrap();
+        let mut got = Vec::new();
+        let mut buf = vec![0u8; 16_384];
+        loop {
+            let n = src.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&buf[..n]);
+        }
+        assert!(got == bytes);
+        assert_eq!(src.read(&mut buf).unwrap(), 0);
+        assert!(src.seek(SeekFrom::Current(-3_000_018)).is_err());
+        assert_eq!(src.seek(SeekFrom::End(-5)).unwrap(), 3_000_012);
+        assert_eq!(src.read(&mut buf).unwrap(), 5);
+        assert_eq!(buf[..5], bytes[3_000_012..]);
+        assert_eq!(src.seek(SeekFrom::Start(1_000_000)).unwrap(), 1_000_000);
+        src.read(&mut buf[..4]).unwrap();
+        assert_eq!(buf[..4], bytes[1_000_000..1_000_004]);
+    }
+
+    #[test]
+    fn a_large_output_is_written_in_order_around_a_patch() {
+        let d = Dir::new("bigout");
+        let mut io = FsIo::new();
+        let target = d.path("out.bin");
+        let mut sink = io.create_sink(&target).unwrap();
+        let mut want = Vec::new();
+        for i in 0..700u32 {
+            let piece: Vec<u8> = (0..(i % 13) * 997).map(|j| (i + j) as u8).collect();
+            sink.write_all(&piece).unwrap();
+            want.extend_from_slice(&piece);
+        }
+        sink.seek(SeekFrom::Start(2)).unwrap();
+        sink.write_all(b"PATCH").unwrap();
+        want[2..7].copy_from_slice(b"PATCH");
+        sink.seek(SeekFrom::End(0)).unwrap();
+        sink.write_all(b"tail").unwrap();
+        want.extend_from_slice(b"tail");
+        sink.finish().unwrap();
+        drop(sink);
+        io.commit(&target).unwrap();
+        assert!(std::fs::read(&target).unwrap() == want);
+    }
+
+    #[test]
     fn missing_input_error_names_the_path() {
         let d = Dir::new("missing");
         let Err(Error::Io { kind, message }) = FsIo::new().open_source(&d.path("nope.wav")) else {
