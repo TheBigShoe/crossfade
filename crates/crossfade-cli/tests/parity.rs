@@ -2,7 +2,9 @@
 //! intent through both front doors, same `Request`.
 
 use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
-use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice};
+use crossfade_app::sheet::{
+    AdjustField, Container, ConvertSheet, FormatChoice, LevelMode, Problem,
+};
 use crossfade_cli::request_from_args;
 use crossfade_core::{Limits, SampleFormat};
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
@@ -369,8 +371,8 @@ fn flac_aiff_and_copy_intents_build_what_the_cli_builds() {
 }
 
 /// Processing typed with shortcuts or filters renders back (every filter as `--filter`, in
-/// the job's order) to a command line that parses to the same request; the sheet's controls
-/// for these come later and will be held to the same table.
+/// the job's order) to a command line that parses to the same request. The sheet's controls
+/// are held to the shortcut flags in `processing_controls_build_what_the_shortcut_flags_build`.
 #[test]
 fn processing_intents_render_back_to_the_same_request() {
     let table: &[&[&str]] = &[
@@ -444,4 +446,200 @@ fn processing_intents_render_back_to_the_same_request() {
             "{typed:?} -> {rendered:?}"
         );
     }
+}
+
+enum Adj {
+    Rate(u32),
+    Channels(&'static str),
+    Level(LevelMode, &'static str),
+    Text(AdjustField, &'static str),
+    Format(&'static str),
+    Container(Container),
+    Open,
+}
+
+struct Processing {
+    steps: &'static [Adj],
+    cli: &'static [&'static str],
+}
+
+const PROCESSING: &[Processing] = &[
+    Processing {
+        steps: &[Adj::Rate(44_100)],
+        cli: &["--sample-rate", "44.1kHz"],
+    },
+    Processing {
+        steps: &[Adj::Rate(96_000)],
+        cli: &["--sample-rate", "96kHz"],
+    },
+    Processing {
+        steps: &[Adj::Channels("mono")],
+        cli: &["--channels", "mono"],
+    },
+    Processing {
+        steps: &[Adj::Level(LevelMode::Gain, "-3 dB")],
+        cli: &["--gain", "-3dB"],
+    },
+    Processing {
+        steps: &[Adj::Level(LevelMode::Gain, "3")],
+        cli: &["--gain", "3dB"],
+    },
+    Processing {
+        steps: &[Adj::Level(LevelMode::Normalize, "-16")],
+        cli: &["--normalize", "-16LUFS"],
+    },
+    Processing {
+        steps: &[Adj::Level(LevelMode::Normalize, "-16 LUFS")],
+        cli: &["--normalize", "-16LUFS", "--true-peak", "-1dBTP"],
+    },
+    Processing {
+        steps: &[Adj::Text(AdjustField::Start, "1:30")],
+        cli: &["--start", "1:30"],
+    },
+    Processing {
+        steps: &[Adj::Text(AdjustField::End, "2:00")],
+        cli: &["--end", "2:00"],
+    },
+    Processing {
+        steps: &[
+            Adj::Text(AdjustField::Start, "90"),
+            Adj::Text(AdjustField::End, "120000ms"),
+        ],
+        cli: &["--start", "90s", "--end", "120000ms"],
+    },
+    Processing {
+        steps: &[Adj::Text(AdjustField::FadeIn, "500ms")],
+        cli: &["--fade-in", "500ms"],
+    },
+    Processing {
+        steps: &[Adj::Text(AdjustField::FadeOut, "3")],
+        cli: &["--fade-out", "3s"],
+    },
+    Processing {
+        steps: &[
+            Adj::Text(AdjustField::FadeOut, "3"),
+            Adj::Text(AdjustField::FadeIn, "1.5"),
+        ],
+        cli: &["--fade-in", "1.5s", "--fade-out", "3s"],
+    },
+    Processing {
+        steps: &[
+            Adj::Open,
+            Adj::Rate(48_000),
+            Adj::Channels("mono"),
+            Adj::Level(LevelMode::Normalize, "-16"),
+            Adj::Text(AdjustField::FadeOut, "3"),
+            Adj::Text(AdjustField::End, "1:30"),
+            Adj::Text(AdjustField::Start, "0:10"),
+            Adj::Text(AdjustField::FadeIn, "1"),
+        ],
+        cli: &[
+            "--sample-rate",
+            "48kHz",
+            "--channels",
+            "mono",
+            "--start",
+            "0:10",
+            "--end",
+            "1:30",
+            "--fade-in",
+            "1s",
+            "--fade-out",
+            "3s",
+            "--normalize",
+            "-16LUFS",
+        ],
+    },
+    Processing {
+        steps: &[
+            Adj::Level(LevelMode::Gain, "-1.5"),
+            Adj::Text(AdjustField::Start, "5"),
+            Adj::Text(AdjustField::FadeOut, "2"),
+        ],
+        cli: &["--start", "5s", "--fade-out", "2s", "--gain", "-1.5dB"],
+    },
+    Processing {
+        steps: &[
+            Adj::Container(Container::Flac),
+            Adj::Format("s16"),
+            Adj::Channels("mono"),
+            Adj::Text(AdjustField::FadeOut, "3"),
+        ],
+        cli: &[
+            "--sample-format",
+            "s16",
+            "--channels",
+            "mono",
+            "--fade-out",
+            "3s",
+        ],
+    },
+];
+
+/// Each new control alone and several together build the request the matching flags build.
+/// `draft` is compared, so a filter the engine has not built yet cannot fail the test; when
+/// `build` does refuse, it is the engine's word, not a problem of the sheet's own.
+#[test]
+fn processing_controls_build_what_the_shortcut_flags_build() {
+    for case in PROCESSING {
+        let mut sheet = sheet_for("in.wav");
+        let mut container = Container::Wav;
+        for step in case.steps {
+            match step {
+                Adj::Rate(r) => sheet.set_sample_rate(Some(*r)),
+                Adj::Channels(name) => {
+                    sheet.set_channels(Some(crossfade_graph::filter::parse_channels(name).unwrap()))
+                }
+                Adj::Level(mode, text) => {
+                    sheet.set_level_mode(*mode);
+                    sheet.set_adjust_text(AdjustField::Level, (*text).into());
+                }
+                Adj::Text(field, text) => sheet.set_adjust_text(*field, (*text).into()),
+                Adj::Format(f) => sheet.set_format(format(f)),
+                Adj::Container(c) => {
+                    container = *c;
+                    sheet.set_container(*c);
+                }
+                Adj::Open => sheet.set_adjust_open(true),
+            }
+        }
+        let mut args = vec!["convert".to_owned(), "in.wav".into()];
+        let output = sheet.output().to_owned();
+        args.extend(["-o".to_owned(), output]);
+        args.extend(case.cli.iter().map(|a| (*a).to_owned()));
+        let typed = request_from_args(&args).unwrap().unwrap();
+        assert_eq!(
+            sheet.draft(),
+            typed,
+            "{:?} {:?}",
+            container.label(),
+            case.cli
+        );
+        match sheet.build(&|_| false) {
+            Ok(built) => assert_eq!(built, typed, "{:?}", case.cli),
+            Err(problems) => assert!(
+                problems
+                    .iter()
+                    .all(|p| matches!(p, Problem::Source(text) if text.contains("not built"))),
+                "{:?}: {problems:?}",
+                case.cli
+            ),
+        }
+        // And it renders back to a command that parses to the same request.
+        let rendered = crossfade_app::command_args(&typed).unwrap();
+        assert_eq!(request_from_args(&rendered).unwrap(), Some(typed));
+    }
+}
+
+/// Typing a sheet value the engine refuses is what the flag refuses.
+#[test]
+fn what_the_sheet_refuses_the_command_line_refuses_too() {
+    let mut sheet = sheet_for("in.wav");
+    sheet.set_adjust_text(AdjustField::Start, "30".into());
+    sheet.set_adjust_text(AdjustField::End, "10".into());
+    assert!(sheet.build(&|_| false).is_err());
+    let args = [
+        "convert", "in.wav", "-o", "out.wav", "--start", "30s", "--end", "10s",
+    ];
+    assert!(request_from_args(args).is_err());
 }
