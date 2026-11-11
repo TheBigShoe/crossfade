@@ -55,6 +55,10 @@ enum Command {
         /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
         compression_level: Option<u8>,
+        /// Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything
+        /// on one thread. The output is the same either way.
+        #[arg(long, default_value = "auto", value_parser = parse_threads)]
+        threads: usize,
         /// Replace an existing output file.
         #[arg(long)]
         force: bool,
@@ -62,6 +66,20 @@ enum Command {
         #[arg(long)]
         emit_job: bool,
     },
+}
+
+/// Most threads `--threads` takes; the encoder uses no more than this anyway.
+const MAX_THREADS: usize = 64;
+
+/// `auto` is 0, the engine's "the machine's parallelism".
+fn parse_threads(s: &str) -> Result<usize, String> {
+    if s == "auto" {
+        return Ok(0);
+    }
+    match s.parse::<usize>() {
+        Ok(n) if (1..=MAX_THREADS).contains(&n) => Ok(n),
+        _ => Err(format!("expected auto or 1 to {MAX_THREADS}")),
+    }
 }
 
 struct Choices<'a> {
@@ -162,6 +180,7 @@ fn execute(
             sample_format,
             codec,
             compression_level,
+            threads,
             force,
             emit_job,
         } => {
@@ -179,7 +198,12 @@ fn execute(
                     "{output} already exists (use --force to replace it)"
                 ));
             }
-            match run(&job, io, &Limits::default(), cancel, on_event) {
+            // How many threads is the run's business, not the job's.
+            let limits = Limits {
+                max_threads: threads,
+                ..Limits::default()
+            };
+            match run(&job, io, &limits, cancel, on_event) {
                 Ok(()) => Outcome::Done(String::new()),
                 Err(Error::Cancelled) => Outcome::Cancelled,
                 Err(e) => Outcome::Failed(e.to_string()),
