@@ -377,6 +377,24 @@ fn a_24_bit_sample_out_of_range_is_malformed() {
 }
 
 #[test]
+fn the_24_bit_range_is_checked_at_both_ends_and_named() {
+    let spec = spec(44100, SampleFormat::S24, 1);
+    let mut f = AudioFrame::new(&spec);
+    for (bad, ok) in [(-(1 << 23) - 1, -(1 << 23)), ((1 << 23), (1 << 23) - 1)] {
+        let mut e = encoder(&spec, &opts(Some(0))).unwrap();
+        f.samples = Samples::S24(vec![ok; 100]);
+        e.send_frame(&f).unwrap();
+        let mut v = vec![0; 100];
+        v[37] = bad;
+        f.samples = Samples::S24(v);
+        let Err(Error::Malformed { what }) = e.send_frame(&f) else {
+            panic!("{bad} was accepted");
+        };
+        assert_eq!(what, "24-bit sample outside -2^23..2^23-1");
+    }
+}
+
+#[test]
 fn a_partial_sample_frame_is_malformed_and_sending_after_drain_is_refused() {
     let spec = spec(44100, SampleFormat::S16, 2);
     let mut e = encoder(&spec, &opts(None)).unwrap();

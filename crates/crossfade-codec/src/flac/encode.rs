@@ -192,7 +192,11 @@ impl Encoder for FlacEncoder {
                 self.write(&raw)
             }
             Samples::S24(v) => {
-                if v.iter().any(|x| !(-(1 << 23)..1 << 23).contains(x)) {
+                // A min/max fold vectorises; an early-exit `any` does not.
+                let (min, max) = v
+                    .iter()
+                    .fold((i32::MAX, i32::MIN), |(a, b), &s| (a.min(s), b.max(s)));
+                if min < -(1 << 23) || max >= 1 << 23 {
                     Err(Error::Malformed {
                         what: "24-bit sample outside -2^23..2^23-1".into(),
                     })
