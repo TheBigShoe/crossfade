@@ -3,9 +3,11 @@
 use crossfade_core::{Error, JobIo, MediaSink, MediaSource};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::thread::JoinHandle;
 
 /// Tells apart two temp files of one process (the pid alone cannot).
 static TEMP_SERIAL: AtomicU64 = AtomicU64::new(0);
@@ -47,40 +49,226 @@ impl FsIo {
     }
 }
 
-/// Readers ask for a packet at a time (16 KiB for CD audio); one system call
-/// per request costs more than the copy out of a larger buffer.
-const READ_BUFFER: usize = 256 * 1024;
-/// Writes go out in large blocks for the same reason.
-const WRITE_BUFFER: usize = 1024 * 1024;
+/// Bytes per hand-over between the calling thread and an I/O thread: large
+/// enough that system calls are rare, small enough that the first one starts
+/// soon.
+const CHUNK: usize = 256 * 1024;
+/// Chunks in flight per direction.
+const DEPTH: usize = 2;
 
-/// A buffered file whose kind is looked up once, not on every question.
+fn spawn<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> io::Result<JoinHandle<T>> {
+    std::thread::Builder::new()
+        .name("crossfade-io".into())
+        .spawn(work)
+}
+
+fn worker_lost() -> io::Error {
+    io::Error::other("file I/O thread stopped unexpectedly")
+}
+
+/// Reads the file on its own thread, a few chunks ahead, so the kernel's copy
+/// overlaps the conversion. A seek stops the thread and starts afresh.
 struct FileSource {
-    file: BufReader<File>,
+    state: ReadState,
+    chunk: Vec<u8>,
+    at: usize,
+    /// Where the caller is, which the file's own offset has run ahead of.
+    pos: u64,
+    /// Looked up once; devices and pipes report no length and cannot seek.
     byte_len: Option<u64>,
+    /// The thread saw the end of the file and has stopped.
+    at_end: bool,
+}
+
+enum ReadState {
+    Idle(File),
+    Running {
+        chunks: Receiver<io::Result<Vec<u8>>>,
+        spare: SyncSender<Vec<u8>>,
+        thread: JoinHandle<File>,
+    },
+    /// The thread was lost; nothing more can be read.
+    Broken,
+}
+
+fn read_ahead(
+    mut file: File,
+    chunks: SyncSender<io::Result<Vec<u8>>>,
+    spare: Receiver<Vec<u8>>,
+) -> File {
+    loop {
+        let mut buf = spare.try_recv().unwrap_or_default();
+        buf.resize(CHUNK, 0);
+        let mut n = 0;
+        let result = loop {
+            match Read::read(&mut file, &mut buf[n..]) {
+                Ok(0) => break Ok(()),
+                Ok(k) => {
+                    n += k;
+                    if n == buf.len() {
+                        break Ok(());
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => break Err(e),
+            }
+        };
+        buf.truncate(n);
+        let last = n == 0 || result.is_err();
+        // A short chunk before an error is still data the caller should see.
+        if n > 0 && chunks.send(Ok(buf)).is_err() {
+            return file;
+        }
+        let message = match result {
+            Err(e) => Err(e),
+            Ok(()) if n == 0 => Ok(Vec::new()),
+            Ok(()) => continue,
+        };
+        let _ = chunks.send(message);
+        if last {
+            return file;
+        }
+    }
 }
 
 impl FileSource {
     fn new(file: File) -> Self {
-        // Devices and pipes opened as `File` report no length and cannot seek.
         let byte_len = file
             .metadata()
             .ok()
             .filter(std::fs::Metadata::is_file)
             .map(|m| m.len());
         Self {
-            file: BufReader::with_capacity(READ_BUFFER, file),
+            state: ReadState::Idle(file),
+            chunk: Vec::new(),
+            at: 0,
+            pos: 0,
             byte_len,
+            at_end: false,
+        }
+    }
+
+    /// Stops the thread and hands back the file; buffered bytes are dropped.
+    fn stop(&mut self) -> io::Result<File> {
+        self.chunk.clear();
+        self.at = 0;
+        match std::mem::replace(&mut self.state, ReadState::Broken) {
+            ReadState::Idle(file) => Ok(file),
+            ReadState::Running {
+                chunks,
+                spare,
+                thread,
+            } => {
+                drop((chunks, spare));
+                thread.join().map_err(|_| worker_lost())
+            }
+            ReadState::Broken => Err(worker_lost()),
+        }
+    }
+
+    fn next_chunk(&mut self) -> io::Result<()> {
+        if let ReadState::Idle(file) = &mut self.state {
+            if self.at_end {
+                // Past the end a thread would only find the end again; read
+                // here, in case a pipe or a growing file has more.
+                self.chunk.resize(CHUNK, 0);
+                let n = loop {
+                    match Read::read(file, &mut self.chunk) {
+                        Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                        other => break other,
+                    }
+                };
+                self.chunk.truncate(*n.as_ref().unwrap_or(&0));
+                self.at = 0;
+                return n.map(|_| ());
+            }
+            let ReadState::Idle(file) = std::mem::replace(&mut self.state, ReadState::Broken)
+            else {
+                unreachable!()
+            };
+            let (tx, chunks) = sync_channel(DEPTH);
+            let (spare, spare_rx) = sync_channel(DEPTH + 2);
+            let thread = spawn(move || read_ahead(file, tx, spare_rx))?;
+            self.state = ReadState::Running {
+                chunks,
+                spare,
+                thread,
+            };
+        }
+        let ReadState::Running { chunks, spare, .. } = &self.state else {
+            return Err(worker_lost());
+        };
+        match chunks.recv() {
+            Ok(Ok(next)) if next.is_empty() => {
+                // The thread has ended at the end of the file.
+                let file = self.stop()?;
+                self.state = ReadState::Idle(file);
+                self.at_end = true;
+                Ok(())
+            }
+            Ok(Ok(next)) => {
+                let old = std::mem::replace(&mut self.chunk, next);
+                let _ = spare.try_send(old);
+                self.at = 0;
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                // The thread has ended; take the file back so a seek can retry.
+                let file = self.stop()?;
+                self.state = ReadState::Idle(file);
+                Err(e)
+            }
+            Err(_) => {
+                let _ = self.stop();
+                Err(worker_lost())
+            }
         }
     }
 }
 
 impl MediaSource for FileSource {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.file.read(buf)
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.at == self.chunk.len() {
+            self.next_chunk()?;
+        }
+        let n = buf.len().min(self.chunk.len() - self.at);
+        buf[..n].copy_from_slice(&self.chunk[self.at..self.at + n]);
+        self.at += n;
+        self.pos += n as u64;
+        Ok(n)
     }
 
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.file.seek(pos)
+        if !self.is_seekable() {
+            return Err(io::Error::new(
+                ErrorKind::Unsupported,
+                "source is not seekable",
+            ));
+        }
+        let target = match pos {
+            SeekFrom::Current(d) => SeekFrom::Start(
+                self.pos
+                    .checked_add_signed(d)
+                    .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "seek before start"))?,
+            ),
+            other => other,
+        };
+        let mut file = self.stop()?;
+        self.at_end = false;
+        let result = Seek::seek(&mut file, target);
+        if let Ok(at) = result {
+            self.pos = at;
+        } else {
+            // Back where the caller was, as a failed seek on a file leaves it.
+            Seek::seek(&mut file, SeekFrom::Start(self.pos))?;
+        }
+        self.state = ReadState::Idle(file);
+        result
     }
 
     fn byte_len(&self) -> Option<u64> {
@@ -92,15 +280,126 @@ impl MediaSource for FileSource {
     }
 }
 
-struct FileSink(BufWriter<File>);
+impl Drop for FileSource {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
+/// Writes on its own thread so the kernel's copy overlaps the conversion. The
+/// first error ends the thread and comes back from the next call.
+struct FileSink {
+    buf: Vec<u8>,
+    state: WriteState,
+}
+
+enum WriteState {
+    Idle(File),
+    Running {
+        chunks: SyncSender<Vec<u8>>,
+        spare: Receiver<Vec<u8>>,
+        thread: JoinHandle<(File, io::Result<()>)>,
+    },
+    Failed,
+}
+
+fn write_behind(
+    mut file: File,
+    chunks: Receiver<Vec<u8>>,
+    spare: SyncSender<Vec<u8>>,
+) -> (File, io::Result<()>) {
+    for mut buf in chunks {
+        if let Err(e) = Write::write_all(&mut file, &buf) {
+            return (file, Err(e));
+        }
+        buf.clear();
+        let _ = spare.try_send(buf);
+    }
+    (file, Ok(()))
+}
+
+impl FileSink {
+    fn new(file: File) -> Self {
+        Self {
+            buf: Vec::with_capacity(CHUNK),
+            state: WriteState::Idle(file),
+        }
+    }
+
+    fn send(&mut self) -> io::Result<()> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        if let WriteState::Idle(_) = self.state {
+            let WriteState::Idle(file) = std::mem::replace(&mut self.state, WriteState::Failed)
+            else {
+                unreachable!()
+            };
+            let (chunks, rx) = sync_channel(DEPTH);
+            let (spare_tx, spare) = sync_channel(DEPTH + 2);
+            let thread = spawn(move || write_behind(file, rx, spare_tx))?;
+            self.state = WriteState::Running {
+                chunks,
+                spare,
+                thread,
+            };
+        }
+        let WriteState::Running { chunks, spare, .. } = &self.state else {
+            return Err(worker_lost());
+        };
+        let next = spare
+            .try_recv()
+            .unwrap_or_else(|_| Vec::with_capacity(CHUNK));
+        let full = std::mem::replace(&mut self.buf, next);
+        if chunks.send(full).is_err() {
+            // The thread stopped on an error; `stop` returns it.
+            self.stop()?;
+            return Err(worker_lost());
+        }
+        Ok(())
+    }
+
+    /// Waits for everything sent so far to be written and takes the file back.
+    fn stop(&mut self) -> io::Result<File> {
+        match std::mem::replace(&mut self.state, WriteState::Failed) {
+            WriteState::Idle(file) => Ok(file),
+            WriteState::Running {
+                chunks,
+                spare,
+                thread,
+            } => {
+                drop((chunks, spare));
+                let (file, result) = thread.join().map_err(|_| worker_lost())?;
+                result.map(|()| file)
+            }
+            WriteState::Failed => Err(io::Error::other("an earlier write to this file failed")),
+        }
+    }
+
+    fn settle(&mut self) -> io::Result<File> {
+        self.send()?;
+        self.stop()
+    }
+}
 
 impl MediaSink for FileSink {
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.0.write_all(buf)
+    fn write_all(&mut self, mut data: &[u8]) -> io::Result<()> {
+        while !data.is_empty() {
+            let n = data.len().min(CHUNK - self.buf.len());
+            self.buf.extend_from_slice(&data[..n]);
+            data = &data[n..];
+            if self.buf.len() == CHUNK {
+                self.send()?;
+            }
+        }
+        Ok(())
     }
 
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        self.0.seek(pos)
+        let mut file = self.settle()?;
+        let at = Seek::seek(&mut file, pos);
+        self.state = WriteState::Idle(file);
+        at
     }
 
     // No `sync_all`: on macOS it is `F_FULLFSYNC`, a drive-cache flush that
@@ -108,7 +407,16 @@ impl MediaSink for FileSink {
     // and `flac`, the output is left to the page cache; the rename still
     // keeps a half-written file from ever appearing under the target name.
     fn finish(&mut self) -> io::Result<()> {
-        self.0.flush()
+        let file = self.settle()?;
+        self.state = WriteState::Idle(file);
+        Ok(())
+    }
+}
+
+impl Drop for FileSink {
+    fn drop(&mut self) {
+        // As a plain file would, bytes written before a drop reach the file.
+        let _ = self.settle();
     }
 }
 
@@ -133,7 +441,7 @@ impl JobIo for FsIo {
             }
         };
         self.temps.insert(path.to_owned(), temp);
-        Ok(Box::new(FileSink(BufWriter::with_capacity(WRITE_BUFFER, file))))
+        Ok(Box::new(FileSink::new(file)))
     }
 
     fn commit(&mut self, path: &str) -> Result<(), Error> {
