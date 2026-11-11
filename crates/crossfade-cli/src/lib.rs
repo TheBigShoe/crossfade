@@ -130,7 +130,7 @@ struct OutputArgs {
     /// Fade in from silence over this long.
     #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
     fade_in: Option<f64>,
-    /// Fade out to silence over this long, ending at the end.
+    /// Fade out to silence over this long, ending at the end (at most 10 minutes).
     #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
     fade_out: Option<f64>,
     /// Bring the integrated loudness to this target, such as -16LUFS (measures the whole
