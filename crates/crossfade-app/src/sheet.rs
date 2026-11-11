@@ -21,16 +21,24 @@ pub enum Container {
     Wav,
     Flac,
     Aiff,
+    /// FLAC in an Ogg stream, `.oga`.
+    OggFlac,
 }
 
 impl Container {
-    pub const ALL: [Container; 3] = [Container::Wav, Container::Flac, Container::Aiff];
+    pub const ALL: [Container; 4] = [
+        Container::Wav,
+        Container::Flac,
+        Container::Aiff,
+        Container::OggFlac,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Wav => "WAV",
             Self::Flac => "FLAC",
             Self::Aiff => "AIFF",
+            Self::OggFlac => "Ogg FLAC",
         }
     }
 
@@ -40,7 +48,13 @@ impl Container {
             Self::Wav => "wav",
             Self::Flac => "flac",
             Self::Aiff => "aiff",
+            Self::OggFlac => "oga",
         }
+    }
+
+    /// FLAC's compression level applies to both containers that hold FLAC.
+    fn has_level(self) -> bool {
+        matches!(self, Self::Flac | Self::OggFlac)
     }
 
     /// The container an extension names, if the engine can write it.
@@ -52,6 +66,7 @@ impl Container {
         match ext.as_str() {
             "wav" => Some(Self::Wav),
             "flac" => Some(Self::Flac),
+            "oga" | "ogg" => Some(Self::OggFlac),
             _ => Some(Self::Aiff),
         }
     }
@@ -130,10 +145,8 @@ pub enum Problem {
     NoOutput,
     OutputIsInput,
     OutputExists,
-    /// The path's extension is not one we can save; `ogg` adds the reason for Ogg.
-    Extension {
-        ogg: bool,
-    },
+    /// The path's extension is not one we can save.
+    Extension,
     /// The engine would refuse this source with these choices, in plain words.
     Source(String),
 }
@@ -146,11 +159,7 @@ impl Problem {
             Self::OutputExists => {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
-            Self::Extension { ogg: false } => "Crossfade can save .wav, .flac and .aiff files.".into(),
-            Self::Extension { ogg: true } => {
-                "Crossfade can save .wav, .flac and .aiff files. Ogg files can be opened but not saved yet."
-                    .into()
-            }
+            Self::Extension => "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files.".into(),
             Self::Source(text) => text.clone(),
         }
     }
@@ -298,7 +307,7 @@ impl ConvertSheet {
         };
         let bits = f.bits();
         Some(match self.container {
-            Container::Flac => {
+            Container::Flac | Container::OggFlac => {
                 format!("FLAC stores whole-number samples, so this will be saved as {bits}-bit.")
             }
             _ => format!(
@@ -319,7 +328,7 @@ impl ConvertSheet {
     /// Switch container and drop what only the old one meant.
     fn adopt(&mut self, container: Container) {
         self.container = container;
-        if container != Container::Flac {
+        if !container.has_level() {
             self.level = None;
         }
         if !self.copy_available() {
@@ -348,7 +357,7 @@ impl ConvertSheet {
             self.requested = preset.format;
             self.copy = false;
             self.adopt(preset.container);
-            self.level = preset.level.filter(|_| preset.container == Container::Flac);
+            self.level = preset.level.filter(|_| preset.container.has_level());
             self.refresh_output();
         }
     }
@@ -364,7 +373,7 @@ impl ConvertSheet {
     }
 
     pub fn level_visible(&self) -> bool {
-        self.container == Container::Flac
+        self.container.has_level()
     }
 
     pub fn level_enabled(&self) -> bool {
@@ -439,7 +448,7 @@ impl ConvertSheet {
         if self.copy() {
             Self::copy_settings()
         } else {
-            let level = self.level.filter(|_| self.container == Container::Flac);
+            let level = self.level.filter(|_| self.container.has_level());
             Self::format_settings(self.format(), level)
         }
     }
@@ -476,9 +485,7 @@ impl ConvertSheet {
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
         if Container::from_extension(&ext).is_none() {
-            problems.push(Problem::Extension {
-                ogg: matches!(ext.as_str(), "ogg" | "oga"),
-            });
+            problems.push(Problem::Extension);
         } else {
             problems.extend(self.engine_problem());
         }

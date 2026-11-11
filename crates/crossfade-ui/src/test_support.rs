@@ -275,7 +275,7 @@ pub(crate) const PRESET_LABELS: [&str; 8] = [
     "FLAC 24-bit",
     "AIFF",
 ];
-pub(crate) const CONTAINER_LABELS: [&str; 3] = ["WAV", "FLAC", "AIFF"];
+pub(crate) const CONTAINER_LABELS: [&str; 4] = ["WAV", "FLAC", "AIFF", "Ogg FLAC"];
 pub(crate) const LEVEL_LABELS: [&str; 10] = [
     "Default",
     "0 \u{b7} Fastest",

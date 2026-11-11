@@ -275,6 +275,32 @@ const ROWS: &[Row] = &[
         steps: &[Do::Container(Container::Aiff), Do::Format("s24")],
         cli: &["-o", "in-s24.aiff", "--sample-format", "s24"],
     },
+    // Ogg FLAC output.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::OggFlac)],
+        cli: &["-o", "in.oga"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::OggFlac), Do::Level(Some(8))],
+        cli: &["-o", "in.oga", "--compression-level", "8"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::OggFlac), Do::Format("s24")],
+        cli: &["-o", "in-s24.oga", "--sample-format", "s24"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.ogg"), Do::Level(Some(3))],
+        cli: &["-o", "typed.ogg", "--compression-level", "3"],
+    },
+    Row {
+        input: "in.flac",
+        steps: &[Do::Container(Container::OggFlac), Do::Copy],
+        cli: &["-o", "in.oga", "--codec", "copy"],
+    },
     // Stream copy.
     Row {
         input: "in.flac",

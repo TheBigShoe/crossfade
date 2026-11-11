@@ -85,12 +85,7 @@ fn convert_to_an_unknown_container_names_the_extension() {
     let err = text(&out.stderr);
     assert!(err.starts_with("crossfade: "), "{err}");
     assert!(err.contains("mp3"), "{err}");
-    for listed in [
-        ".wav",
-        ".flac",
-        ".aiff/.aif/.aifc",
-        ".ogg can be read but not written yet",
-    ] {
+    for listed in [".wav", ".flac", ".aiff/.aif/.aifc", ".oga/.ogg"] {
         assert!(err.contains(listed), "{listed} missing from {err}");
     }
 }

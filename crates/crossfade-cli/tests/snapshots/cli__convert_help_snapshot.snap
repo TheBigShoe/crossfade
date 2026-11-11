@@ -11,7 +11,7 @@ Arguments:
 
 Options:
   -o, --output <OUTPUT>
-          File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc
+          File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC)
       --sample-format <SAMPLE_FORMAT>
           Output sample format; defaults to the input's [possible values: u8, s16, s24, s32, f32, f64]
       --codec <CODEC>

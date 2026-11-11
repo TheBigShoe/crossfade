@@ -15,9 +15,14 @@ pub fn output_codec(
     sample_format: SampleFormat,
     requested: Option<&str>,
 ) -> Result<CodecId, Error> {
+    let why = if format == FormatId::Ogg {
+        " (ogg holds flac only)"
+    } else {
+        ""
+    };
     let refuse = |codec: &str| {
         unsupported(format!(
-            "codec {codec} cannot be written into {}",
+            "codec {codec} cannot be written into {}{why}",
             format.name()
         ))
     };
@@ -28,7 +33,7 @@ pub fn output_codec(
     match format {
         FormatId::Wav => accept("pcm").map(|()| CodecId::pcm_for(sample_format)),
         FormatId::Aiff => accept("pcm").map(|()| CodecId::pcm_be_for(sample_format)),
-        FormatId::Flac => {
+        FormatId::Flac | FormatId::Ogg => {
             accept("flac")?;
             if sample_format.is_float() {
                 return Err(unsupported(
@@ -37,7 +42,7 @@ pub fn output_codec(
             }
             Ok(CodecId::Flac)
         }
-        // Ogg, and any container added later until it is wired here.
+        // Any container added later, until it is wired here.
         _ => Err(unsupported(format!(
             "writing {} is not supported yet",
             format.name()
@@ -47,12 +52,15 @@ pub fn output_codec(
 
 /// Containers we can write; a reader existing for one does not make it writable.
 pub fn can_write(format: FormatId) -> bool {
-    matches!(format, FormatId::Wav | FormatId::Flac | FormatId::Aiff)
+    matches!(
+        format,
+        FormatId::Wav | FormatId::Flac | FormatId::Aiff | FormatId::Ogg
+    )
 }
 
 /// File extensions a front end can offer for an output, canonical spelling first.
 pub fn writable_extensions() -> &'static [&'static str] {
-    &["wav", "flac", "aiff", "aif", "aifc"]
+    &["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
 }
 
 /// Whether `format` can carry `codec`'s packets unchanged (stream copy).
@@ -67,7 +75,7 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
             codec,
             PcmS8 | PcmS16Be | PcmS24Be | PcmS32Be | PcmF32Be | PcmF64Be
         ),
-        FormatId::Flac => codec == Flac,
+        FormatId::Flac | FormatId::Ogg => codec == Flac,
         _ => false,
     }
 }
@@ -179,8 +187,17 @@ mod tests {
     }
 
     #[test]
-    fn ogg_cannot_be_written_yet() {
-        assert!(what(output_codec(FormatId::Ogg, S16, None)).contains("ogg"));
+    fn ogg_writes_flac_only() {
+        assert_eq!(output_codec(FormatId::Ogg, S24, None), Ok(CodecId::Flac));
+        assert_eq!(
+            output_codec(FormatId::Ogg, S16, Some("flac")),
+            Ok(CodecId::Flac)
+        );
+        assert_eq!(
+            what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
+            "codec pcm cannot be written into ogg (ogg holds flac only)"
+        );
+        assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
     }
 
     #[test]
@@ -228,9 +245,10 @@ mod tests {
         assert!(can_hold(FormatId::Flac, Flac));
         assert!(!can_hold(FormatId::Wav, Flac));
         assert!(!can_hold(FormatId::Aiff, Flac));
-        for c in le.into_iter().chain(be).chain([Flac]) {
+        for c in le.into_iter().chain(be) {
             assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
         }
+        assert!(can_hold(FormatId::Ogg, Flac));
     }
 
     #[test]

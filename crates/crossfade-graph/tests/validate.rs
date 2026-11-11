@@ -66,6 +66,12 @@ fn table() -> Vec<Case> {
         ("s32.wav", "o.flac", settings(None, None, None)),
         ("hi.wav", "o.flac", settings(None, None, None)),
         ("s16.flac", "o.flac", settings(None, Some("copy"), None)),
+        ("s16.flac", "o.oga", settings(None, Some("copy"), None)),
+        (
+            "s16.wav",
+            "o.oga",
+            settings(Some(S24), Some("flac"), Some(8)),
+        ),
         ("s16.flac", "o.wav", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("copy"), None)),
         // Refusals.
@@ -82,6 +88,8 @@ fn table() -> Vec<Case> {
         ("s16.flac", "o.flac", settings(None, Some("copy"), Some(3))),
         ("s16.wav", "o.ogg", settings(None, None, None)),
         ("s16.wav", "o.oga", settings(None, Some("copy"), None)),
+        ("s16.wav", "o.oga", settings(None, Some("pcm"), None)),
+        ("f32.wav", "o.oga", settings(None, None, None)),
         ("s16.wav", "o.mp3", settings(None, None, None)),
         ("s16.wav", "o", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("mp3"), None)),
@@ -117,7 +125,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 16, "the table keeps its refusals");
+    assert_eq!(refused, 17, "the table keeps its refusals");
 }
 
 #[test]
@@ -129,6 +137,14 @@ fn validate_names_the_cause() {
     assert_eq!(
         text(&settings(None, Some("copy"), None), "o.aiff"),
         "unsupported: cannot copy pcm_s16le into aiff"
+    );
+    assert_eq!(
+        text(&settings(None, Some("copy"), None), "o.oga"),
+        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac only)"
+    );
+    assert_eq!(
+        text(&settings(None, Some("pcm"), None), "o.oga"),
+        "unsupported: codec pcm cannot be written into ogg (ogg holds flac only)"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),
@@ -145,7 +161,7 @@ fn validate_names_the_cause() {
         ".wav",
         ".flac",
         ".aiff/.aif/.aifc",
-        ".ogg can be read but not written yet",
+        ".oga/.ogg",
     ] {
         assert!(ext.contains(want), "{want} missing from {ext}");
     }
@@ -171,7 +187,7 @@ fn codec_limits_surface_without_a_file() {
 fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
-        ["wav", "flac", "aiff", "aif", "aifc"]
+        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
     );
     let mut io = io();
     let limits = Limits::default();

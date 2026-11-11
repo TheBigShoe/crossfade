@@ -584,15 +584,27 @@ fn the_command_line_preview_follows_container_level_and_copy(cx: &mut TestAppCon
 fn an_unsaveable_extension_is_explained_in_plain_words(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);
-    type_output(cx, &rig, &rig.dir.path("out.ogg"));
+    type_output(cx, &rig, &rig.dir.path("out.mp3"));
     assert!(disabled(cx, rig.window, "dialog-ok"));
     let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
     assert_eq!(
         problems,
-        [
-            "Crossfade can save .wav, .flac and .aiff files. Ogg files can be opened but not saved yet."
-        ]
+        ["Crossfade can save .wav, .flac, .oga, .ogg and .aiff files."]
     );
+}
+
+#[gpui_test]
+fn typing_an_ogg_extension_selects_ogg_flac_and_shows_the_flac_level(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    for name in ["out.oga", "out.ogg"] {
+        type_output(cx, &rig, &rig.dir.path(name));
+        assert!(!disabled(cx, rig.window, "dialog-ok"), "{name}");
+        assert_eq!(dialog(cx, &rig, |d, cx| d.container_label(cx)), "Ogg FLAC");
+        assert!(has(cx, rig.window, "sheet-level"));
+        // Whole-number samples only, as in FLAC.
+        assert_eq!(labels(cx, &rig, "sheet-format"), &FORMAT_LABELS[..5]);
+    }
 }
 
 /// What a person does to a freshly opened sheet.
@@ -659,6 +671,31 @@ const WAV_INTENTS: &[Intent2] = &[
     },
 ];
 
+const OGG_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Container("Ogg FLAC")],
+        cli: &["-o", "@in.oga"],
+    },
+    Intent2 {
+        steps: &[Act::Container("Ogg FLAC"), Act::Level(9)],
+        cli: &["-o", "@in.oga", "--compression-level", "8"],
+    },
+    Intent2 {
+        steps: &[Act::Container("Ogg FLAC"), Act::Format("24-bit integer")],
+        cli: &["-o", "@in-s24.oga", "--sample-format", "s24"],
+    },
+    Intent2 {
+        steps: &[Act::Type("typed.ogg")],
+        cli: &["-o", "@typed.ogg"],
+    },
+];
+
+#[gpui_test]
+fn ogg_flac_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
+    run_intents(cx, "in.wav", &wav, OGG_INTENTS);
+}
+
 const FLAC_INTENTS: &[Intent2] = &[
     Intent2 {
         steps: &[Act::Container("FLAC"), Act::Copy],
@@ -671,6 +708,10 @@ const FLAC_INTENTS: &[Intent2] = &[
     Intent2 {
         steps: &[Act::Preset(1)],
         cli: &["-o", "@in-s16.wav", "--sample-format", "s16"],
+    },
+    Intent2 {
+        steps: &[Act::Container("Ogg FLAC"), Act::Copy],
+        cli: &["-o", "@in.oga", "--codec", "copy"],
     },
 ];
 

@@ -231,6 +231,17 @@ const SCENES: &[Scene] = &[
         },
     },
     Scene {
+        file: "18-convert-sheet-ogg-flac-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            let take = fixtures::wav(48_000, 2, SampleFormat::S24, 48_000 * 3);
+            stage.add_bytes(&[("interview-take-1.wav", take)]);
+            stage.convert();
+            stage.choose("sheet-container", 3);
+        },
+    },
+    Scene {
         file: "17-quit-confirm-dark.png",
         size: WINDOW,
         drive: |stage| {
