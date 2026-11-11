@@ -382,6 +382,10 @@ fn a_measuring_job_says_so_in_place_of_converting(cx: &mut TestAppContext) {
         },
     );
     assert_eq!(state(cx, &rig.workspace, 0), "Measuring \u{b7} 25%");
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.converting_text()),
+        Some("Measuring one.wav \u{2014} 25%".to_owned())
+    );
     assert!(has(cx, rig.window, "queue-progress-0"));
     send(
         cx,
