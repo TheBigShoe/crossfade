@@ -14,6 +14,16 @@ pub struct EncodeOptions {
     pub compression_level: Option<u8>,
 }
 
+/// What a thread count of 0 ("the machine's parallelism") stands for here.
+pub fn auto_thread_count() -> usize {
+    crossfade_flac::auto_thread_count()
+}
+
+/// Whether `codec`'s decoder or encoder can use more than the calling thread.
+pub fn is_threaded(codec: CodecId) -> bool {
+    codec == CodecId::Flac
+}
+
 /// `Error::Unsupported` for a codec with no decoder. Runs on the calling thread.
 pub fn decoder_for(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
     decoder_for_threads(stream, 1)

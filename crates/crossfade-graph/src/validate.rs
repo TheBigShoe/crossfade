@@ -1,9 +1,9 @@
 //! Every decision a job needs once its input is known, with no file touched. `Pipeline::open`
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
-use crate::choice::{can_hold, can_write, encode_options, output_codec};
+use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
 use crate::job::AudioSettings;
-use crossfade_codec::{decoder_for, encoder_for_threads};
+use crossfade_codec::{auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded};
 use crossfade_core::{AudioSpec, Decoder, Encoder, Error, StreamInfo, Tags};
 use crossfade_format::{FormatId, create_muxer};
 use std::io::Cursor;
@@ -39,8 +39,8 @@ pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
     }
 }
 
-/// Copy or transcode: the output stream, and the codecs when there is a transcode, the encoder
-/// using up to `threads` threads (see `Limits::max_threads`).
+/// Copy or transcode: the output stream, and the codecs when there is a transcode, sharing
+/// `threads` between them (see `Limits::max_threads` and `share_threads`).
 pub(crate) fn resolve(
     input: &StreamInfo,
     output_format: FormatId,
@@ -86,9 +86,16 @@ pub(crate) fn resolve(
             .filter(|_| out_format == in_spec.format()),
         ..StreamInfo::new(0, codec, out_spec.clone(), input.time_base)
     };
+    let budget = if threads == 0 {
+        auto_thread_count()
+    } else {
+        threads
+    };
+    let (decoder_threads, encoder_threads) =
+        share_threads(budget, is_threaded(input.codec), is_threaded(codec));
     let codecs = Codecs {
-        decoder: decoder_for(input)?,
-        encoder: encoder_for_threads(codec, &out_spec, &options, threads)?,
+        decoder: decoder_for_threads(input, decoder_threads)?,
+        encoder: encoder_for_threads(codec, &out_spec, &options, encoder_threads)?,
     };
     let plan = OutputPlan {
         output_format,
