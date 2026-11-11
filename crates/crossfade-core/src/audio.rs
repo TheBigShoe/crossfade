@@ -270,4 +270,57 @@ mod tests {
         .unwrap();
         assert_eq!(spec.bytes_per_frame(), 8 * usize::from(u16::MAX));
     }
+
+    #[test]
+    fn a_wave_mask_names_positions_in_bit_order() {
+        use Channel::*;
+        let l = ChannelLayout::from_mask(0x060F, 6).unwrap();
+        assert_eq!(
+            l.positions(),
+            Some(&[FrontLeft, FrontRight, FrontCenter, Lfe, SideLeft, SideRight][..])
+        );
+        assert_eq!(l.to_mask(), Some(0x060F));
+        assert_eq!(
+            ChannelLayout::from_mask(0x3F, 6).unwrap().to_mask(),
+            Some(0x3F)
+        );
+        assert_eq!(
+            ChannelLayout::from_mask(0x70F, 7)
+                .unwrap()
+                .positions()
+                .unwrap()[4],
+            BackCenter
+        );
+    }
+
+    #[test]
+    fn every_defined_position_round_trips_through_the_mask() {
+        let all = ChannelLayout::from_mask(0x3FFFF, 18).unwrap();
+        assert_eq!(all.channels(), 18);
+        assert_eq!(all.to_mask(), Some(0x3FFFF));
+        for bit in 0..18 {
+            let l = ChannelLayout::from_mask(1 << bit, 1).unwrap();
+            assert_eq!(l.to_mask(), Some(1 << bit), "bit {bit}");
+        }
+    }
+
+    #[test]
+    fn a_mask_that_does_not_fit_the_count_or_the_table_is_refused() {
+        assert_eq!(ChannelLayout::from_mask(0x3F, 5), None);
+        assert_eq!(ChannelLayout::from_mask(0x3F, 7), None);
+        assert_eq!(ChannelLayout::from_mask(0, 0), None);
+        // Bits 18 to 30 are reserved and bit 31 means "any speaker layout".
+        assert_eq!(ChannelLayout::from_mask(1 << 18, 1), None);
+        assert_eq!(ChannelLayout::from_mask(0x8000_0000, 1), None);
+    }
+
+    #[test]
+    fn only_a_positioned_layout_in_bit_order_has_a_mask() {
+        use Channel::*;
+        assert_eq!(ChannelLayout::unpositioned(2).unwrap().to_mask(), None);
+        let swapped = ChannelLayout::from_positions(vec![FrontRight, FrontLeft]).unwrap();
+        assert_eq!(swapped.to_mask(), None);
+        assert_eq!(ChannelLayout::mono().to_mask(), Some(0x4));
+        assert_eq!(ChannelLayout::stereo().to_mask(), Some(0x3));
+    }
 }
