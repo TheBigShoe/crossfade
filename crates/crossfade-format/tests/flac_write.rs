@@ -57,6 +57,7 @@ fn write_file(spec: &AudioSpec, samples: &[i32], tags: &Tags, level: Option<u8>)
         spec,
         &EncodeOptions {
             compression_level: level,
+            ..EncodeOptions::default()
         },
     )
     .unwrap();

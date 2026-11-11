@@ -58,6 +58,7 @@ fuzz_target!(|data: &[u8]| {
         &spec,
         &EncodeOptions {
             compression_level: Some(*level % 9),
+            ..EncodeOptions::default()
         },
     )
     .unwrap();
