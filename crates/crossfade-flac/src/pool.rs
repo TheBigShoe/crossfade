@@ -157,6 +157,7 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
     }
 
     /// How many items may be in flight at once.
+    #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
         self.capacity
     }
@@ -264,6 +265,7 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
 
     /// Drops every queued item and tells the workers to stop once they finish the item they
     /// are on. Dropping the pool closes it and joins the workers.
+    #[cfg(test)]
     pub(crate) fn close(&self) {
         self.shared.close();
     }
@@ -307,20 +309,27 @@ fn work<I, O, W>(shared: &Shared<I, O>, make: &Make<W>, run: fn(&mut W, I) -> O)
 pub(crate) struct Serial<S, T> {
     items: Option<SyncSender<T>>,
     spares: Receiver<T>,
-    handle: Option<JoinHandle<S>>,
+    handle: Option<JoinHandle<Option<S>>>,
 }
 
 impl<S: Send + 'static, T: Send + 'static> Serial<S, T> {
     /// Starts the thread with `state`; up to `depth` items wait for it before
-    /// [`send`](Self::send) blocks. `None` when no thread can be started.
-    pub(crate) fn new(state: S, run: fn(&mut S, &T), depth: usize) -> Option<Self> {
+    /// [`send`](Self::send) blocks. When no thread can be started, the state comes back.
+    pub(crate) fn new(state: S, run: fn(&mut S, &T), depth: usize) -> Result<Self, S> {
         let (items, inbox) = sync_channel::<T>(depth);
         let (back, spares) = channel();
-        let handle = Builder::new()
-            .name(THREAD_NAME.into())
-            .spawn(move || fold(state, run, &inbox, &back))
-            .ok()?;
-        Some(Self {
+        // The state goes over once the thread exists, so a failed spawn can hand it back.
+        let (give, take) = channel::<S>();
+        let started = Builder::new().name(THREAD_NAME.into()).spawn(move || {
+            let state = take.recv().ok()?;
+            Some(fold(state, run, &inbox, &back))
+        });
+        let Ok(handle) = started else {
+            return Err(state);
+        };
+        // The thread holds `take` until it has the state, so this cannot fail.
+        let _ = give.send(state);
+        Ok(Self {
             items: Some(items),
             spares,
             handle: Some(handle),
@@ -346,9 +355,11 @@ impl<S: Send + 'static, T: Send + 'static> Serial<S, T> {
     pub(crate) fn finish(mut self) -> Result<S, Panicked> {
         self.items = None;
         let handle = self.handle.take().expect("only finish takes the handle");
-        handle
-            .join()
-            .map_err(|payload| Panicked::from_payload(&*payload))
+        match handle.join() {
+            Ok(Some(state)) => Ok(state),
+            Ok(None) => Err(Panicked("the serial stage never started".into())),
+            Err(payload) => Err(Panicked::from_payload(&*payload)),
+        }
     }
 }
 

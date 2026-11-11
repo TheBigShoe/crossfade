@@ -157,7 +157,7 @@ fn steady_state_does_not_grow_any_buffer() {
             let c = &e.coder;
             let mut v = c.analyzer.capacities();
             v.push(e.pending.capacity());
-            v.push(e.md5_bytes.capacity());
+            v.push(e.hasher.bytes.capacity());
             v.extend(c.planes.iter().map(Vec::capacity));
             v.extend([c.mid.capacity(), c.side32.capacity(), c.side64.capacity()]);
             v.extend(c.slots.iter().map(|s| s.res.capacity()));
@@ -388,10 +388,13 @@ fn a_panic_in_a_worker_is_an_error_from_then_on() {
         let first = enc
             .write(&samples, &mut out)
             .and_then(|()| enc.flush(&mut out));
-        let Err(Error::Internal(what)) = first else {
+        let Err(Error::Unsupported(what)) = first else {
             panic!("{threads} threads: {first:?}")
         };
-        assert!(what.contains("frame 3"), "{what}");
+        assert!(
+            what.contains("panicked") && what.contains("frame 3"),
+            "{what}"
+        );
         // Only the frames before the one that failed were written.
         let mut before = Vec::new();
         threaded(5, 1)
@@ -400,9 +403,9 @@ fn a_panic_in_a_worker_is_an_error_from_then_on() {
         assert_eq!(out, before, "{threads} threads");
         assert!(matches!(
             enc.write(&samples[..2], &mut out),
-            Err(Error::Internal(_))
+            Err(Error::Unsupported(_))
         ));
-        assert!(matches!(enc.flush(&mut out), Err(Error::Internal(_))));
+        assert!(matches!(enc.flush(&mut out), Err(Error::Unsupported(_))));
     }
 }
 

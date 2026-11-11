@@ -86,6 +86,7 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         channels: channels as u8,
         bits_per_sample: bits,
         level,
+        threads: 1,
     })
     .map_err(map)?;
     let block = inner.block_size();

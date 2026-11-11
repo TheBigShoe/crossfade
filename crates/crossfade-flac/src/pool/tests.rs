@@ -207,6 +207,7 @@ fn a_closed_pool_runs_nothing_more_than_the_items_already_started() {
     drop(started);
 }
 
+#[allow(clippy::ptr_arg)] // the stage passes a reference to its item type
 fn record(seen: &mut Vec<u64>, x: &Vec<u64>) {
     seen.extend_from_slice(x);
 }
