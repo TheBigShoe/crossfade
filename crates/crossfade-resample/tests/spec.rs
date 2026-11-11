@@ -163,3 +163,41 @@ fn round_trip_44k1_48k_snr_exit_criterion() {
         );
     }
 }
+
+/// Band-limiting a full-scale square wave rings past full scale; the engine must leave this
+/// much headroom (or clip) when converting to integers. Measured here: at most 1.446
+/// (+3.2 dB), on 48 kHz -> 44.1 kHz. The hard bound for any input within +-1, the largest sum
+/// of |coefficients| one output uses, is 2.42 / 2.78 / 3.04 (Fast / Balanced / Best, from
+/// `examples/spec.rs`), reached only by inputs built to hit it.
+#[test]
+fn square_wave_overshoot_is_as_documented() {
+    for (q, peak) in [
+        (Quality::Fast, 1.46),
+        (Quality::Balanced, 1.46),
+        (Quality::Best, 1.46),
+    ] {
+        for (a, b) in [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (44_100, 96_000),
+            (96_000, 44_100),
+        ] {
+            for f in [997.0, 1000.0, 3001.0, 5512.5] {
+                let period = f64::from(a) / f;
+                let x: Vec<f64> = (0..N)
+                    .map(|t| {
+                        if (t as f64 / period).fract() < 0.5 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    })
+                    .collect();
+                let max = mono(a, b, q, &x)
+                    .iter()
+                    .fold(0.0, |m: f64, v| m.max(v.abs()));
+                assert!(max > 1.0 && max <= peak, "{q:?} {a} -> {b} {f} Hz: {max}");
+            }
+        }
+    }
+}

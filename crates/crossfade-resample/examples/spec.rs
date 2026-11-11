@@ -101,6 +101,27 @@ fn stop_edge(q: Quality) -> f64 {
     worst
 }
 
+/// The worst-case gain from |input| <= 1 to |output|: the largest sum of |coefficient| over
+/// the taps one output uses. Impulses at `down` consecutive inputs, grouped by output phase,
+/// visit every coefficient of every phase once.
+fn l1_bound(a: u32, b: u32, q: Quality) -> f64 {
+    let g = (1..=a.min(b))
+        .rev()
+        .find(|d| a % d == 0 && b % d == 0)
+        .unwrap();
+    let (up, down) = ((b / g) as usize, (a / g) as usize);
+    let k = 3000;
+    let mut sums = vec![0.0; up];
+    for r in 0..down {
+        let mut x = vec![0.0; 2 * k];
+        x[k + r] = 1.0;
+        for (n, v) in mono(a, b, q, &x).iter().enumerate() {
+            sums[(n * down) % up] += v.abs();
+        }
+    }
+    sums.into_iter().fold(0.0, f64::max)
+}
+
 fn main() {
     for q in QUALITIES {
         let pass = match q {
@@ -123,6 +144,19 @@ fn main() {
         .flat_map(|&(a, b)| [997.0, 1000.0, 3001.0, 5512.5].map(|f| overshoot(a, b, q, f)))
         .fold(0.0, f64::max);
         println!("  square-wave peak {worst:.4} ({:.2} dB)", db(worst));
+        let bound = [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (44_100, 96_000),
+            (96_000, 44_100),
+        ]
+        .iter()
+        .map(|&(a, b)| l1_bound(a, b, q))
+        .fold(0.0, f64::max);
+        println!(
+            "  worst-case gain (L1 of a row) {bound:.4} ({:.2} dB)",
+            db(bound)
+        );
         println!("  worst near the stopband edge {:.1} dB", stop_edge(q));
         let r = Resampler::new(44_100, 48_000, 1, q).unwrap();
         println!("{q:?}: latency {} frames at 44.1 -> 48", r.latency());
