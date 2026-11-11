@@ -180,6 +180,14 @@ pub struct Encoder {
     md5_bytes: Vec<u8>,
     /// Samples taken by `write` that do not fill a block yet.
     pending: Vec<i32>,
+    coder: FrameCoder,
+}
+
+/// Everything one frame needs beyond its samples and number: the block's working memory and
+/// the analyser. Nothing in it carries over from one block to the next in a way that changes
+/// the output, so frames can be coded by any number of these in any order.
+struct FrameCoder {
+    config: EncoderConfig,
     /// One block, deinterleaved.
     planes: Vec<Vec<i32>>,
     /// Mid and side of a stereo block; the side of a 32-bit stream needs 33 bits.
@@ -222,25 +230,7 @@ impl Encoder {
             md5: Md5::new(),
             md5_bytes: Vec::with_capacity(level.block * channels * 4),
             pending: Vec::with_capacity(level.block * channels),
-            planes: vec![vec![0; level.block]; channels],
-            mid: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
-            side32: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
-            side64: Vec::with_capacity(if channels == 2 && config.bits_per_sample == 32 {
-                level.block
-            } else {
-                0
-            }),
-            slots: (0..if channels == 2 { 4 } else { channels })
-                .map(|_| Plan::new(level.block))
-                .collect(),
-            level,
-            analyzer: Analyzer::new(
-                level,
-                u32::from(config.bits_per_sample),
-                channels == 2 && config.bits_per_sample == 32,
-            ),
-            #[cfg(test)]
-            force: None,
+            coder: FrameCoder::new(config, level),
         })
     }
 
@@ -278,32 +268,10 @@ impl Encoder {
             return Err(unsupported("stream is longer than FLAC can number"));
         }
 
-        for plane in &mut self.planes {
-            plane.resize(n, 0);
-        }
-        match self.planes.as_mut_slice() {
-            [mono] => mono.copy_from_slice(interleaved),
-            [left, right] => {
-                for ((l, r), f) in left
-                    .iter_mut()
-                    .zip(right)
-                    .zip(interleaved.as_chunks::<2>().0)
-                {
-                    (*l, *r) = (f[0], f[1]);
-                }
-            }
-            planes => {
-                for (i, frame) in interleaved.chunks_exact(channels).enumerate() {
-                    for (plane, &v) in planes.iter_mut().zip(frame) {
-                        plane[i] = v;
-                    }
-                }
-            }
-        }
         self.hash(interleaved);
 
         let start = out.len();
-        self.write_frame(n, out);
+        self.coder.encode(interleaved, self.frame_number, out);
         let len = (out.len() - start) as u32;
         self.min_frame = self.min_frame.min(len);
         self.max_frame = self.max_frame.max(len);
@@ -437,6 +405,100 @@ impl Encoder {
         self.md5.update(&self.md5_bytes);
     }
 
+    fn info(&self) -> StreamInfoBlock {
+        StreamInfoBlock {
+            min_block_size: self.block as u16,
+            max_block_size: self.block as u16,
+            min_frame_size: 0,
+            max_frame_size: 0,
+            sample_rate: self.config.sample_rate,
+            channels: self.config.channels,
+            bits_per_sample: self.config.bits_per_sample,
+            total_samples: 0,
+            md5: [0; 16],
+        }
+    }
+
+    /// Provisional: block sizes and format only; frame sizes, total and MD5 are zero
+    /// (unknown) until [`finish`](Self::finish).
+    pub fn stream_info(&self) -> StreamInfoBlock {
+        self.done.unwrap_or_else(|| self.info())
+    }
+
+    /// Ends the stream and returns the final STREAMINFO (minimum and maximum frame size,
+    /// total samples, MD5). Further blocks are refused; calling it again returns the same.
+    pub fn finish(&mut self) -> StreamInfoBlock {
+        if let Some(info) = self.done {
+            return info;
+        }
+        let mut info = self.info();
+        if self.frame_number > 0 {
+            info.min_frame_size = self.min_frame;
+            info.max_frame_size = self.max_frame;
+        }
+        info.total_samples = self.total;
+        info.md5 = std::mem::take(&mut self.md5).finalize();
+        self.done = Some(info);
+        info
+    }
+}
+
+impl FrameCoder {
+    fn new(config: EncoderConfig, level: Level) -> Self {
+        let channels = usize::from(config.channels);
+        Self {
+            config,
+            planes: vec![vec![0; level.block]; channels],
+            mid: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
+            side32: Vec::with_capacity(if channels == 2 { level.block } else { 0 }),
+            side64: Vec::with_capacity(if channels == 2 && config.bits_per_sample == 32 {
+                level.block
+            } else {
+                0
+            }),
+            slots: (0..if channels == 2 { 4 } else { channels })
+                .map(|_| Plan::new(level.block))
+                .collect(),
+            level,
+            analyzer: Analyzer::new(
+                level,
+                u32::from(config.bits_per_sample),
+                channels == 2 && config.bits_per_sample == 32,
+            ),
+            #[cfg(test)]
+            force: None,
+        }
+    }
+
+    /// Appends frame `number` coding `interleaved`, a checked block of whole sample frames.
+    fn encode(&mut self, interleaved: &[i32], number: u64, out: &mut Vec<u8>) {
+        let channels = usize::from(self.config.channels);
+        let n = interleaved.len() / channels;
+        for plane in &mut self.planes {
+            plane.resize(n, 0);
+        }
+        match self.planes.as_mut_slice() {
+            [mono] => mono.copy_from_slice(interleaved),
+            [left, right] => {
+                for ((l, r), f) in left
+                    .iter_mut()
+                    .zip(right)
+                    .zip(interleaved.as_chunks::<2>().0)
+                {
+                    (*l, *r) = (f[0], f[1]);
+                }
+            }
+            planes => {
+                for (i, frame) in interleaved.chunks_exact(channels).enumerate() {
+                    for (plane, &v) in planes.iter_mut().zip(frame) {
+                        plane[i] = v;
+                    }
+                }
+            }
+        }
+        self.write_frame(n, number, out);
+    }
+
     /// Plans one channel of the block into `slot`: a plane, or for a stereo stream slot 2
     /// is the mid and slot 3 the side channel.
     fn analyze_slot(&mut self, slot: usize, n: usize, bps: u32) {
@@ -553,7 +615,7 @@ impl Encoder {
         modes[best].0
     }
 
-    fn write_frame(&mut self, n: usize, out: &mut Vec<u8>) {
+    fn write_frame(&mut self, n: usize, number: u64, out: &mut Vec<u8>) {
         let bps = u32::from(self.config.bits_per_sample);
         let channels = usize::from(self.config.channels);
         let assignment = if channels == 2 && self.level.stereo != Stereo::Off {
@@ -572,7 +634,7 @@ impl Encoder {
                 sample_rate: Some(self.config.sample_rate),
                 channels: assignment,
                 bits_per_sample: Some(self.config.bits_per_sample),
-                number: self.frame_number,
+                number,
                 header_len: 0,
             },
             out,
@@ -604,43 +666,6 @@ impl Encoder {
     #[cfg(test)]
     fn force_stereo(&mut self, mode: ChannelAssignment) {
         self.force = Some(mode);
-    }
-
-    fn info(&self) -> StreamInfoBlock {
-        StreamInfoBlock {
-            min_block_size: self.block as u16,
-            max_block_size: self.block as u16,
-            min_frame_size: 0,
-            max_frame_size: 0,
-            sample_rate: self.config.sample_rate,
-            channels: self.config.channels,
-            bits_per_sample: self.config.bits_per_sample,
-            total_samples: 0,
-            md5: [0; 16],
-        }
-    }
-
-    /// Provisional: block sizes and format only; frame sizes, total and MD5 are zero
-    /// (unknown) until [`finish`](Self::finish).
-    pub fn stream_info(&self) -> StreamInfoBlock {
-        self.done.unwrap_or_else(|| self.info())
-    }
-
-    /// Ends the stream and returns the final STREAMINFO (minimum and maximum frame size,
-    /// total samples, MD5). Further blocks are refused; calling it again returns the same.
-    pub fn finish(&mut self) -> StreamInfoBlock {
-        if let Some(info) = self.done {
-            return info;
-        }
-        let mut info = self.info();
-        if self.frame_number > 0 {
-            info.min_frame_size = self.min_frame;
-            info.max_frame_size = self.max_frame;
-        }
-        info.total_samples = self.total;
-        info.md5 = std::mem::take(&mut self.md5).finalize();
-        self.done = Some(info);
-        info
     }
 }
 

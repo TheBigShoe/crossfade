@@ -25,7 +25,7 @@ fn forced(bits: u8, level: u8, mode: ChannelAssignment, samples: &[i32]) {
         level,
     })
     .unwrap();
-    enc.force_stereo(mode);
+    enc.coder.force_stereo(mode);
     let mut out = Vec::new();
     enc.encode_block(samples, &mut out).unwrap();
     let info = enc.finish();
@@ -152,12 +152,13 @@ fn steady_state_does_not_grow_any_buffer() {
         let mut out = Vec::new();
         let chunk = pseudo(bits, enc.block_size() * usize::from(channels) * 2 + 6, 1);
         let snapshot = |e: &Encoder| {
-            let mut v = e.analyzer.capacities();
+            let c = &e.coder;
+            let mut v = c.analyzer.capacities();
             v.push(e.pending.capacity());
             v.push(e.md5_bytes.capacity());
-            v.extend(e.planes.iter().map(Vec::capacity));
-            v.extend([e.mid.capacity(), e.side32.capacity(), e.side64.capacity()]);
-            v.extend(e.slots.iter().map(|s| s.res.capacity()));
+            v.extend(c.planes.iter().map(Vec::capacity));
+            v.extend([c.mid.capacity(), c.side32.capacity(), c.side64.capacity()]);
+            v.extend(c.slots.iter().map(|s| s.res.capacity()));
             v
         };
         enc.write(&chunk, &mut out).unwrap();
