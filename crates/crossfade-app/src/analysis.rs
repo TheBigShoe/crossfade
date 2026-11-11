@@ -7,11 +7,10 @@
 //! `notify` callback, which runs on the worker thread and is throttled by frame count.
 
 use crate::waveform::Pyramid;
-use crossfade_core::{
-    AudioFrame, Channel, ChannelLayout, Error, JobIo, Limits, Samples, StreamInfo,
-};
+use crossfade_core::{AudioFrame, Error, JobIo, Limits, Samples, StreamInfo};
+use crossfade_dsp::filters::normalize::roles_for;
 use crossfade_graph::{CancelToken, decode_frames};
-use crossfade_loudness::{ChannelRole, Meter, Options};
+use crossfade_loudness::{Meter, Options};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// Frames between progress reports when the file's length is unknown.
@@ -86,31 +85,6 @@ pub struct Snapshot {
     pub frames_done: u64,
     pub state: State,
     pub loudness: Loudness,
-}
-
-/// Each channel's loudness role from its speaker position; unpositioned layouts get the
-/// standard roles for 1 to 6 channels, otherwise every channel counts once.
-pub fn roles_for(layout: &ChannelLayout) -> Vec<ChannelRole> {
-    let n = usize::from(layout.channels());
-    if n == 1 {
-        return vec![ChannelRole::Unweighted];
-    }
-    let Some(positions) = layout.positions() else {
-        return ChannelRole::standard_layout(n)
-            .map_or_else(|| vec![ChannelRole::Unweighted; n], <[_]>::to_vec);
-    };
-    positions
-        .iter()
-        .map(|p| match p {
-            Channel::FrontLeft => ChannelRole::Left,
-            Channel::FrontRight => ChannelRole::Right,
-            Channel::FrontCenter => ChannelRole::Centre,
-            Channel::Lfe => ChannelRole::Lfe,
-            Channel::BackLeft | Channel::SideLeft => ChannelRole::LeftSurround,
-            Channel::BackRight | Channel::SideRight => ChannelRole::RightSurround,
-            _ => ChannelRole::Unweighted,
-        })
-        .collect()
 }
 
 /// Decides which progress reports are worth sending, from frame counts alone (rule 5).

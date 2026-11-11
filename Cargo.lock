@@ -1455,6 +1455,7 @@ name = "crossfade-app"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-dsp",
  "crossfade-graph",
  "crossfade-loudness",
  "crossfade-testkit",
