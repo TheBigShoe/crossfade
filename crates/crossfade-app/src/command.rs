@@ -1,6 +1,6 @@
 //! What a front end hands to a runner, and the CLI words that mean the same.
 
-use crossfade_graph::Job;
+use crossfade_graph::{Dither, Job};
 
 /// A job plus the one decision the job file does not carry.
 #[derive(Debug, Clone, PartialEq)]
@@ -9,7 +9,7 @@ pub struct Request {
     pub overwrite: bool,
 }
 
-/// The job has no `crossfade convert` spelling (not one input and one output).
+/// The job has no `crossfade` spelling (no input, or not one output).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotExpressible;
 
@@ -21,40 +21,76 @@ impl std::fmt::Display for NotExpressible {
 
 impl std::error::Error for NotExpressible {}
 
-/// Arguments after `crossfade`. A dash-leading input would be read as a flag,
-/// so it moves behind `--`; a dash-leading output uses the attached form.
+/// Arguments after `crossfade` for a one-input job. A dash-leading input would be read as a
+/// flag, so it moves behind `--`; a dash-leading output uses the attached form.
 pub fn convert_args(request: &Request) -> Result<Vec<String>, NotExpressible> {
-    let ([input], [output]) = (
-        request.job.inputs.as_slice(),
-        request.job.outputs.as_slice(),
-    ) else {
+    let [input] = request.job.inputs.as_slice() else {
         return Err(NotExpressible);
     };
-    let (input, out_path) = (&input.path, &output.path);
-    let dashed_input = input.starts_with('-');
-    let mut args = vec!["convert".to_owned()];
+    subcommand_args("convert", std::slice::from_ref(&input.path), request)
+}
+
+/// Arguments after `crossfade`: `convert` for one input, `concat` for several.
+pub fn command_args(request: &Request) -> Result<Vec<String>, NotExpressible> {
+    match request.job.inputs.as_slice() {
+        [] => Err(NotExpressible),
+        [_] => convert_args(request),
+        several => {
+            let paths: Vec<String> = several.iter().map(|i| i.path.clone()).collect();
+            subcommand_args("concat", &paths, request)
+        }
+    }
+}
+
+/// Every setting as its flag; every filter as `--filter` with its canonical text, in the job's
+/// order (the CLI's shortcut flags are never written, so the filter order cannot change).
+fn subcommand_args(
+    name: &str,
+    inputs: &[String],
+    request: &Request,
+) -> Result<Vec<String>, NotExpressible> {
+    let [output] = request.job.outputs.as_slice() else {
+        return Err(NotExpressible);
+    };
+    let out_path = &output.path;
+    let dashed_input = inputs.iter().any(|i| i.starts_with('-'));
+    let mut args = vec![name.to_owned()];
     if !dashed_input {
-        args.push(input.clone());
+        args.extend(inputs.iter().cloned());
     }
     if out_path.starts_with('-') || dashed_input {
         args.push(format!("--output={out_path}"));
     } else {
         args.extend(["-o".to_owned(), out_path.clone()]);
     }
-    if let Some(format) = output.audio.sample_format {
+    let audio = &output.audio;
+    if let Some(format) = audio.sample_format {
         args.extend(["--sample-format".to_owned(), format.name().to_owned()]);
     }
-    if let Some(codec) = &output.audio.codec {
+    if let Some(codec) = &audio.codec {
         args.extend(["--codec".to_owned(), codec.clone()]);
     }
-    if let Some(level) = output.audio.compression_level {
+    if let Some(level) = audio.compression_level {
         args.extend(["--compression-level".to_owned(), level.to_string()]);
+    }
+    if let Some(rate) = audio.sample_rate {
+        args.extend(["--sample-rate".to_owned(), rate.to_string()]);
+    }
+    if let Some(channels) = &audio.channels {
+        args.extend(["--channels".to_owned(), channels.to_string()]);
+    }
+    if audio.dither != Dither::default() {
+        args.extend(["--dither".to_owned(), audio.dither.name().to_owned()]);
+    }
+    for f in &audio.filters {
+        args.extend(["--filter".to_owned(), f.to_string()]);
     }
     if request.overwrite {
         args.push("--force".to_owned());
     }
     if dashed_input {
-        args.extend(["--".to_owned(), input.clone()]);
+        args.push("--".to_owned());
+        args.extend(inputs.iter().cloned());
     }
     Ok(args)
 }
@@ -73,7 +109,7 @@ fn quote(arg: &str) -> String {
 
 /// A line a person can paste into a POSIX shell.
 pub fn command_line(request: &Request) -> Result<String, NotExpressible> {
-    let args = convert_args(request)?;
+    let args = command_args(request)?;
     let mut line = "crossfade".to_owned();
     for arg in &args {
         line.push(' ');

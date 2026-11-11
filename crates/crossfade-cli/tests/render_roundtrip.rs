@@ -143,6 +143,7 @@ proptest! {
     fn command_line_splits_back_into_command_args(r in request()) {
         let words = split_posix(&command_line(&r).unwrap());
         prop_assert_eq!(&words[0], "crossfade");
-        prop_assert_eq!(&words[1..], command_args(&r).unwrap().as_slice());
+        let args = command_args(&r).unwrap();
+        prop_assert_eq!(&words[1..], args.as_slice());
     }
 }
