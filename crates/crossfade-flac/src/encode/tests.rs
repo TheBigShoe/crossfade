@@ -432,3 +432,14 @@ fn a_long_stream_codes_and_hashes_on_threads_of_its_own() {
     assert_eq!(info.total_samples, 4096 * 20);
     assert!(enc.md5_stage.is_none(), "finish joins the MD5 thread");
 }
+
+/// Auto leaves three cores for the rest of the pipeline (the caller's reading and writing, the
+/// MD5 thread, the file I/O): measured on 8 performance and 2 efficiency cores, wall time stops
+/// falling at 7 threads and only CPU time grows past it.
+#[test]
+fn auto_threads_leave_room_for_the_serial_stages() {
+    let table = [(1, 1), (2, 2), (3, 2), (4, 2), (6, 3), (8, 5), (10, 7), (11, 8), (64, 8)];
+    for (cores, threads) in table {
+        assert_eq!(auto_threads(cores), threads, "{cores} cores");
+    }
+}
