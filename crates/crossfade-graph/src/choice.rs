@@ -93,6 +93,25 @@ mod tests {
     use super::*;
     use SampleFormat::*;
 
+    /// The budget goes whole to the one threaded codec. When both are (FLAC to FLAC) the
+    /// decoder, far the cheaper, gets a quarter and the encoder the rest; the calling thread
+    /// works for both, so together they take no more threads than the budget.
+    #[test]
+    fn a_budget_is_shared_between_a_threaded_decoder_and_encoder() {
+        assert_eq!(share_threads(7, false, true), (1, 7));
+        assert_eq!(share_threads(7, true, false), (7, 1));
+        assert_eq!(share_threads(7, false, false), (1, 1));
+        assert_eq!(share_threads(1, true, true), (1, 1));
+        assert_eq!(share_threads(2, true, true), (1, 2));
+        assert_eq!(share_threads(7, true, true), (1, 7));
+        assert_eq!(share_threads(8, true, true), (2, 7));
+        assert_eq!(share_threads(64, true, true), (16, 49));
+        for budget in 1..40 {
+            let (d, e) = share_threads(budget, true, true);
+            assert!(d >= 1 && e >= 1 && d + e - 1 <= budget, "{budget}");
+        }
+    }
+
     const ALL: [SampleFormat; 6] = [U8, S16, S24, S32, F32, F64];
 
     fn what(r: Result<impl Sized, Error>) -> String {

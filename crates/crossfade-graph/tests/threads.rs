@@ -42,3 +42,35 @@ fn the_thread_budget_changes_no_output_byte() {
 fn the_default_budget_is_the_whole_machine() {
     assert_eq!(Limits::default().max_threads, 0);
 }
+
+fn run_job(io: &mut MemoryIo, input: &str, output: &str, level: Option<u8>, max_threads: usize) {
+    let mut j = job(input, output, None);
+    j.outputs[0].audio.compression_level = level;
+    let limits = Limits {
+        max_threads,
+        ..Limits::default()
+    };
+    run(&j, io, &limits, &CancelToken::new(), &mut |_| {}).unwrap();
+}
+
+/// FLAC in: decoding to WAV and re-encoding to FLAC give the same bytes at any budget.
+#[test]
+fn decoding_and_reencoding_flac_change_no_byte_at_any_budget() {
+    let (_, wav) = sine_wav(
+        &spec(44_100, SampleFormat::S16, ChannelLayout::stereo()),
+        4096 * 12 + 5,
+    );
+    let flac = convert(&wav, Some(0), 1);
+    let outputs = |threads| {
+        let mut io = MemoryIo::new();
+        io.insert("in.flac", flac.clone());
+        run_job(&mut io, "in.flac", "out.wav", None, threads);
+        run_job(&mut io, "in.flac", "again.flac", Some(5), threads);
+        (io.get("out.wav").unwrap(), io.get("again.flac").unwrap())
+    };
+    let one = outputs(1);
+    assert_eq!(&one.0[44..], &wav[44..]);
+    for threads in [2, 3, 8, 0] {
+        assert!(outputs(threads) == one, "{threads} threads");
+    }
+}
