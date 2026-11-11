@@ -243,7 +243,7 @@ impl Meter {
             self.momentary = p;
             self.momentary_max = self.momentary_max.max(p);
             let since = self.sub_count - MOMENTARY_SUBS as u64;
-            if since % GATE_HOP_SUBS == 0 && p > self.abs_gate_power {
+            if since.is_multiple_of(GATE_HOP_SUBS) && p > self.abs_gate_power {
                 self.gate_blocks.push(p);
             }
         }
@@ -252,7 +252,9 @@ impl Meter {
             self.short_term = p;
             self.short_term_max = self.short_term_max.max(p);
             let since = self.sub_count - SHORT_TERM_SUBS as u64;
-            if self.options.loudness_range && since % GATE_HOP_SUBS == 0 && p >= self.abs_gate_power
+            if self.options.loudness_range
+                && since.is_multiple_of(GATE_HOP_SUBS)
+                && p >= self.abs_gate_power
             {
                 self.range_blocks.push(p);
             }
