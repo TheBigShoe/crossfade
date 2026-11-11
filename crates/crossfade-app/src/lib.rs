@@ -10,6 +10,7 @@ pub mod inspector;
 pub mod queue;
 pub mod runner;
 pub mod sheet;
+pub mod strip;
 pub mod waveform;
 pub mod waveview;
 

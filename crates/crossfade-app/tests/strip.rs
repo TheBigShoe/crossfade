@@ -14,7 +14,10 @@ fn wav(frames: usize) -> Vec<u8> {
     let pcm: Vec<u8> = (0..frames * 2)
         .flat_map(|i| (((i * 37) % 20_000) as i16).to_le_bytes())
         .collect();
-    wav_bytes(&spec(RATE, SampleFormat::S16, ChannelLayout::stereo()), &pcm)
+    wav_bytes(
+        &spec(RATE, SampleFormat::S16, ChannelLayout::stereo()),
+        &pcm,
+    )
 }
 
 fn io(path: &str, frames: usize) -> Box<MemoryIo> {
