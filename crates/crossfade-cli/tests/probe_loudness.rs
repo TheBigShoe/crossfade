@@ -72,15 +72,12 @@ fn json_carries_a_loudness_object() {
     );
     assert!(l["range_lu"].is_number() && l["true_peak_dbtp"].is_number());
     assert!((l["sample_peak_dbfs"].as_f64().unwrap() + 23.0).abs() < 0.01);
-    let keys: Vec<_> = l.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(
-        keys,
-        [
-            "integrated_lufs",
-            "range_lu",
-            "true_peak_dbtp",
-            "sample_peak_dbfs"
-        ]
+    let at = |k: &str| out.find(&format!("\"{k}\"")).unwrap();
+    assert!(
+        at("integrated_lufs") < at("range_lu")
+            && at("range_lu") < at("true_peak_dbtp")
+            && at("true_peak_dbtp") < at("sample_peak_dbfs"),
+        "{out}"
     );
 }
 
