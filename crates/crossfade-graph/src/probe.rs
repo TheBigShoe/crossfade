@@ -48,13 +48,9 @@ impl ProbeDocument {
 }
 
 fn layout_name(layout: &ChannelLayout) -> String {
-    if *layout == ChannelLayout::mono() {
-        "mono".into()
-    } else if *layout == ChannelLayout::stereo() {
-        "stereo".into()
-    } else {
-        format!("{} channels", layout.channels())
-    }
+    layout
+        .name()
+        .map_or_else(|| format!("{} channels", layout.channels()), str::to_owned)
 }
 
 impl ProbeReport {
