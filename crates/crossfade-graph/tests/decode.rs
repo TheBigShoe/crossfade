@@ -18,7 +18,10 @@ fn io_with(n: usize) -> MemoryIo {
     let mut io = MemoryIo::new();
     io.insert(
         "in.wav",
-        wav_bytes(&spec(8000, SampleFormat::S16, ChannelLayout::stereo()), &pcm),
+        wav_bytes(
+            &spec(8000, SampleFormat::S16, ChannelLayout::stereo()),
+            &pcm,
+        ),
     );
     io
 }
@@ -87,10 +90,16 @@ fn a_cancelled_pass_stops_and_says_so() {
     let cancel = CancelToken::new();
     cancel.cancel();
     let mut called = false;
-    let r = decode_frames("in.wav", &mut io, &Limits::default(), &cancel, &mut |_, _| {
-        called = true;
-        Ok(())
-    });
+    let r = decode_frames(
+        "in.wav",
+        &mut io,
+        &Limits::default(),
+        &cancel,
+        &mut |_, _| {
+            called = true;
+            Ok(())
+        },
+    );
     assert_eq!(r.err(), Some(Error::Cancelled));
     assert!(!called);
 }
