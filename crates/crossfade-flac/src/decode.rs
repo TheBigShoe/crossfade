@@ -4,7 +4,7 @@
 //! The decoder knows nothing of containers: whatever splits the stream into frames (a FLAC
 //! or Ogg reader) hands each frame over as a slice.
 
-use crate::crc::crc16;
+use crate::crc::{crc16, crc16_update};
 use crate::error::{Error, Result};
 use crate::frame::{self, ChannelAssignment, FrameHeader, HeaderError};
 use crate::md5::Md5;
@@ -147,15 +147,52 @@ impl Decoder {
         Ok(())
     }
 
+    /// The frame CRC-16 is computed last, alongside the MD5 (see `hash`), but it still decides:
+    /// a frame whose CRC fails reports that, whatever else is wrong with it.
     fn decode(&mut self, data: &[u8]) -> Result<()> {
         let h = frame::parse_header(data).map_err(|e| match e {
             HeaderError::NeedMoreData => malformed("frame header cut short"),
             HeaderError::Invalid(why) => malformed(why),
         })?;
         self.check_parameters(&h)?;
-        if data.len() < h.header_len + 2 || crc16(data) != 0 {
-            return Err(malformed("frame CRC-16 mismatch"));
+        if data.len() < h.header_len + 2 {
+            return Err(crc_mismatch());
         }
+        let block = h.block_size as usize;
+        let end = match self.subframes(&h, data) {
+            Ok(end) => end,
+            Err(_) if crc16(data) != 0 => return Err(crc_mismatch()),
+            Err(e) => return Err(e),
+        };
+        // The CRC-16 follows the subframes. Zero bytes after it are padding the container
+        // reader could not tell from the frame (the CRC-16 stays zero over zeros).
+        if end + 2 < data.len() {
+            if crc16(data) != 0 || crc16(&data[..end + 2]) != 0 {
+                return Err(crc_mismatch());
+            }
+            if data[end + 2..].iter().any(|&b| b != 0) {
+                return Err(malformed(
+                    "unused bytes between the subframes and the CRC-16",
+                ));
+            }
+        }
+        if self.wide {
+            self.decorrelate(h.channels);
+            self.narrow(block);
+        } else {
+            decorrelate_i32(&mut self.planes, h.channels);
+        }
+        if self.hash(block, data) != 0 {
+            return Err(crc_mismatch());
+        }
+        self.first = self.decoded;
+        self.decoded += block as u64;
+        self.block = block;
+        Ok(())
+    }
+
+    /// Decodes every subframe; returns where they end in `data`.
+    fn subframes(&mut self, h: &FrameHeader, data: &[u8]) -> Result<usize> {
         let block = h.block_size as usize;
         let bps = u32::from(self.info.bits_per_sample);
         let mut r = Bits::new(&data[h.header_len..data.len() - 2]);
@@ -176,30 +213,7 @@ impl Decoder {
             }
         }
         r.align();
-        // The CRC-16 follows the subframes. Zero bytes after it are padding the container
-        // reader could not tell from the frame (the CRC-16 stays zero over zeros).
-        let end = data.len() - 2 - (r.bits_left() / 8) as usize;
-        if end + 2 < data.len() {
-            if crc16(&data[..end + 2]) != 0 {
-                return Err(malformed("frame CRC-16 mismatch"));
-            }
-            if data[end + 2..].iter().any(|&b| b != 0) {
-                return Err(malformed(
-                    "unused bytes between the subframes and the CRC-16",
-                ));
-            }
-        }
-        if self.wide {
-            self.decorrelate(h.channels);
-            self.narrow(block);
-        } else {
-            decorrelate_i32(&mut self.planes, h.channels);
-        }
-        self.hash(block);
-        self.first = self.decoded;
-        self.decoded += block as u64;
-        self.block = block;
-        Ok(())
+        Ok(data.len() - 2 - (r.bits_left() / 8) as usize)
     }
 
     fn decorrelate(&mut self, assignment: ChannelAssignment) {
@@ -244,10 +258,11 @@ impl Decoder {
 
     /// Hashes the raw samples as the format defines it: interleaved, little-endian, in the
     /// smallest whole number of bytes the depth fits. Skipped when there is nothing to compare
-    /// the hash with.
-    fn hash(&mut self, block: usize) {
+    /// the hash with. Returns the CRC-16 of `frame`, computed between the MD5's blocks: both are
+    /// serial chains, and interleaved the CRC's runs while the MD5 waits on its own.
+    fn hash(&mut self, block: usize, frame: &[u8]) -> u16 {
         if self.info.md5 == [0; 16] {
-            return;
+            return crc16(frame);
         }
         let width = usize::from(self.info.bits_per_sample).div_ceil(8);
         match width {
@@ -256,8 +271,24 @@ impl Decoder {
             3 => pack::<3>(&self.planes, block, &mut self.md5_bytes),
             _ => pack::<4>(&self.planes, block, &mut self.md5_bytes),
         }
-        self.md5.update(&self.md5_bytes);
+        let (mut crc, mut done) = (0, 0);
+        self.md5.update_interleaved(&self.md5_bytes, |blocks_left| {
+            let rest = &frame[done..];
+            // An even share of what is left, in whole steps of the CRC.
+            let step = rest
+                .len()
+                .div_ceil(blocks_left + 1)
+                .next_multiple_of(16)
+                .min(rest.len());
+            crc = crc16_update(crc, &rest[..step]);
+            done += step;
+        });
+        crc16_update(crc, &frame[done..])
     }
+}
+
+fn crc_mismatch() -> Error {
+    malformed("frame CRC-16 mismatch")
 }
 
 /// The planes as interleaved little-endian samples of `W` bytes each. With the width a constant

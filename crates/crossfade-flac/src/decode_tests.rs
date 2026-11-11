@@ -954,6 +954,30 @@ proptest! {
         f[n - 2..].copy_from_slice(&crc.to_be_bytes());
         let _ = decode(&stream(44100, 2, 16), &f);
     }
+
+    // The CRC-16 is checked after the subframes are decoded, yet whatever the subframes hold, a
+    // frame whose header stands and whose CRC fails reports the CRC, as when it came first.
+    #[test]
+    fn a_failing_crc_is_what_a_corrupt_frame_reports(
+        flips in proptest::collection::vec((0usize..400, 0u8..8), 1..6),
+        md5 in any::<bool>(),
+    ) {
+        let l = wave(64, 16, 60);
+        let r = wave(64, 16, 61);
+        let mut f = stereo_frame(ChannelAssignment::Independent(2), 16, &l, &r, 16, 16);
+        for (at, bit) in flips {
+            let i = at % f.len();
+            f[i] ^= 1 << bit;
+        }
+        let info = block_info(44100, 2, 16, 0, if md5 { [1; 16] } else { [0; 16] });
+        let header_stands = frame::parse_header(&f).is_ok_and(|h| {
+            h.channels.channels() == 2
+                && h.bits_per_sample.is_none_or(|b| b == 16)
+                && h.sample_rate.is_none_or(|r| r == 44100)
+        });
+        prop_assume!(header_stands && crc16(&f) != 0);
+        prop_assert_eq!(malformed(decode(&info, &f)), "flac: frame CRC-16 mismatch");
+    }
 }
 
 proptest! {

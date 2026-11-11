@@ -166,7 +166,14 @@ impl Md5 {
         }
     }
 
-    pub fn update(&mut self, mut data: &[u8]) {
+    pub fn update(&mut self, data: &[u8]) {
+        self.update_interleaved(data, |_| {});
+    }
+
+    /// As [`update`](Self::update), calling `between` after each block compressed with the
+    /// number of blocks still to come in `data`. A compress is one long dependency chain that
+    /// leaves most of the core idle, so independent work placed here runs alongside it.
+    pub(crate) fn update_interleaved(&mut self, mut data: &[u8], mut between: impl FnMut(usize)) {
         self.len = self.len.wrapping_add(data.len() as u64);
         if self.buffered > 0 {
             let take = (64 - self.buffered).min(data.len());
@@ -181,8 +188,9 @@ impl Md5 {
             self.buffered = 0;
         }
         let (blocks, rest) = data.as_chunks::<64>();
-        for block in blocks {
+        for (i, block) in blocks.iter().enumerate() {
             compress(&mut self.state, block);
+            between(blocks.len() - 1 - i);
         }
         self.buf[..rest.len()].copy_from_slice(rest);
         self.buffered = rest.len();
