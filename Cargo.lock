@@ -1558,6 +1558,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-dsp",
  "crossfade-format",
+ "crossfade-loudness",
  "crossfade-resample",
  "crossfade-testkit",
  "insta",
