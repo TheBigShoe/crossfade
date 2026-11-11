@@ -66,7 +66,12 @@ fn source_flac(depth: u8) -> Vec<u8> {
     let stream = StreamInfo {
         frames: Some(FRAMES as u64),
         bits_per_raw_sample: (depth != width).then_some(depth),
-        ..StreamInfo::new(0, CodecId::Flac, audio.clone(), TimeBase::new(1, 48000).unwrap())
+        ..StreamInfo::new(
+            0,
+            CodecId::Flac,
+            audio.clone(),
+            TimeBase::new(1, 48000).unwrap(),
+        )
     };
     let mut io = MemoryIo::new();
     let mut mux = create_muxer(
@@ -91,14 +96,8 @@ fn source_flac(depth: u8) -> Vec<u8> {
 fn convert(io: &mut MemoryIo, from: &str, to: &str, audio: AudioSettings) {
     let mut j = job(from, to, None);
     j.outputs[0].audio = audio;
-    run(
-        &j,
-        io,
-        &Limits::default(),
-        &CancelToken::new(),
-        &mut |_| {},
-    )
-    .unwrap_or_else(|e| panic!("{from} -> {to}: {e}"));
+    run(&j, io, &Limits::default(), &CancelToken::new(), &mut |_| {})
+        .unwrap_or_else(|e| panic!("{from} -> {to}: {e}"));
 }
 
 /// What the file says its depth is, and (FLAC) its STREAMINFO MD5.
