@@ -108,7 +108,9 @@ pub(super) struct Level {
     /// Extra ridge amounts (relative, added to the autocorrelation at lag 0) tried when the
     /// first fit lands far above its estimate.
     pub(super) ridges: &'static [f64],
-    /// How many of the ridge search's candidates, best predicted first, are coded exactly.
+    /// How many of a window's candidate orders, best predicted first, are coded exactly.
+    pub(super) lpc_exact: usize,
+    /// How many of the pool (refinements, the ridge search), best predicted first, are coded.
     pub(super) ridge_exact: usize,
     pub(super) stereo: Stereo,
     /// Largest Rice partition order tried.
@@ -145,6 +147,11 @@ impl Level {
                 _ => 12,
             },
             windows: WINDOWS[usize::from(level.min(8))],
+            lpc_exact: match level {
+                0..=6 => 3,
+                7 => 2,
+                _ => 1,
+            },
             ridge_exact: 2,
             ridges: match level {
                 0..=4 => &[],
@@ -283,11 +290,15 @@ pub(super) struct Analyzer {
     /// Largest magnitude in the block being searched.
     peak: u64,
     cov: Box<lpc::Covariance>,
-    /// Scored candidates of the ridge search.
+    /// Scored candidates waiting to be coded: refinements and the ridge search's sets.
     pool: Vec<Candidate>,
-    /// Exact codings the ridge search made, for the tests.
+    /// The sets coded for the current block, so none is coded twice.
+    coded: Vec<(usize, u32, [i32; MAX_ORDER])>,
+    /// Exact LPC codings made from a window's candidates and from the pool, for the tests.
     #[cfg(test)]
-    pub(super) ridge_codings: usize,
+    pub(super) window_codings: usize,
+    #[cfg(test)]
+    pub(super) pool_codings: usize,
     /// Search as the encoder did before bounds and reordering, for the equivalence tests.
     #[cfg(test)]
     pub(super) reference: bool,
@@ -320,8 +331,11 @@ impl Analyzer {
             peak: 0,
             cov: Box::new(lpc::Covariance::new()),
             pool: Vec::with_capacity(64),
+            coded: Vec::with_capacity(16),
             #[cfg(test)]
-            ridge_codings: 0,
+            window_codings: 0,
+            #[cfg(test)]
+            pool_codings: 0,
             #[cfg(test)]
             reference: false,
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
@@ -377,17 +391,10 @@ impl Analyzer {
         if self.level.max_lpc > 0 && n >= 16 {
             self.peak = x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs()));
             self.reg = BASE_RIDGE;
-            let mut gap = 0.0f64;
-            for w in 0..self.level.windows.len() {
-                gap = gap.max(self.search_lpc(x, bps, head, w, plan));
-            }
-            // A predictable signal can sit far above the size its own error energy promises:
-            // the quantised coefficients of a badly conditioned fit are too coarse. A little
-            // ridge on the autocorrelation shrinks them, and each amount gives a different
-            // set to cost exactly. Ordinary audio stays within a fraction of a bit of its
-            // estimate and never pays for this.
-            if gap > GAP_BITS && !self.level.ridges.is_empty() {
-                self.ridge_search(x, bps, head, plan);
+            if T::as_i32(x).is_some() && lpc::int_scale(n, self.peak).is_some() {
+                self.search_lpc_scored(x, bps, head, plan);
+            } else {
+                self.search_lpc_coded(x, bps, head, plan);
             }
         }
         #[cfg(test)]
@@ -578,79 +585,206 @@ impl Analyzer {
         self.fit_lpc(x, bps, head, w, plan)
     }
 
-    /// The closer look at a predictable block: from the first window, each ridge amount gives a
-    /// coefficient set per order tried, rounded and refined. Each set is scored by the error
-    /// energy the block's covariance predicts for it, a quadratic form, and only the best few
-    /// by that score are coded for real. Samples whose covariance does not fit `i64` code
-    /// every set instead.
-    fn ridge_search<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
-        let n = x.len();
-        let p = self.level.max_lpc.min(n - 1);
-        let mut scratch = std::mem::take(&mut self.windowed_int);
-        let screen = self.cov.compute(x, p, self.peak, &mut scratch);
-        self.windowed_int = scratch;
-        if !screen {
+    /// Linear prediction for samples too wide for an exact covariance (the 32-bit stream):
+    /// every candidate is coded for real.
+    fn search_lpc_coded<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+        let mut gap = 0.0f64;
+        for w in 0..self.level.windows.len() {
+            gap = gap.max(self.search_lpc(x, bps, head, w, plan));
+        }
+        // A predictable signal can sit far above the size its own error energy promises: the
+        // quantised coefficients of a badly conditioned fit are too coarse. A little ridge on
+        // the autocorrelation shrinks them, and each amount gives a different set.
+        if gap > GAP_BITS {
             for &ridge in self.level.ridges {
                 self.reg = ridge;
                 // The first window's autocorrelation is still in `autocs[0]`.
                 self.fit_lpc(x, bps, head, 0, plan);
             }
-            return;
         }
+    }
+
+    /// Linear prediction with candidates scored before they are coded. Each window's orders,
+    /// best by Levinson's estimate, are scored by the error energy the block's covariance
+    /// predicts for them (an exact quadratic form) when there are more of them than the level
+    /// codes, and the best `lpc_exact` are coded for real. A coded set far above its estimate
+    /// is refined; refined sets, and on a predictable block the sets from each ridge amount
+    /// (rounded and refined), wait in a pool, scored the same way, and its best `ridge_exact`
+    /// are coded. Ordinary audio stays within a fraction of a bit of its estimate and never
+    /// gets past the first step.
+    fn search_lpc_scored<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+        let n = x.len();
+        let p = self.level.max_lpc.min(n - 1);
+        if self.window_len != n {
+            for (apod, window) in self.level.windows.iter().zip(&mut self.windows) {
+                let span = (n * apod.from / 60, n * apod.to / 60);
+                lpc::window(n, span.0, span.1, apod.taper, window);
+            }
+            self.window_len = n;
+        }
+        let precision = precision_for(self.level.block, self.depth);
+        let per_coef = precision + bps;
+        // The covariance is built the first time a score is needed.
+        let mut scored = false;
         let mut pool = std::mem::take(&mut self.pool);
         pool.clear();
-        let precision = precision_for(self.level.block, self.depth);
-        for &ridge in self.level.ridges {
-            self.reg = ridge;
-            let mut autoc = self.autocs[0];
-            autoc[p + 1..].fill(0.0);
-            autoc[0] *= 1.0 + self.reg;
+        let mut coded = std::mem::take(&mut self.coded);
+        coded.clear();
+        let mut gap = 0.0f64;
+        for w in 0..self.level.windows.len() {
+            let apod = self.level.windows[w];
+            let (from, to) = ((n * apod.from / 60).min(n), (n * apod.to / 60).min(n));
+            lpc::windowed_autocorrelation(
+                &x[from..to],
+                &self.windows[w][from..to],
+                self.peak,
+                &mut lpc::Windowed {
+                    float: &mut self.windowed,
+                    int: &mut self.windowed_int,
+                },
+                &mut self.autocs[w][..=p],
+            );
+            let autoc = self.ridged(w, p, BASE_RIDGE);
             let mut err = [0.0f64; MAX_ORDER];
             let orders = lpc::levinson(&autoc, p, &mut self.lp, &mut err);
-            let mut est = order_estimates(&err[..orders], n, precision + bps);
-            for t in 0..self.level.windows[0].tries.min(orders) {
+            let mut est = order_estimates(&err[..orders], n, per_coef);
+            let tries = apod.tries.min(orders);
+            // (score, order, shift, coefficients, estimate), in Levinson's order.
+            let mut cands = [(0.0f64, 0usize, 0u32, [0i32; MAX_ORDER], 0.0f64); MAX_ORDER];
+            let mut count = 0;
+            for t in 0..tries {
                 let order = next_best(&mut est[..orders], t);
                 let mut q = [0i32; MAX_ORDER];
-                let coefs = &self.lp[order - 1][..order];
-                let Some(shift) = lpc::quantize(coefs, precision, &mut q[..order]) else {
+                if let Some(shift) =
+                    lpc::quantize(&self.lp[order - 1][..order], precision, &mut q[..order])
+                {
+                    cands[count] = (0.0, order, shift, q, est[t].0);
+                    count += 1;
+                }
+            }
+            let exact = self.level.lpc_exact.min(count);
+            if exact < count {
+                if !scored {
+                    self.build_covariance(x, p);
+                    scored = true;
+                }
+                for c in &mut cands[..count] {
+                    c.0 = self.score(&c.3[..c.1], c.2, n, per_coef);
+                }
+                // Best score first; equal scores keep Levinson's order.
+                cands[..count].sort_by(|a, b| a.0.total_cmp(&b.0));
+            }
+            let mut wgap = f64::MAX;
+            for &(_, order, shift, q, est) in &cands[..exact] {
+                coded.push((order, shift, q));
+                #[cfg(test)]
+                {
+                    self.window_codings += 1;
+                }
+                let Some(bits) = self.try_coefs(x, &q[..order], shift, precision, bps, head, plan)
+                else {
                     continue;
                 };
-                let score = |q: &[i32]| {
-                    let per = self.cov.mean_energy(q, shift);
-                    0.5 * lpc::log2(per.max(f64::MIN_POSITIVE)) * (n - order) as f64
-                        + (order as u64 * u64::from(precision + bps)) as f64
-                };
-                pool.push((score(&q[..order]), order, shift, q));
-                lpc::refine(
-                    coefs,
-                    &mut q[..order],
-                    shift,
-                    precision,
-                    &autoc,
-                    REFINE_PASSES,
-                );
-                pool.push((score(&q[..order]), order, shift, q));
+                let miss = (bits - head) as f64 / n as f64 - est / n as f64;
+                wgap = wgap.min(miss);
+                if miss > GAP_BITS {
+                    // Far above the estimate: rounding each coefficient on its own is not the
+                    // best the quantiser can do, so look for a better integer point near it.
+                    if !scored {
+                        self.build_covariance(x, p);
+                        scored = true;
+                    }
+                    let autoc = self.ridged(w, p, BASE_RIDGE);
+                    let mut err = [0.0f64; MAX_ORDER];
+                    lpc::levinson(&autoc, p, &mut self.lp, &mut err);
+                    let mut r = q;
+                    let coefs = &self.lp[order - 1][..order];
+                    lpc::refine(
+                        coefs,
+                        &mut r[..order],
+                        shift,
+                        precision,
+                        &autoc,
+                        REFINE_PASSES,
+                    );
+                    pool.push((self.score(&r[..order], shift, n, per_coef), order, shift, r));
+                }
+            }
+            gap = gap.max(if wgap == f64::MAX { 0.0 } else { wgap });
+        }
+        if gap > GAP_BITS && !self.level.ridges.is_empty() {
+            if !scored {
+                self.build_covariance(x, p);
+            }
+            for &ridge in self.level.ridges {
+                let autoc = self.ridged(0, p, ridge);
+                let mut err = [0.0f64; MAX_ORDER];
+                let orders = lpc::levinson(&autoc, p, &mut self.lp, &mut err);
+                let mut est = order_estimates(&err[..orders], n, per_coef);
+                for t in 0..self.level.windows[0].tries.min(orders) {
+                    let order = next_best(&mut est[..orders], t);
+                    let mut q = [0i32; MAX_ORDER];
+                    let coefs = &self.lp[order - 1][..order];
+                    let Some(shift) = lpc::quantize(coefs, precision, &mut q[..order]) else {
+                        continue;
+                    };
+                    pool.push((self.score(&q[..order], shift, n, per_coef), order, shift, q));
+                    lpc::refine(
+                        coefs,
+                        &mut q[..order],
+                        shift,
+                        precision,
+                        &autoc,
+                        REFINE_PASSES,
+                    );
+                    pool.push((self.score(&q[..order], shift, n, per_coef), order, shift, q));
+                }
             }
         }
         // Best score first; equal scores keep the order they were made in.
         pool.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut coded = 0;
-        for (i, &(_, order, shift, q)) in pool.iter().enumerate() {
-            if coded == self.level.ridge_exact {
+        let mut extra = 0;
+        for &(_, order, shift, q) in &pool {
+            if extra == self.level.ridge_exact {
                 break;
             }
-            let same = |c: &Candidate| c.1 == order && c.2 == shift && c.3 == q;
-            if pool[..i].iter().any(same) {
+            if coded.contains(&(order, shift, q)) {
                 continue;
             }
-            coded += 1;
+            coded.push((order, shift, q));
+            extra += 1;
             #[cfg(test)]
             {
-                self.ridge_codings += 1;
+                self.pool_codings += 1;
             }
             self.try_coefs(x, &q[..order], shift, precision, bps, head, plan);
         }
         self.pool = pool;
+        self.coded = coded;
+    }
+
+    /// Window `w`'s autocorrelation up to lag `p`, with `ridge` added at lag 0.
+    fn ridged(&self, w: usize, p: usize, ridge: f64) -> [f64; MAX_ORDER + 1] {
+        let mut autoc = self.autocs[w];
+        autoc[p + 1..].fill(0.0);
+        autoc[0] *= 1.0 + ridge;
+        autoc
+    }
+
+    fn build_covariance<T: Sample>(&mut self, x: &[T], p: usize) {
+        let mut scratch = std::mem::take(&mut self.windowed_int);
+        let built = self.cov.compute(x, p, self.peak, &mut scratch);
+        debug_assert!(built, "the caller checked the samples fit");
+        self.windowed_int = scratch;
+    }
+
+    /// Predicted bits of a quantised predictor: the covariance's error energy per sample as
+    /// the residual size, Levinson's estimate does with its own; plus coefficients and warm-up.
+    fn score(&self, q: &[i32], shift: u32, n: usize, per_coef: u32) -> f64 {
+        let order = q.len();
+        let per = self.cov.mean_energy(q, shift);
+        0.5 * lpc::log2(per.max(f64::MIN_POSITIVE)) * (n - order) as f64
+            + (order as u64 * u64::from(per_coef)) as f64
     }
 
     /// The rest of [`search_lpc`](Self::search_lpc), from the autocorrelation of window `w`
