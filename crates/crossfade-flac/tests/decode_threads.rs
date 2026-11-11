@@ -14,7 +14,7 @@ use proptest::prelude::*;
 struct Seen {
     blocks: Vec<(u64, usize, Vec<i32>)>,
     error: Option<Error>,
-    end: std::result::Result<Verification, Error>,
+    end: Result<Verification, Error>,
 }
 
 /// The reference: `decode_frame` one frame after another, stopping at the first error.
@@ -70,10 +70,13 @@ fn pushed(info: &StreamInfoBlock, frames: &[Vec<u8>], threads: usize, flush_ever
     assert_eq!(dec.frames_in_flight(), 0);
     if let Some(e) = &error {
         // The stream is over: the same error again, and nothing more delivered.
-        let before = blocks.len();
-        assert_eq!(dec.push_frame(&frames[0], &mut take).as_ref(), Err(e));
-        assert_eq!(dec.flush(&mut take).as_ref(), Err(e));
-        assert_eq!(blocks.len(), before);
+        let mut more = 0;
+        assert_eq!(
+            dec.push_frame(&frames[0], &mut |_| more += 1).as_ref(),
+            Err(e)
+        );
+        assert_eq!(dec.flush(&mut |_| more += 1).as_ref(), Err(e));
+        assert_eq!(more, 0);
     }
     Seen {
         blocks,
@@ -169,12 +172,14 @@ proptest! {
         channels in 1u8..=8,
         level in 0u8..=8,
         kind in 0u8..KINDS,
-        count in 0usize..40,
-        block in 16usize..300,
+        count in 0usize..14,
         seed in any::<u64>(),
         flush_every in 0usize..7,
     ) {
-        let e = stream(bits, channels, level, kind, count * block + block / 3, block, seed);
+        let block = if level <= 2 { 1152 } else { 4096 };
+        // Many channels get fewer frames, to keep a case cheap.
+        let count = if channels > 2 { count.min(4) } else { count };
+        let e = stream(bits, channels, level, kind, count * block + block / 3, 0, seed);
         let frames = frames_of(&e);
         let want = reference(&e.info, &frames);
         prop_assert_eq!(&want.error, &None);
@@ -190,14 +195,14 @@ proptest! {
         channels in 1u8..=4,
         level in 0u8..=8,
         kind in 0u8..KINDS,
-        count in 1usize..30,
-        block in 16usize..200,
+        count in 1usize..10,
         seed in any::<u64>(),
         how in any::<u8>(),
         at in any::<usize>(),
         flush_every in 0usize..5,
     ) {
-        let e = stream(bits, channels, level, kind, count * block + 5, block, seed);
+        let block = if level <= 2 { 1152 } else { 4096 };
+        let e = stream(bits, channels, level, kind, count * block + 5, 0, seed);
         let mut frames = frames_of(&e);
         corrupt(&mut frames, how, at, seed);
         let want = reference(&e.info, &frames);

@@ -1066,9 +1066,15 @@ proptest! {
     }
 }
 
-/// `frames` frames of `block` samples of a 16-bit stereo ramp, and its STREAMINFO.
+/// `frames` frames of `block` samples (1152 at level 0, 4096 above) of a 16-bit stereo ramp,
+/// and its STREAMINFO.
 fn encoded(frames: usize, block: usize) -> (StreamInfoBlock, Vec<Vec<u8>>) {
-    let mut enc = crate::Encoder::new(crate::EncoderConfig::new(44_100, 2, 16)).unwrap();
+    let config = crate::EncoderConfig {
+        level: if block == 1152 { 0 } else { 5 },
+        ..crate::EncoderConfig::new(44_100, 2, 16)
+    };
+    let mut enc = crate::Encoder::new(config).unwrap();
+    assert_eq!(enc.block_size(), block);
     let samples: Vec<i32> = (0..frames * block * 2)
         .map(|i| (i as i32 * 37) % 20_000 - 10_000)
         .collect();
@@ -1083,7 +1089,7 @@ fn encoded(frames: usize, block: usize) -> (StreamInfoBlock, Vec<Vec<u8>>) {
 
 #[test]
 fn a_panic_in_a_decoding_worker_is_an_error_from_then_on() {
-    let (info, frames) = encoded(20, 1024);
+    let (info, frames) = encoded(20, 1152);
     for threads in [2, 4] {
         let mut dec = Decoder::with_threads(&info, threads).unwrap();
         dec.panic_at = Some(5);
@@ -1100,7 +1106,7 @@ fn a_panic_in_a_decoding_worker_is_an_error_from_then_on() {
             panic!("{threads} threads: {result:?}")
         };
         assert!(what.contains("frame 5"), "{what}");
-        assert_eq!(firsts, (0..5).map(|i| i * 1024).collect::<Vec<u64>>());
+        assert_eq!(firsts, (0..5).map(|i| i * 1152).collect::<Vec<u64>>());
         assert_eq!(dec.flush(&mut |_| panic!("no block")), result);
         assert_eq!(dec.finish(), Ok(Verification::Skipped));
     }
@@ -1122,7 +1128,7 @@ fn one_thread_or_a_short_stream_starts_no_thread() {
 
 #[test]
 fn a_long_stream_decodes_and_hashes_on_threads_of_its_own() {
-    let (info, frames) = encoded(40, 1024);
+    let (info, frames) = encoded(40, 1152);
     let mut dec = Decoder::with_threads(&info, 4).unwrap();
     for f in &frames {
         dec.push_frame(f, &mut |_| {}).unwrap();

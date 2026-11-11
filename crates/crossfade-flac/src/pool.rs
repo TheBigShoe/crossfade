@@ -40,6 +40,20 @@ impl Panicked {
 
 const THREAD_NAME: &str = "crossfade-flac";
 
+/// The most threads an automatic count picks: past it the MD5 thread, not the frames, sets the
+/// pace, in the encoder and the decoder alike.
+pub(crate) const MAX_AUTO_THREADS: usize = 8;
+
+/// Threads for an automatic count on a machine that runs `cores` at once: three are left for
+/// the serial stages (the MD5 thread, and the caller's reading and writing).
+pub(crate) fn auto_threads(cores: usize) -> usize {
+    if cores <= 2 {
+        cores
+    } else {
+        (cores - 3).clamp(2, MAX_AUTO_THREADS)
+    }
+}
+
 enum Slot<O> {
     Waiting,
     Done(Result<O, Panicked>),
@@ -114,6 +128,8 @@ pub(crate) struct Ordered<I, O, W> {
     handles: Vec<JoinHandle<()>>,
     max_workers: usize,
     capacity: usize,
+    /// Items queued with nobody free to take them that start a worker.
+    threshold: usize,
     /// Sequence numbers of the next item in and the next result out.
     next_in: u64,
     next_out: u64,
@@ -145,9 +161,18 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
             handles: Vec::new(),
             max_workers: workers,
             capacity: (workers + 1) * depth.max(1),
+            threshold: 2,
             next_in: 0,
             next_out: 0,
         }
+    }
+
+    /// A worker starts when `items` (at least 1) wait with no worker free to take them; 2 by
+    /// default, so one item alone runs on the caller. Higher spares short streams the threads
+    /// when an item is cheap next to starting one.
+    pub(crate) fn spawn_threshold(mut self, items: usize) -> Self {
+        self.threshold = items.max(1);
+        self
     }
 
     /// How many items may be in flight at once.
@@ -189,10 +214,10 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
         state.queue.push_back((self.next_in, item));
         state.slots.push_back(Slot::Waiting);
         self.next_in += 1;
-        // One item waiting is left for the caller, which runs it when it wants the result;
-        // a second with nobody free to take it is worth a thread.
+        // Items waiting below the threshold are left for the caller, which runs them when it
+        // wants their results; more with nobody free to take them are worth a thread.
         let spawn = may_spawn
-            && state.queue.len() >= state.idle + 2
+            && state.queue.len() >= state.idle + self.threshold
             && self.handles.len() < self.max_workers;
         if state.idle > 0 {
             self.shared.work.notify_one();
