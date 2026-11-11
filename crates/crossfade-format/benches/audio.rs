@@ -91,6 +91,7 @@ fn encode_packets(s: &Signal, codec: CodecId, level: Option<u8>) -> (Vec<u8>, Ve
         &s.spec,
         &EncodeOptions {
             compression_level: level,
+            ..EncodeOptions::default()
         },
     )
     .unwrap();
@@ -188,6 +189,7 @@ fn bench(c: &mut Criterion) {
                         &s.spec,
                         &EncodeOptions {
                             compression_level: Some(level),
+                            ..EncodeOptions::default()
                         },
                     )
                     .unwrap();

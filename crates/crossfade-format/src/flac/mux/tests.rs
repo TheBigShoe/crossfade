@@ -291,3 +291,99 @@ fn a_comment_block_over_the_24_bit_length_limit_is_refused() {
     );
     assert!(matches!(r.err(), Some(Error::Unsupported { .. })));
 }
+
+const MASK_KEY: &str = "WAVEFORMATEXTENSIBLE_CHANNEL_MASK";
+
+/// The comments a FLAC file for `layout` carries when written with `carried` tags.
+fn written_comments(layout: ChannelLayout, carried: &Tags) -> Vec<(String, String)> {
+    let audio = AudioSpec::new(48000, SampleFormat::S16, layout).unwrap();
+    let s = StreamInfo::new(0, CodecId::Flac, audio, TimeBase::new(1, 48000).unwrap());
+    let sink = Shared::default();
+    create(Box::new(sink.clone()), &s, carried)
+        .unwrap()
+        .finish()
+        .unwrap();
+    let bytes = sink.bytes();
+    let parsed = vorbis_comment::parse(&bytes[46..], &Limits::default()).unwrap();
+    parsed
+        .tags
+        .iter()
+        .map(|t| (t.key.clone(), t.value.clone()))
+        .collect()
+}
+
+fn pair(k: &str, v: &str) -> (String, String) {
+    (k.to_owned(), v.to_owned())
+}
+
+#[test]
+fn a_layout_other_than_the_default_writes_one_mask_tag() {
+    // 5.1 with back channels: the default for six channels uses the side pair.
+    let back = ChannelLayout::from_mask(0x3F, 6).unwrap();
+    assert_eq!(
+        written_comments(back.clone(), &Tags::new()),
+        [pair(MASK_KEY, "0x003F")]
+    );
+    // Any tag carried over from the source is replaced, whatever its spelling.
+    let mut carried = tags();
+    carried.push("waveformatextensible_channel_mask", "0x0001");
+    carried.push(MASK_KEY, "0x060F");
+    assert_eq!(
+        written_comments(back, &carried),
+        [
+            pair("TITLE", "Tone"),
+            pair("ARTIST", "A"),
+            pair("ARTIST", "B"),
+            pair(MASK_KEY, "0x003F"),
+        ]
+    );
+}
+
+#[test]
+fn the_mask_is_spelled_like_the_reference_writes_it() {
+    // Uppercase hex, at least four digits.
+    for (mask, channels, text) in [
+        (0x1u32, 1u16, "0x0001"),
+        (0x3F, 6, "0x003F"),
+        (0xC0, 2, "0x00C0"),
+        (0x3F003, 8, "0x3F003"),
+    ] {
+        let layout = ChannelLayout::from_mask(mask, channels).unwrap();
+        assert_eq!(written_comments(layout, &Tags::new())[0].1, text);
+    }
+}
+
+#[test]
+fn the_default_layout_writes_no_tag_and_drops_a_stale_one() {
+    for (mask, channels) in [
+        (0x4u32, 1u16),
+        (0x3, 2),
+        (0x7, 3),
+        (0x33, 4),
+        (0x607, 5),
+        (0x60F, 6),
+        (0x70F, 7),
+        (0x63F, 8),
+    ] {
+        let layout = ChannelLayout::from_mask(mask, channels).unwrap();
+        let mut stale = tags();
+        stale.push(MASK_KEY, "0x0001");
+        assert_eq!(
+            written_comments(layout, &stale),
+            [
+                pair("TITLE", "Tone"),
+                pair("ARTIST", "A"),
+                pair("ARTIST", "B")
+            ],
+            "{mask:#x}"
+        );
+    }
+}
+
+#[test]
+fn a_layout_without_positions_writes_no_tag() {
+    let layout = ChannelLayout::unpositioned(6).unwrap();
+    let mut stale = Tags::new();
+    stale.push(MASK_KEY, "0x003F");
+    assert_eq!(written_comments(layout, &stale), []);
+}

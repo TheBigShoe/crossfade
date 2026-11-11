@@ -103,6 +103,7 @@ fn main() {
         &spec,
         &EncodeOptions {
             compression_level: level,
+            ..EncodeOptions::default()
         },
     )
     .unwrap();

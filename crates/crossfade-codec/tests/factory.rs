@@ -52,6 +52,7 @@ fn flac_is_routed_to_the_real_codecs() {
     assert!(matches!(decoder_for(&info), Err(Error::Malformed { .. })));
     let opts = EncodeOptions {
         compression_level: Some(5),
+        ..EncodeOptions::default()
     };
     assert!(encoder_for(CodecId::Flac, &audio, &opts).is_ok());
     // A thread count is accepted by every decoder too.

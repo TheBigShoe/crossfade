@@ -6,8 +6,11 @@
 //! totals. Stream copy hands over the source's STREAMINFO and never calls `set_extradata`, so
 //! nothing is patched.
 
+use super::{CHANNEL_MASK_TAG, default_mask};
 use crate::vorbis_comment;
-use crossfade_core::{CodecId, Error, MediaSink, Muxer, Packet, SampleFormat, StreamInfo, Tags};
+use crossfade_core::{
+    ChannelLayout, CodecId, Error, MediaSink, Muxer, Packet, SampleFormat, StreamInfo, Tags,
+};
 use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::SeekFrom;
 
@@ -66,6 +69,26 @@ fn checked(extradata: &[u8]) -> Result<[u8; StreamInfoBlock::LEN], Error> {
     Ok(extradata.try_into().expect("parse accepted 34 bytes"))
 }
 
+/// The tags to write: the layout decides the channel mask tag, so a carried-over one goes. The
+/// tag appears only when the layout is not FLAC's default for its channel count.
+fn with_channel_mask(tags: &Tags, layout: &ChannelLayout) -> Tags {
+    let mut out = Tags::new();
+    for t in tags
+        .iter()
+        .filter(|t| !t.key.eq_ignore_ascii_case(CHANNEL_MASK_TAG))
+    {
+        out.push(t.key.clone(), t.value.clone());
+    }
+    if let Some(mask) = layout
+        .to_mask()
+        .filter(|&m| Some(m) != default_mask(layout.channels()))
+    {
+        // Four digits at least, as the reference `flac` writes it.
+        out.push(CHANNEL_MASK_TAG, format!("{mask:#06X}"));
+    }
+    out
+}
+
 fn block_header(flags_and_type: u8, len: usize) -> [u8; 4] {
     let l = (len as u32).to_be_bytes();
     [flags_and_type, l[1], l[2], l[3]]
@@ -89,7 +112,7 @@ pub fn create(
     let mut comment = Vec::new();
     vorbis_comment::write(
         &format!("Crossfade {}", env!("CARGO_PKG_VERSION")),
-        tags,
+        &with_channel_mask(tags, stream.audio.layout()),
         &mut comment,
     );
     if comment.len() > MAX_BLOCK_LEN {

@@ -7,34 +7,61 @@ pub use demux::open;
 pub use mux::create;
 
 use crossfade_core::{
-    AudioSpec, Channel, ChannelLayout, CodecId, Error, SampleFormat, StreamInfo, TimeBase,
+    AudioSpec, ChannelLayout, CodecId, Error, SampleFormat, StreamInfo, Tags, TimeBase,
 };
 use crossfade_flac::streaminfo::StreamInfoBlock;
 
-/// FLAC's default channel orders (RFC 9639 section 9.1.3). Seven channels would need a
-/// back-centre position `Channel` does not have, so that count stays unpositioned.
+/// The tag a FLAC file uses to say its channels differ from the defaults (RFC 9639 section
+/// 8.6.2); its value is a WAVE channel mask.
+pub(crate) const CHANNEL_MASK_TAG: &str = "WAVEFORMATEXTENSIBLE_CHANNEL_MASK";
+
+/// FLAC's default channel orders (RFC 9639 section 9.1.3) as WAVE masks. The RFC's
+/// "back/surround" pair for 5 and 6 channels is the side pair, which is what the reference
+/// `flac` writes into a WAV for an untagged stream.
+pub(crate) fn default_mask(channels: u16) -> Option<u32> {
+    Some(match channels {
+        1 => 0x4,
+        2 => 0x3,
+        3 => 0x7,
+        4 => 0x33,
+        5 => 0x607,
+        6 => 0x60F,
+        7 => 0x70F,
+        8 => 0x63F,
+        _ => return None,
+    })
+}
+
 fn layout(channels: u8) -> Result<ChannelLayout, Error> {
-    use Channel::*;
-    let positions: &[Channel] = match channels {
-        1 => return Ok(ChannelLayout::mono()),
-        2 => return Ok(ChannelLayout::stereo()),
-        3 => &[FrontLeft, FrontRight, FrontCenter],
-        4 => &[FrontLeft, FrontRight, BackLeft, BackRight],
-        5 => &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
-        6 => &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
-        8 => &[
-            FrontLeft,
-            FrontRight,
-            FrontCenter,
-            Lfe,
-            BackLeft,
-            BackRight,
-            SideLeft,
-            SideRight,
-        ],
-        n => return ChannelLayout::unpositioned(u16::from(n)),
-    };
-    ChannelLayout::from_positions(positions.to_vec())
+    let n = u16::from(channels);
+    default_mask(n)
+        .and_then(|mask| ChannelLayout::from_mask(mask, n))
+        .map_or_else(|| ChannelLayout::unpositioned(n), Ok)
+}
+
+/// The layout a channel mask tag names, if it has one that is valid for `channels`: hex with or
+/// without `0x`, as many bits as channels, every bit a position we know.
+fn tagged_layout(tags: &Tags, channels: u16) -> Option<ChannelLayout> {
+    let value = tags.get(CHANNEL_MASK_TAG)?.trim();
+    let digits = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    // `from_str_radix` accepts a leading sign.
+    if !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    ChannelLayout::from_mask(u32::from_str_radix(digits, 16).ok()?, channels)
+}
+
+/// Replaces the default layout with the one the file's channel mask tag names; an invalid tag
+/// changes nothing. Shared by the native and Ogg readers.
+pub(crate) fn apply_channel_mask(stream: &mut StreamInfo, tags: &Tags) -> Result<(), Error> {
+    let audio = &stream.audio;
+    if let Some(layout) = tagged_layout(tags, audio.layout().channels()) {
+        stream.audio = AudioSpec::new(audio.sample_rate(), audio.format(), layout)?;
+    }
+    Ok(())
 }
 
 /// The stream a STREAMINFO block describes; shared by the native and Ogg readers.
@@ -74,7 +101,7 @@ pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossfade_core::{Channel::*, SampleFormat};
+    use crossfade_core::{Channel, Channel::*, SampleFormat, Tags};
 
     #[test]
     fn an_internal_error_keeps_its_text() {
@@ -145,17 +172,29 @@ mod tests {
 
     #[test]
     fn channel_orders_follow_rfc_9639() {
-        let positioned: [(u8, &[Channel]); 6] = [
+        let positioned: [(u8, &[Channel]); 7] = [
             (1, &[FrontCenter]),
             (3, &[FrontLeft, FrontRight, FrontCenter]),
             (4, &[FrontLeft, FrontRight, BackLeft, BackRight]),
             (
                 5,
-                &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
+                &[FrontLeft, FrontRight, FrontCenter, SideLeft, SideRight],
             ),
             (
                 6,
-                &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
+                &[FrontLeft, FrontRight, FrontCenter, Lfe, SideLeft, SideRight],
+            ),
+            (
+                7,
+                &[
+                    FrontLeft,
+                    FrontRight,
+                    FrontCenter,
+                    Lfe,
+                    BackCenter,
+                    SideLeft,
+                    SideRight,
+                ],
             ),
             (
                 8,
@@ -175,12 +214,6 @@ mod tests {
             let s = info(&block(48000, n, 16, 1));
             assert_eq!(s.audio.layout().positions(), Some(want), "{n}");
         }
-        // 7 channels need a back-centre position, which `Channel` lacks.
-        let seven = info(&block(48000, 7, 16, 1));
-        assert_eq!(
-            seven.audio.layout(),
-            &ChannelLayout::unpositioned(7).unwrap()
-        );
         assert_eq!(info(&block(48000, 2, 16, 1)).audio.layout().channels(), 2);
     }
 
@@ -188,5 +221,53 @@ mod tests {
     fn the_extradata_is_passed_through_as_given() {
         let b = block(48000, 2, 16, 1);
         assert_eq!(stream_info(&b, &[1, 2, 3]).unwrap().extradata, [1, 2, 3]);
+    }
+
+    fn masked(channels: u8, value: &str) -> ChannelLayout {
+        let mut stream = info(&block(48000, channels, 16, 1));
+        let mut tags = Tags::new();
+        tags.push("waveformatextensible_channel_mask", value);
+        apply_channel_mask(&mut stream, &tags).unwrap();
+        stream.audio.layout().clone()
+    }
+
+    #[test]
+    fn a_channel_mask_tag_sets_the_layout() {
+        let side = ChannelLayout::from_mask(0x060F, 6).unwrap();
+        let back = ChannelLayout::from_mask(0x003F, 6).unwrap();
+        // With or without the prefix, in either case, with spaces around it.
+        for value in ["0x060F", "0X060f", "60F", " 0x60f "] {
+            assert_eq!(masked(6, value), side, "{value:?}");
+        }
+        assert_eq!(masked(6, "0x003F"), back);
+        assert_eq!(masked(1, "0x1").positions(), Some(&[FrontLeft][..]));
+        assert_eq!(masked(2, "0x0C").positions(), Some(&[FrontCenter, Lfe][..]));
+    }
+
+    #[test]
+    fn an_invalid_channel_mask_tag_is_ignored() {
+        let default = info(&block(48000, 6, 16, 1)).audio.layout().clone();
+        for value in [
+            "",
+            "0x",
+            "zz",
+            "0x3",
+            "0x7FF",
+            "0x1FFFFFFFF",
+            "-1",
+            "0x060F0000",
+            "0x40000",
+            "6.0",
+        ] {
+            assert_eq!(masked(6, value), default, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn no_tag_leaves_the_default_layout() {
+        let mut stream = info(&block(48000, 6, 16, 1));
+        let before = stream.clone();
+        apply_channel_mask(&mut stream, &Tags::new()).unwrap();
+        assert_eq!(stream, before);
     }
 }

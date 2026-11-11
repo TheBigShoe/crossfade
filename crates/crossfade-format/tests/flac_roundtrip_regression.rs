@@ -58,6 +58,7 @@ fn round_trip(rate: u32, channels: u16, level: u8, samples: Vec<i16>) -> Vec<i16
         &spec,
         &EncodeOptions {
             compression_level: Some(level),
+            ..EncodeOptions::default()
         },
     )
     .unwrap();

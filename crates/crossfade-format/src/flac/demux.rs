@@ -5,7 +5,7 @@
 //! lies between them checks out; a bare header-looking byte pattern inside audio data does not
 //! pass that test.
 
-use super::stream_info;
+use super::{apply_channel_mask, stream_info};
 use crate::vorbis_comment;
 use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Tags};
 use crossfade_flac::crc::crc16_update;
@@ -558,7 +558,8 @@ pub fn open(mut source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn
     let mut pos = 0u64;
     skip_to_marker(source.as_mut(), &mut pos)?;
     let meta = read_metadata(source.as_mut(), &mut pos, limits)?;
-    let stream = stream_info(&meta.info, &meta.raw)?;
+    let mut stream = stream_info(&meta.info, &meta.raw)?;
+    apply_channel_mask(&mut stream, &meta.tags)?;
     Ok(Box::new(FlacDemuxer {
         source,
         pos,

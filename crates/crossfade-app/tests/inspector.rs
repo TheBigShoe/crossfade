@@ -310,3 +310,47 @@ fn the_depth_of_a_stream_is_its_raw_bits_when_it_has_them() {
     s.bits_per_raw_sample = Some(20);
     assert_eq!(depth(&s), "20-bit");
 }
+
+/// A 20-bit stereo WAV as other software writes it: `WAVE_FORMAT_EXTENSIBLE`, 24-bit container.
+fn extensible_20_bit_wav() -> Vec<u8> {
+    let mut fmt = Vec::new();
+    for (v, n) in [
+        (0xFFFEu32, 2),
+        (2, 2),
+        (48_000, 4),
+        (288_000, 4),
+        (6, 2),
+        (24, 2),
+    ] {
+        fmt.extend_from_slice(&v.to_le_bytes()[..n]);
+    }
+    fmt.extend_from_slice(&22u16.to_le_bytes());
+    fmt.extend_from_slice(&20u16.to_le_bytes());
+    fmt.extend_from_slice(&3u32.to_le_bytes());
+    fmt.extend_from_slice(&1u16.to_le_bytes());
+    fmt.extend_from_slice(&[0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71]);
+    let pcm = [0u8; 12];
+    let mut body = b"WAVEfmt ".to_vec();
+    body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+    body.extend_from_slice(&fmt);
+    body.extend_from_slice(b"data");
+    body.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+    body.extend_from_slice(&pcm);
+    let mut wav = b"RIFF".to_vec();
+    wav.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&body);
+    wav
+}
+
+#[test]
+fn a_wav_with_valid_bits_below_its_container_shows_the_true_depth() {
+    use crossfade_core::Limits;
+    use crossfade_testkit::memory::MemoryIo;
+    let mut io = MemoryIo::new();
+    io.insert("a.wav", extensible_20_bit_wav());
+    let report = crossfade_graph::probe("a.wav", &mut io, &Limits::default()).unwrap();
+    let d = report.document();
+    assert_eq!(d.streams[0].sample_format, "s24");
+    assert_eq!(value(&d, "bits_per_raw_sample"), "20-bit");
+    assert_eq!(crossfade_app::inspector::depth(&d.streams[0]), "20-bit");
+}

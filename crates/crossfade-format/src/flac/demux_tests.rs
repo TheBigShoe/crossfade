@@ -179,6 +179,24 @@ fn tags_come_from_the_vorbis_comment_block() {
 }
 
 #[test]
+fn a_channel_mask_comment_sets_the_layout() {
+    let c = comment(&["WAVEFORMATEXTENSIBLE_CHANNEL_MASK=0x0001"]);
+    let d = open_bytes(&stream(0, &[(4, c)], &[])).unwrap();
+    assert_eq!(
+        d.streams()[0].audio.layout().positions(),
+        Some(&[crossfade_core::Channel::FrontLeft][..])
+    );
+    // The tag stays among the tags; the muxer decides what to write.
+    assert!(d.tags().get("WAVEFORMATEXTENSIBLE_CHANNEL_MASK").is_some());
+    let bad = comment(&["WAVEFORMATEXTENSIBLE_CHANNEL_MASK=0x3"]);
+    let d = open_bytes(&stream(0, &[(4, bad)], &[])).unwrap();
+    assert_eq!(
+        d.streams()[0].audio.layout(),
+        &crossfade_core::ChannelLayout::mono()
+    );
+}
+
+#[test]
 fn a_file_without_comments_has_no_tags() {
     assert!(open_bytes(&stream(0, &[], &[])).unwrap().tags().is_empty());
 }

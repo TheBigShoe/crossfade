@@ -75,7 +75,14 @@ impl AiffMuxer {
         stream: &StreamInfo,
         tags: &Tags,
     ) -> Result<Self, Error> {
-        let (aifc, bits) = describe(stream.codec)?;
+        let (aifc, width) = describe(stream.codec)?;
+        // sampleSize is the true depth, samples left-justified in whole bytes. A depth that
+        // would change the byte width could not be read back, so the container's width stands.
+        let bits = stream
+            .bits_per_raw_sample
+            .map(u16::from)
+            .filter(|&d| aifc.is_none() && d > 0 && d < width && d.div_ceil(8) == width / 8)
+            .unwrap_or(width);
         let audio = &stream.audio;
         if stream.codec.pcm_sample_format() != Some(audio.format()) {
             return Err(Error::Malformed {

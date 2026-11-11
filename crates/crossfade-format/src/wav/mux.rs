@@ -1,6 +1,6 @@
 use super::INFO_CAP;
 use crossfade_core::{
-    Channel, ChannelLayout, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags, tag_keys,
+    ChannelLayout, CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags, tag_keys,
 };
 use std::io::SeekFrom;
 
@@ -11,18 +11,6 @@ const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 const GUID_TAIL: [u8; 14] = [
     0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
 ];
-/// WAVE channel-mask bit of each position, in the order the format requires.
-const MASK_BITS: [(Channel, u32); 8] = [
-    (Channel::FrontLeft, 0),
-    (Channel::FrontRight, 1),
-    (Channel::FrontCenter, 2),
-    (Channel::Lfe, 3),
-    (Channel::BackLeft, 4),
-    (Channel::BackRight, 5),
-    (Channel::SideLeft, 9),
-    (Channel::SideRight, 10),
-];
-
 pub struct WavMuxer {
     sink: Box<dyn MediaSink>,
     bytes_per_frame: usize,
@@ -37,24 +25,6 @@ fn unsupported(what: &str) -> Error {
     Error::Unsupported {
         what: what.to_owned(),
     }
-}
-
-fn mask_for(positions: Option<&[Channel]>) -> u32 {
-    let Some(positions) = positions else { return 0 };
-    let mut last = None;
-    let mut mask = 0;
-    for p in positions {
-        let Some(&(_, bit)) = MASK_BITS.iter().find(|(c, _)| c == p) else {
-            return 0;
-        };
-        // A mask is a set in bit order; any other order would be lost.
-        if last.is_some_and(|l| bit < l) {
-            return 0;
-        }
-        last = Some(bit);
-        mask |= 1 << bit;
-    }
-    mask
 }
 
 /// WAV `INFO` sub-chunk ids in the order they are written.
@@ -124,13 +94,21 @@ impl WavMuxer {
             .map_err(|_| unsupported("byte rate does not fit 32 bits"))?;
         let bits = u16::try_from(format.bits()).map_err(|_| Error::Overflow)?;
         let float = format.is_float();
-        let plain = !float && bits <= 16 && channels <= 2 && rate <= 48000;
-        // The tag-3 header has no channel mask; Microsoft requires the extensible form for more
-        // than two channels, and positions other than the mono/stereo defaults need the mask.
+        // Left-justified in the container, as WAV requires; the header says how many bits count.
+        let valid = stream
+            .bits_per_raw_sample
+            .map(u16::from)
+            .filter(|&v| v > 0 && v < bits && !float)
+            .unwrap_or(bits);
         let layout = audio.layout();
         let default_layout = layout == &ChannelLayout::mono() || layout == &ChannelLayout::stereo();
-        let ext_float =
-            float && (channels > 2 || (layout.positions().is_some() && !default_layout));
+        // The short headers have no mask; any positions but the mono/stereo defaults need one.
+        let positional = layout.positions().is_some() && !default_layout;
+        let plain =
+            !float && bits <= 16 && channels <= 2 && rate <= 48000 && valid == bits && !positional;
+        // The tag-3 header has no channel mask; Microsoft requires the extensible form for more
+        // than two channels.
+        let ext_float = float && (channels > 2 || positional);
         let extensible = !plain && (!float || ext_float);
 
         let mut h = Vec::with_capacity(80);
@@ -154,8 +132,8 @@ impl WavMuxer {
             h.extend_from_slice(&0u16.to_le_bytes());
         } else if extensible {
             h.extend_from_slice(&22u16.to_le_bytes());
-            h.extend_from_slice(&bits.to_le_bytes());
-            h.extend_from_slice(&mask_for(audio.layout().positions()).to_le_bytes());
+            h.extend_from_slice(&valid.to_le_bytes());
+            h.extend_from_slice(&layout.to_mask().unwrap_or(0).to_le_bytes());
             h.extend_from_slice(&tag.to_le_bytes());
             h.extend_from_slice(&GUID_TAIL);
         }

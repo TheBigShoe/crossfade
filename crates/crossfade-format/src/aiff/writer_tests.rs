@@ -438,3 +438,44 @@ fn the_reader_needs_no_seek_to_read_back_a_tagless_file() {
     assert!(d.read_packet(&mut p).unwrap());
     assert_eq!(p.data, [0, 1, 0, 2]);
 }
+
+#[test]
+fn comm_sample_size_is_the_true_depth_while_the_byte_width_agrees() {
+    // (codec, true depth, sampleSize written, bytes per sample)
+    for (codec, depth, written, size) in [
+        (CodecId::PcmS8, 6, 6, 1),
+        (CodecId::PcmS16Be, 12, 12, 2),
+        (CodecId::PcmS24Be, 20, 20, 3),
+        (CodecId::PcmS32Be, 28, 28, 4),
+        // A depth whose byte width differs from the container's cannot be told to a reader.
+        (CodecId::PcmS24Be, 12, 24, 3),
+        (CodecId::PcmS16Be, 16, 16, 2),
+    ] {
+        let mut s = stream(codec, 8000, ChannelLayout::stereo());
+        s.bits_per_raw_sample = Some(depth);
+        let data = vec![0x40; 2 * size];
+        let bytes = write(&s, &Tags::new(), &[&data]).unwrap();
+        assert_eq!(bytes, plain(2, 1, written, &[], &data), "{codec:?} {depth}");
+    }
+}
+
+#[test]
+fn a_true_depth_reads_back_from_what_was_written() {
+    let mut s = stream(CodecId::PcmS24Be, 8000, ChannelLayout::stereo());
+    s.bits_per_raw_sample = Some(20);
+    let bytes = write(&s, &Tags::new(), &[&[0; 6]]).unwrap();
+    let (_, d) = crate::open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default()).unwrap();
+    assert_eq!(d.streams()[0].bits_per_raw_sample, Some(20));
+}
+
+#[test]
+fn aiff_has_no_channel_mask_so_a_multichannel_layout_reads_back_unpositioned() {
+    let layout = ChannelLayout::from_mask(0x060F, 6).unwrap();
+    let s = stream(CodecId::PcmS16Be, 8000, layout);
+    let bytes = write(&s, &Tags::new(), &[&[0; 12]]).unwrap();
+    let (_, d) = crate::open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default()).unwrap();
+    assert_eq!(
+        d.streams()[0].audio.layout(),
+        &ChannelLayout::unpositioned(6).unwrap()
+    );
+}
