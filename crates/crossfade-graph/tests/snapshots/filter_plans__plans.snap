@@ -282,6 +282,16 @@ dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 1000 frames flac
 validate: ok
 
+### unlabelled six channels mixed down take the 5.1 layout
+input:    48000 Hz 6 channels s16 (full width), 1000 frames
+args:     -o o.flac --channels stereo
+job:      {"channels":"stereo"}
+chain:    1. mix to stereo
+dither:   tpdf
+note:     treating 6 unlabelled channels as 5.1
+output:   48000 Hz stereo s16 (full width), 1000 frames flac
+validate: ok
+
 ### more channels than FLAC holds
 input:    44100 Hz stereo s16 (full width), 441000 frames
 args:     -o o.flac --channels 12

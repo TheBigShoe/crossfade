@@ -145,6 +145,9 @@ fn render(c: &Case) -> String {
     };
     match described {
         Ok(p) => {
+            for note in &p.notes {
+                writeln!(out, "note:     {note}").unwrap();
+            }
             let copy = if p.copy { " (stream copy)" } else { "" };
             writeln!(
                 out,
@@ -349,6 +352,12 @@ fn plans() {
         case(
             "unpositioned input to a named layout",
             stream(48000, SampleFormat::S16, "2", Some(1000)),
+            "o.flac",
+            &["--channels stereo"],
+        ),
+        case(
+            "unlabelled six channels mixed down take the 5.1 layout",
+            stream(48000, SampleFormat::S16, "6", Some(1000)),
             "o.flac",
             &["--channels stereo"],
         ),
