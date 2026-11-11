@@ -28,17 +28,17 @@ impl Quality {
         match self {
             Self::Fast => Params {
                 pass: 0.85,
-                atten: 100.0,
+                atten: 110.0,
                 rows_per_sample: 128,
             },
             Self::Balanced => Params {
                 pass: 0.91,
-                atten: 125.0,
+                atten: 130.0,
                 rows_per_sample: 256,
             },
             Self::Best => Params {
                 pass: 0.935,
-                atten: 165.0,
+                atten: 170.0,
                 rows_per_sample: 512,
             },
         }
