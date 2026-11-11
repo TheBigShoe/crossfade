@@ -103,9 +103,12 @@ impl MediaSink for FileSink {
         self.0.seek(pos)
     }
 
+    // No `sync_all`: on macOS it is `F_FULLFSYNC`, a drive-cache flush that
+    // cost 7 ms on a 10 MB file, more than the conversion around it. Like `cp`
+    // and `flac`, the output is left to the page cache; the rename still
+    // keeps a half-written file from ever appearing under the target name.
     fn finish(&mut self) -> io::Result<()> {
-        self.0.flush()?;
-        self.0.get_ref().sync_all()
+        self.0.flush()
     }
 }
 
