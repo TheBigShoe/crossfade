@@ -159,8 +159,8 @@ impl Covariance {
         }
     }
 
-    /// Fills the matrix for `x` and order `p`; false when `x` is not `i32` samples whose
-    /// sums are sure to fit an `i64`. `scratch` is reused.
+    /// Fills the matrix for `x` and order `p`; false when its sums are not sure to fit an
+    /// `i64`. `scratch` is reused.
     pub(super) fn compute<T: Sample>(
         &mut self,
         x: &[T],
@@ -169,17 +169,16 @@ impl Covariance {
         scratch: &mut Vec<i32>,
     ) -> bool {
         let n = x.len();
-        let Some(x) = T::as_i32(x) else {
-            return false;
-        };
         if p >= n || int_scale(n, peak).is_none() {
             return false;
         }
         (self.p, self.n) = (p, n);
+        // Within that bound every sample fits an i32, whatever type it came in.
         scratch.clear();
-        scratch.extend_from_slice(x);
+        scratch.extend(x.iter().map(|&v| v.low32()));
         let mut full = [0i64; MAX_ORDER + 1];
         lagged_sums(scratch, &mut full[..=p]);
+        let x = &scratch[..];
         // The whole-block sums with the ends trimmed: for entry (a, b), t = i - b runs over
         // p - b..n - b, where the lagged sum covers 0..n - d.
         let v = |t: usize| i64::from(x[t]);

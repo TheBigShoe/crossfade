@@ -72,8 +72,8 @@
 //!   refined. All of those are scored the same way and the best one is coded; and a window
 //!   whose coded fits all land that far above their estimates codes the rest of the orders it
 //!   tried, since there the prediction ranks them less surely. Ordinary audio never gets
-//!   there, so it pays nothing for it. (A 32-bit stream, whose covariance could overflow,
-//!   codes every candidate it tries.)
+//!   there, so it pays nothing for it. (Samples too wide for an exact covariance, loud
+//!   audio in a 32-bit stream, code every candidate they try.)
 //! - **Rice coding** with the partition order searched from 0 up to the level's maximum (and
 //!   as far as the block size and predictor order allow). Each partition's parameter is the
 //!   exact optimum; 5-bit parameters are used when a partition wants one above 14 and they

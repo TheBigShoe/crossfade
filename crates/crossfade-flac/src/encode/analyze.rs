@@ -398,7 +398,7 @@ impl Analyzer {
                 None => x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs())),
             };
             self.reg = BASE_RIDGE;
-            if T::as_i32(x).is_some() && lpc::int_scale(n, self.peak).is_some() {
+            if lpc::int_scale(n, self.peak).is_some() {
                 self.search_lpc_scored(x, bps, head, plan);
             } else {
                 self.search_lpc_coded(x, bps, head, plan);
@@ -592,7 +592,7 @@ impl Analyzer {
         self.fit_lpc(x, bps, head, w, plan)
     }
 
-    /// Linear prediction for samples too wide for an exact covariance (the 32-bit stream):
+    /// Linear prediction for samples too wide for an exact covariance (loud 32-bit audio):
     /// every candidate is coded for real.
     fn search_lpc_coded<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
         let mut gap = 0.0f64;
