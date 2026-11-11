@@ -76,7 +76,7 @@ fn accessors_report_the_configuration() {
 #[test]
 fn output_length_rounds_up() {
     assert_eq!(output_len(0, 44_100, 48_000), 0);
-    assert_eq!(output_len(1, 44_100, 48_000), 1);
+    assert_eq!(output_len(1, 44_100, 48_000), 2);
     assert_eq!(output_len(147, 44_100, 48_000), 160);
     assert_eq!(output_len(148, 44_100, 48_000), 162);
     assert_eq!(output_len(160, 48_000, 44_100), 147);
