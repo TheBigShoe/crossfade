@@ -43,6 +43,8 @@ mod theme_bridge_tests;
 #[cfg(test)]
 mod wiring_tests;
 #[cfg(test)]
+mod waveform_tests;
+#[cfg(test)]
 mod workspace_tests;
 
 pub use convert_sheet::{ConvertDialog, ConvertEvent};
