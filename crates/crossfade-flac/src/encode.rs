@@ -222,7 +222,9 @@ pub struct Encoder {
     written: u64,
     /// The MD5 while it runs on the calling thread; it moves to `md5_stage` once workers start.
     hasher: Hasher,
-    md5_stage: Option<Serial<Hasher, Vec<i32>>>,
+    /// The MD5 on a thread of its own, fed each block's packed bytes as the block goes to the
+    /// pool: it is the one stage that cannot be split, so it starts as early as it can.
+    md5_stage: Option<Serial<Md5, Vec<u8>>>,
     /// Samples taken by `write` that do not fill a block yet.
     pending: Vec<i32>,
     /// The calling thread's coder; with workers it codes blocks while it waits for a frame.
@@ -231,9 +233,8 @@ pub struct Encoder {
     threads: usize,
     /// Created by the first block `write` hands over when `threads > 1`.
     pool: Option<Ordered<Job, Job, FrameCoder>>,
-    /// Jobs and sample buffers to reuse.
+    /// Jobs to reuse, with their buffers.
     spare_jobs: Vec<Job>,
-    spare_samples: Vec<Vec<i32>>,
     /// A worker panicked: every later call says so.
     failed: Option<Error>,
     /// Makes the coder of frame N panic, for the failure tests.
@@ -254,44 +255,41 @@ fn code_job(coder: &mut FrameCoder, mut job: Job) -> Job {
     job
 }
 
-/// The MD5 of the audio: the samples as little-endian integers in the smallest whole number of
+/// The samples as the MD5 takes them: little-endian integers in the smallest whole number of
 /// bytes the depth fits.
+fn pack(bits_per_sample: u8, interleaved: &[i32], out: &mut Vec<u8>) {
+    fn pack<const W: usize>(out: &mut Vec<u8>, samples: &[i32]) {
+        out.clear();
+        out.resize(samples.len() * W, 0);
+        for (dst, &s) in out.as_chunks_mut::<W>().0.iter_mut().zip(samples) {
+            dst.copy_from_slice(&s.to_le_bytes()[..W]);
+        }
+    }
+    match bits_per_sample.div_ceil(8) {
+        1 => pack::<1>(out, interleaved),
+        2 => pack::<2>(out, interleaved),
+        3 => pack::<3>(out, interleaved),
+        _ => pack::<4>(out, interleaved),
+    }
+}
+
+/// The MD5 of the audio on the calling thread, with its packing buffer.
 struct Hasher {
     md5: Md5,
     bytes: Vec<u8>,
-    width: u8,
+    bits_per_sample: u8,
 }
 
 impl Hasher {
-    fn new(bits_per_sample: u8) -> Self {
-        Self {
-            md5: Md5::new(),
-            bytes: Vec::new(),
-            width: bits_per_sample.div_ceil(8),
-        }
-    }
-
     fn update(&mut self, interleaved: &[i32]) {
-        fn pack<const W: usize>(out: &mut Vec<u8>, samples: &[i32]) {
-            out.clear();
-            out.resize(samples.len() * W, 0);
-            for (dst, &s) in out.as_chunks_mut::<W>().0.iter_mut().zip(samples) {
-                dst.copy_from_slice(&s.to_le_bytes()[..W]);
-            }
-        }
-        match self.width {
-            1 => pack::<1>(&mut self.bytes, interleaved),
-            2 => pack::<2>(&mut self.bytes, interleaved),
-            3 => pack::<3>(&mut self.bytes, interleaved),
-            _ => pack::<4>(&mut self.bytes, interleaved),
-        }
+        pack(self.bits_per_sample, interleaved, &mut self.bytes);
         self.md5.update(&self.bytes);
     }
 }
 
 #[allow(clippy::ptr_arg)] // the serial stage passes a reference to its item type
-fn hash_block(hasher: &mut Hasher, samples: &Vec<i32>) {
-    hasher.update(samples);
+fn hash_bytes(md5: &mut Md5, bytes: &Vec<u8>) {
+    md5.update(bytes);
 }
 
 /// A worker's panic is a bug, not the input. `Unsupported` carries it, not a variant of its own,
@@ -351,8 +349,9 @@ impl Encoder {
             done: None,
             written: 0,
             hasher: Hasher {
+                md5: Md5::new(),
                 bytes: Vec::with_capacity(level.block * channels * 4),
-                ..Hasher::new(config.bits_per_sample)
+                bits_per_sample: config.bits_per_sample,
             },
             md5_stage: None,
             pending: Vec::with_capacity(level.block * channels),
@@ -360,7 +359,6 @@ impl Encoder {
             threads: config.resolved_threads(),
             pool: None,
             spare_jobs: Vec::new(),
-            spare_samples: Vec::new(),
             failed: None,
             #[cfg(test)]
             panic_at: None,
@@ -500,16 +498,15 @@ impl Encoder {
                 self.pending.extend_from_slice(&interleaved[..take]);
                 interleaved = &interleaved[take..];
                 if self.pending.len() == per {
-                    let next = self.samples_buffer();
-                    let full = std::mem::replace(&mut self.pending, next);
-                    self.submit(full, out, ends.as_deref_mut())?;
+                    let job = self.job_from_pending();
+                    self.submit(job, out, ends.as_deref_mut())?;
                 }
             }
             while interleaved.len() >= per {
                 let (block, rest) = interleaved.split_at(per);
-                let mut samples = self.samples_buffer();
-                samples.extend_from_slice(block);
-                self.submit(samples, out, ends.as_deref_mut())?;
+                let mut job = self.spare_job();
+                job.samples.extend_from_slice(block);
+                self.submit(job, out, ends.as_deref_mut())?;
                 interleaved = rest;
             }
             self.pending.extend_from_slice(interleaved);
@@ -561,9 +558,8 @@ impl Encoder {
         if self.threads > 1 && (self.pool.is_some() || !self.pending.is_empty()) {
             if !self.pending.is_empty() {
                 self.check_open()?;
-                let next = self.samples_buffer();
-                let rest = std::mem::replace(&mut self.pending, next);
-                self.submit(rest, out, ends.as_deref_mut())?;
+                let job = self.job_from_pending();
+                self.submit(job, out, ends.as_deref_mut())?;
             }
             return self.take_all(out, ends);
         }
@@ -583,35 +579,32 @@ impl Encoder {
 
     /// Adds a block to the MD5, on its thread if it has one.
     fn hash(&mut self, interleaved: &[i32]) -> Result<()> {
-        if self.md5_stage.is_some() {
-            let mut copy = self.samples_buffer();
-            copy.extend_from_slice(interleaved);
-            self.hash_owned(copy)
-        } else {
-            self.hasher.update(interleaved);
-            Ok(())
-        }
-    }
-
-    fn hash_owned(&mut self, samples: Vec<i32>) -> Result<()> {
         let Some(stage) = &mut self.md5_stage else {
-            self.hasher.update(&samples);
-            self.spare_samples.push(samples);
+            self.hasher.update(interleaved);
             return Ok(());
         };
-        let sent = stage.send(samples);
+        let mut bytes = stage.spare().unwrap_or_default();
+        pack(self.config.bits_per_sample, interleaved, &mut bytes);
+        let sent = stage.send(bytes);
         sent.map_err(|p| self.failed_with(p))
     }
 
-    /// An empty buffer for a block's samples, reused where one is free.
-    fn samples_buffer(&mut self) -> Vec<i32> {
-        let mut v = self
-            .spare_samples
-            .pop()
-            .or_else(|| self.md5_stage.as_mut().and_then(Serial::spare))
-            .unwrap_or_else(|| Vec::with_capacity(self.block * usize::from(self.config.channels)));
-        v.clear();
-        v
+    /// A job with empty buffers, reused where one is free.
+    fn spare_job(&mut self) -> Job {
+        let mut job = self.spare_jobs.pop().unwrap_or_else(|| Job {
+            number: 0,
+            samples: Vec::with_capacity(self.block * usize::from(self.config.channels)),
+            frame: Vec::new(),
+        });
+        job.samples.clear();
+        job
+    }
+
+    /// A job holding the pending samples; `pending` takes the job's empty buffer.
+    fn job_from_pending(&mut self) -> Job {
+        let mut job = self.spare_job();
+        std::mem::swap(&mut job.samples, &mut self.pending);
+        job
     }
 
     /// Records a failure: the threads stop and every later call returns it.
@@ -628,11 +621,11 @@ impl Encoder {
     /// out while it is full.
     fn submit(
         &mut self,
-        samples: Vec<i32>,
+        mut job: Job,
         out: &mut Vec<u8>,
         mut ends: Option<&mut Vec<usize>>,
     ) -> Result<()> {
-        let n = samples.len() / usize::from(self.config.channels);
+        let n = job.samples.len() / usize::from(self.config.channels);
         self.check_length(n)?;
         if self.pool.is_none() {
             let (config, level) = (self.config, self.coder.level);
@@ -660,18 +653,8 @@ impl Encoder {
         while self.pool.as_ref().is_some_and(Ordered::is_full) {
             self.take_one(out, ends.as_deref_mut())?;
         }
-        let job = match self.spare_jobs.pop() {
-            Some(mut job) => {
-                job.samples = samples;
-                job.number = self.frame_number;
-                job
-            }
-            None => Job {
-                number: self.frame_number,
-                samples,
-                frame: Vec::new(),
-            },
-        };
+        job.number = self.frame_number;
+        self.hash(&job.samples)?;
         let Some(pool) = &mut self.pool else {
             unreachable!("made above")
         };
@@ -682,32 +665,25 @@ impl Encoder {
         self.short_seen = n < self.block;
         if started && self.md5_stage.is_none() {
             // Workers are running, so the stream is long enough for MD5 to pay for a thread.
-            let hasher =
-                std::mem::replace(&mut self.hasher, Hasher::new(self.config.bits_per_sample));
-            match Serial::new(hasher, hash_block, MD5_DEPTH) {
+            let md5 = std::mem::take(&mut self.hasher.md5);
+            match Serial::new(md5, hash_bytes, MD5_DEPTH) {
                 Ok(stage) => self.md5_stage = Some(stage),
-                Err(hasher) => self.hasher = hasher,
+                Err(md5) => self.hasher.md5 = md5,
             }
         }
         Ok(())
     }
 
-    /// Appends a frame the pool has finished, and hashes its samples.
-    fn emit(
-        &mut self,
-        mut job: Job,
-        out: &mut Vec<u8>,
-        ends: Option<&mut Vec<usize>>,
-    ) -> Result<()> {
+    /// Appends a frame the pool has finished.
+    fn emit(&mut self, job: Job, out: &mut Vec<u8>, ends: Option<&mut Vec<usize>>) -> Result<()> {
         out.extend_from_slice(&job.frame);
         if let Some(e) = ends {
             e.push(out.len());
         }
         let n = job.samples.len() / usize::from(self.config.channels);
         self.wrote(job.frame.len() as u32, n);
-        let samples = std::mem::take(&mut job.samples);
         self.spare_jobs.push(job);
-        self.hash_owned(samples)
+        Ok(())
     }
 
     /// Appends the frames that are ready, in order, without waiting.
@@ -761,12 +737,15 @@ impl Encoder {
 
     /// Ends the stream and returns the final STREAMINFO (minimum and maximum frame size,
     /// total samples, MD5) of the frames appended to an `out`, and joins any threads. Frames
-    /// still in flight are dropped, as pending samples are: [`flush`](Self::flush) first.
-    /// Further blocks are refused; calling it again returns the same.
+    /// still in flight are dropped, as pending samples are: [`flush`](Self::flush) first. The
+    /// MD5 is taken as blocks go to the workers, so if frames in flight are dropped it is left
+    /// zero ("unknown" to a decoder). Further blocks are refused; calling it again returns the
+    /// same.
     pub fn finish(&mut self) -> StreamInfoBlock {
         if let Some(info) = self.done {
             return info;
         }
+        let dropped = self.frames_in_flight() > 0;
         self.pool = None;
         let mut info = self.info();
         if self.written > 0 {
@@ -776,10 +755,13 @@ impl Encoder {
         info.total_samples = self.written;
         info.md5 = match self.md5_stage.take().map(Serial::finish) {
             None => std::mem::take(&mut self.hasher.md5).finalize(),
-            Some(Ok(hasher)) => hasher.md5.finalize(),
+            Some(Ok(md5)) => md5.finalize(),
             // Zero means "not computed" to a decoder; the thread cannot panic in practice.
             Some(Err(_)) => [0; 16],
         };
+        if dropped {
+            info.md5 = [0; 16];
+        }
         self.done = Some(info);
         info
     }
