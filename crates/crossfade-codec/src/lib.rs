@@ -14,13 +14,20 @@ pub struct EncodeOptions {
     pub compression_level: Option<u8>,
 }
 
-/// `Error::Unsupported` for a codec with no decoder.
+/// `Error::Unsupported` for a codec with no decoder. Runs on the calling thread.
 pub fn decoder_for(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
+    decoder_for_threads(stream, 1)
+}
+
+/// As [`decoder_for`], letting the decoder use up to `threads` threads (the calling thread
+/// included; 0 means the machine's parallelism). What it decodes never depends on it; a
+/// decoder with nothing to share out ignores it.
+pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dyn Decoder>, Error> {
     if stream.codec.is_pcm() {
         return Ok(Box::new(pcm::PcmDecoder::new(stream)?));
     }
     if stream.codec == CodecId::Flac {
-        return flac::decode::decoder(stream);
+        return flac::decode::decoder_threads(stream, threads);
     }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),
