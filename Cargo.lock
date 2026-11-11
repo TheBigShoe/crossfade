@@ -1556,6 +1556,8 @@ dependencies = [
  "crossfade-dsp",
  "crossfade-format",
  "crossfade-testkit",
+ "insta",
+ "libm",
  "proptest",
  "serde",
  "serde_json",
