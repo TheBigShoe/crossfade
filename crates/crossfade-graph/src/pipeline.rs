@@ -1,4 +1,5 @@
 use crate::job::{AudioSettings, Job};
+use crate::two_pass::{Measuring, NullMuxer, Pass};
 use crate::validate::{output_format_for, resolve, resolve_join};
 use crossfade_codec::decoder_for_threads;
 use crossfade_core::{
@@ -73,6 +74,8 @@ pub struct Pipeline {
     frames_total: Option<u64>,
     rest: VecDeque<Pending>,
     limits: Limits,
+    /// A measuring pass's meter, until taken.
+    measuring: Option<Measuring>,
     finished: bool,
 }
 
@@ -97,6 +100,16 @@ impl Pipeline {
     /// time; only the first stays open. If this fails after the sink exists, the sink is
     /// discarded.
     pub fn open(job: &Job, io: &mut dyn JobIo, limits: &Limits) -> Result<Self, Error> {
+        Self::open_pass(job, io, limits, Pass::Convert(None))
+    }
+
+    /// [`Self::open`] for one pass of a job. A measuring pass creates no output.
+    pub(crate) fn open_pass(
+        job: &Job,
+        io: &mut dyn JobIo,
+        limits: &Limits,
+        pass: Pass,
+    ) -> Result<Self, Error> {
         if job.version != Job::VERSION {
             return Err(unsupported(format!("job version {}", job.version)));
         }
@@ -107,7 +120,13 @@ impl Pipeline {
             )));
         };
         let output_format = output_format_for(&output.path)?;
-        let make_muxer = |io: &mut dyn JobIo, out_stream: &StreamInfo, tags: &Tags| {
+        let make_muxer = |io: &mut dyn JobIo,
+                          out_stream: &StreamInfo,
+                          tags: &Tags|
+         -> Result<Box<dyn Muxer>, Error> {
+            if pass == Pass::Measure {
+                return Ok(Box::new(NullMuxer));
+            }
             let sink = io.create_sink(&output.path)?;
             create_muxer(output_format, sink, out_stream, tags).inspect_err(|_| {
                 io.discard(&output.path);
@@ -124,6 +143,7 @@ impl Pipeline {
                     demuxer,
                     &output.audio,
                     limits.max_threads,
+                    pass,
                     |out_stream, tags| make_muxer(io, out_stream, tags),
                 )?;
                 p.limits = *limits;
@@ -141,8 +161,13 @@ impl Pipeline {
                 let Some((input_format, demuxer)) = first else {
                     return Err(unsupported("0 inputs"));
                 };
-                let (join, codecs) =
-                    resolve_join(&streams, output_format, &output.audio, limits.max_threads)?;
+                let (join, codecs) = resolve_join(
+                    &streams,
+                    output_format,
+                    &output.audio,
+                    limits.max_threads,
+                    pass,
+                )?;
                 let decoder = decoder_for_threads(&streams[0], codecs.decoder_threads[0])?;
                 let conform = conform_chain(&streams[0], join.conform[0].as_ref())?;
                 let frames_total = streams
@@ -188,6 +213,7 @@ impl Pipeline {
                     frames_total,
                     rest,
                     limits: *limits,
+                    measuring: codecs.measuring,
                     finished: false,
                 })
             }
@@ -202,24 +228,29 @@ impl Pipeline {
         demuxer: Box<dyn Demuxer>,
         settings: &AudioSettings,
         threads: usize,
+        pass: Pass,
         make_muxer: impl FnOnce(&StreamInfo, &Tags) -> Result<Box<dyn Muxer>, Error>,
     ) -> Result<Self, Error> {
         let [stream] = demuxer.streams() else {
             return Err(unsupported("exactly one stream is supported"));
         };
-        let (output, codecs) = resolve(stream, output_format, settings, threads)?;
+        let (output, codecs) = resolve(stream, output_format, settings, threads, pass)?;
+        let mut measuring = None;
         let engine = match codecs {
             None => Engine::Copy,
-            Some(c) => Engine::Transcode(Box::new(Transcoder {
-                decoder: c.decoder,
-                encoder: c.encoder,
-                chain: c.chain,
-                conform: None,
-                decoded: AudioFrame::new(&stream.audio),
-                joined: AudioFrame::new(&stream.audio),
-                converted: AudioFrame::new(&output.output.audio),
-                next_pts: None,
-            })),
+            Some(c) => {
+                measuring = c.measuring;
+                Engine::Transcode(Box::new(Transcoder {
+                    decoder: c.decoder,
+                    encoder: c.encoder,
+                    chain: c.chain,
+                    conform: None,
+                    decoded: AudioFrame::new(&stream.audio),
+                    joined: AudioFrame::new(&stream.audio),
+                    converted: AudioFrame::new(&output.output.audio),
+                    next_pts: None,
+                }))
+            }
         };
         let plan = Plan {
             input_format,
@@ -239,12 +270,23 @@ impl Pipeline {
             frames_done: 0,
             rest: VecDeque::new(),
             limits: Limits::default(),
+            measuring,
             finished: false,
         })
     }
 
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Input frames over every input, when known.
+    pub(crate) fn frames_total(&self) -> Option<u64> {
+        self.frames_total
+    }
+
+    /// A measuring pass's meter, once it has run to the end.
+    pub(crate) fn take_measuring(&mut self) -> Option<Measuring> {
+        self.measuring.take()
     }
 
     /// Samples the output format could not hold and saturated, so far; only a processing

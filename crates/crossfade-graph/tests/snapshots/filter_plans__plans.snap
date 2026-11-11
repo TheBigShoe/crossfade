@@ -152,7 +152,7 @@ job:      {"filters":[{"filter":"normalize","lufs":-16.0,"true_peak_dbtp":-1.0}]
 chain:    1. normalize to -16 LUFS, true peak at most -1 dBTP (gain from a measuring pass)
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 441000 frames flac
-validate: unsupported: the normalize filter is not built yet
+validate: ok
 
 ### normalize with a ceiling
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -161,7 +161,7 @@ job:      {"filters":[{"filter":"normalize","lufs":-23.0,"true_peak_dbtp":-2.0}]
 chain:    1. normalize to -23 LUFS, true peak at most -2 dBTP (gain from a measuring pass)
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 441000 frames flac
-validate: unsupported: the normalize filter is not built yet
+validate: ok
 
 ### two normalize filters
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -302,7 +302,7 @@ chain:    1. trim frames 2880000..14400000
           5. resample to 48000 Hz (good)
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 5760000 frames flac
-validate: unsupported: the normalize filter is not built yet
+validate: ok
 
 ### copy with a filter
 input:    44100 Hz stereo s16 (full width), 1000 frames

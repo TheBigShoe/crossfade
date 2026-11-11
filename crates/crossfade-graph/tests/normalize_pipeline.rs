@@ -415,9 +415,9 @@ fn validate_accepts_a_normalising_job_and_pipeline_open_points_at_run() {
         .unwrap()
         .streams[0];
     let s = settings(&["normalize -16LUFS"]);
-    assert!(validate(stream, "o.flac", &s).is_ok());
+    assert!(validate(stream, "o.wav", &s).is_ok());
     assert_eq!(
-        describe(stream, "o.flac", &s).unwrap().output.frames,
+        describe(stream, "o.wav", &s).unwrap().output.frames,
         Some(44_100)
     );
     let err = Pipeline::open(&job(&["in.wav"], "o.wav", s), &mut io, &Limits::default())

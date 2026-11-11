@@ -234,29 +234,6 @@ fn asking_for_the_rate_and_layout_the_input_has_changes_no_byte() {
 }
 
 #[test]
-fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
-    // Only the two-pass normalise is still to come.
-    let audio = filters(
-        vec![FilterSpec::Normalize {
-            lufs: -16.0,
-            true_peak_dbtp: -1.0,
-        }],
-        Dither::Tpdf,
-    );
-    let mut io = MemoryIo::new();
-    io.insert("in.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));
-    let err = convert(&mut io, &job_with("in.wav", "out.flac", audio), 1).unwrap_err();
-    assert_eq!(
-        err,
-        Error::Unsupported {
-            what: "the normalize filter is not built yet".into()
-        }
-    );
-    assert_eq!(io.get("out.flac"), None);
-    assert!(!io.has_pending());
-}
-
-#[test]
 fn stream_copy_refuses_anything_that_changes_the_audio() {
     let copy = |audio: AudioSettings| AudioSettings {
         codec: Some("copy".into()),

@@ -31,15 +31,15 @@ pub fn build(plan: &FilterPlan, input: &AudioSpec) -> Result<Box<dyn Filter>, Er
         FilterPlan::Gain(p) => Ok(Box::new(gain::Gain::new(input, p))),
         FilterPlan::Trim(p) => Ok(Box::new(trim::Trim::new(input, p))),
         FilterPlan::Fade(p) => Ok(Box::new(fade::Fade::new(input, p)?)),
-        FilterPlan::Normalize(_) => Err(not_built("normalize")),
+        // The pipeline measures first and swaps the stage for the gain that gives
+        // (`ChainPlan::with_measured_gain`); a chain built without that is a caller's bug.
+        FilterPlan::Normalize(_) => Err(Error::Unsupported {
+            what: "a normalize stage runs only after its measuring pass has turned it into \
+                   a gain"
+                .into(),
+        }),
         FilterPlan::Resample(p) => Ok(Box::new(resample::Resample::new(input, p)?)),
         FilterPlan::Mix(p) => Ok(Box::new(mix::Mix::new(input, p)?)),
-    }
-}
-
-fn not_built(name: &str) -> Error {
-    Error::Unsupported {
-        what: format!("the {name} filter is not built yet"),
     }
 }
 
