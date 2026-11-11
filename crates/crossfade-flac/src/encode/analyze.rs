@@ -152,12 +152,12 @@ impl Level {
                 7 => 2,
                 _ => 1,
             },
-            ridge_exact: 2,
+            ridge_exact: 1,
             ridges: match level {
                 0..=4 => &[],
                 5 | 6 => &[1e-11, 1e-8],
                 7 => &[1e-13, 1e-10, 1e-7],
-                _ => &[1e-14, 1e-12, 1e-10, 1e-8, 1e-6],
+                _ => &[1e-14, 1e-12, 1e-10, 1e-8],
             },
         }
     }
@@ -682,7 +682,12 @@ impl Analyzer {
                 cands[..count].sort_by(|a, b| a.0.total_cmp(&b.0));
             }
             let mut wgap = f64::MAX;
-            for &(_, order, shift, q, est) in &cands[..exact] {
+            for (i, &(_, order, shift, q, est)) in cands[..count].iter().enumerate() {
+                // Past the level's count only while every fit coded so far is far above its
+                // estimate: on a predictable block the prediction ranks orders less surely.
+                if i >= exact && !(wgap > GAP_BITS && wgap != f64::MAX) {
+                    break;
+                }
                 coded.push((order, shift, q));
                 #[cfg(test)]
                 {
@@ -701,9 +706,8 @@ impl Analyzer {
                         self.build_covariance(x, p);
                         scored = true;
                     }
+                    // `lp` still holds this window's fit.
                     let autoc = self.ridged(w, p, BASE_RIDGE);
-                    let mut err = [0.0f64; MAX_ORDER];
-                    lpc::levinson(&autoc, p, &mut self.lp, &mut err);
                     let mut r = q;
                     let coefs = &self.lp[order - 1][..order];
                     lpc::refine(
