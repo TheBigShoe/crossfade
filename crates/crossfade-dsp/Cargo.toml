@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 crossfade-core.workspace = true
+crossfade-loudness.workspace = true
 libm.workspace = true
 
 [lints]
