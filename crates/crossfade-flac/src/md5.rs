@@ -54,10 +54,6 @@ fn ff(b: u32, c: u32, d: u32) -> u32 {
     d ^ (b & (c ^ d))
 }
 #[inline(always)]
-fn gg(b: u32, c: u32, d: u32) -> u32 {
-    c ^ (d & (b ^ c))
-}
-#[inline(always)]
 fn hh(b: u32, c: u32, d: u32) -> u32 {
     b ^ c ^ d
 }
@@ -77,9 +73,22 @@ fn compress(state: &mut [u32; 4], block: &[u8; 64]) {
     macro_rules! step {
         ($f:ident, $a:ident, $b:ident, $c:ident, $d:ident, $i:expr, $s:expr) => {
             $a = $b.wrapping_add(
-                $a.wrapping_add($f($b, $c, $d))
-                    .wrapping_add(m[G[$i]])
+                $a.wrapping_add(m[G[$i]])
                     .wrapping_add(K[$i])
+                    .wrapping_add($f($b, $c, $d))
+                    .rotate_left($s),
+            );
+        };
+    }
+    // G's two halves never share a bit, so OR is ADD: the half without `b` joins the sum
+    // early and only `b & d` waits on the previous step.
+    macro_rules! step_g {
+        ($a:ident, $b:ident, $c:ident, $d:ident, $i:expr, $s:expr) => {
+            $a = $b.wrapping_add(
+                $a.wrapping_add(m[G[$i]])
+                    .wrapping_add(K[$i])
+                    .wrapping_add($c & !$d)
+                    .wrapping_add($b & $d)
                     .rotate_left($s),
             );
         };
@@ -92,14 +101,22 @@ fn compress(state: &mut [u32; 4], block: &[u8; 64]) {
             step!($f, b, c, d, a, $i + 3, $s[3]);
         };
     }
+    macro_rules! round_g {
+        ($i:expr, $s:expr) => {
+            step_g!(a, b, c, d, $i, $s[0]);
+            step_g!(d, a, b, c, $i + 1, $s[1]);
+            step_g!(c, d, a, b, $i + 2, $s[2]);
+            step_g!(b, c, d, a, $i + 3, $s[3]);
+        };
+    }
     round!(ff, 0, [7, 12, 17, 22]);
     round!(ff, 4, [7, 12, 17, 22]);
     round!(ff, 8, [7, 12, 17, 22]);
     round!(ff, 12, [7, 12, 17, 22]);
-    round!(gg, 16, [5, 9, 14, 20]);
-    round!(gg, 20, [5, 9, 14, 20]);
-    round!(gg, 24, [5, 9, 14, 20]);
-    round!(gg, 28, [5, 9, 14, 20]);
+    round_g!(16, [5, 9, 14, 20]);
+    round_g!(20, [5, 9, 14, 20]);
+    round_g!(24, [5, 9, 14, 20]);
+    round_g!(28, [5, 9, 14, 20]);
     round!(hh, 32, [4, 11, 16, 23]);
     round!(hh, 36, [4, 11, 16, 23]);
     round!(hh, 40, [4, 11, 16, 23]);
