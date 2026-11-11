@@ -202,8 +202,119 @@ pub(super) fn quantize(coefs: &[f64], precision: u32, out: &mut [i32]) -> Option
 /// predictable and the matrix badly conditioned, where it matters: one more bit of residual per
 /// sample for every halving of the coefficients' accuracy. Steps of one unit, passes over every
 /// coefficient, at most `passes` of them.
+///
+/// Each move's gain adds the same floating-point terms in the same order as the plain
+/// definition (kept as a test reference), with the products that do not change from move to
+/// move computed once, so the result is identical and several times cheaper.
 #[allow(clippy::needless_range_loop)]
 pub(super) fn refine(
+    coefs: &[f64],
+    q: &mut [i32],
+    shift: u32,
+    precision: u32,
+    autoc: &[f64],
+    passes: usize,
+) {
+    let order = coefs.len();
+    let scale = (1u64 << shift) as f64;
+    let (qmin, qmax) = (-(1i64 << (precision - 1)), (1i64 << (precision - 1)) - 1);
+    let mut d = [0.0f64; MAX_ORDER];
+    for i in 0..order {
+        d[i] = coefs[i] - f64::from(q[i]) / scale;
+    }
+    // g = R d, kept current as `d` changes.
+    let mut g = [0.0f64; MAX_ORDER];
+    let at = |i: usize, j: usize| autoc[i.abs_diff(j)];
+    for i in 0..order {
+        let mut sum = 0.0;
+        for j in 0..order {
+            sum += at(i, j) * d[j];
+        }
+        g[i] = sum;
+    }
+    let step = 1.0 / scale;
+    let limit = -1e-12 * autoc[0] * step * step;
+    // A move's terms: (2 u_a step) g and (u_a step)(u_b step) R; the signs are exact, so
+    // the magnitudes `two_step * g` and `pair[|a - b|]` are the same products.
+    let two_step = 2.0 * step;
+    let s2 = step * step;
+    let lag = |k: usize| autoc.get(k).copied().unwrap_or(0.0);
+    let pair = [s2 * lag(0), s2 * lag(1), s2 * lag(2)];
+    let [p0, p1, p2] = pair;
+    for _ in 0..passes {
+        let mut changed = false;
+        for width in 1..=3usize.min(order) {
+            for i in 0..=order - width {
+                for pat in 0..1usize << width {
+                    if width == 3 && (pat == 0 || pat == 7) {
+                        continue;
+                    }
+                    // The sign of each coefficient's term: its unit moves by u, the term by -u.
+                    let mut u = [0i64; 3];
+                    for (k, v) in u.iter_mut().enumerate().take(width) {
+                        *v = if pat >> k & 1 == 1 { 1 } else { -1 };
+                    }
+                    let [s0, s1, s2] = u.map(|v| -(v as f64));
+                    let a = |k: usize| two_step * g[i + k];
+                    // Term by term in the definition's order: for each a, its g term, then
+                    // its R terms for b = 0, 1, 2.
+                    let gain = match width {
+                        1 => 0.0 + s0 * a(0) + p0,
+                        2 => 0.0 + s0 * a(0) + p0 + s0 * s1 * p1 + s1 * a(1) + s1 * s0 * p1 + p0,
+                        _ => {
+                            0.0 + s0 * a(0)
+                                + p0
+                                + s0 * s1 * p1
+                                + s0 * s2 * p2
+                                + s1 * a(1)
+                                + s1 * s0 * p1
+                                + p0
+                                + s1 * s2 * p1
+                                + s2 * a(2)
+                                + s2 * s0 * p2
+                                + s2 * s1 * p1
+                                + p0
+                        }
+                    };
+                    if gain < limit
+                        && (0..width).all(|a| {
+                            let m = i64::from(q[i + a]) + u[a];
+                            m >= qmin && m <= qmax
+                        })
+                    {
+                        for a in 0..width {
+                            q[i + a] += u[a] as i32;
+                            d[i + a] -= u[a] as f64 * step;
+                        }
+                        for j in 0..order {
+                            let mut sum = 0.0;
+                            for a in 0..width {
+                                sum += at(j, i + a) * (-(u[a] as f64) * step);
+                            }
+                            g[j] += sum;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// [`refine`] as first written, term by term: the fast version must match it exactly.
+/// Improves quantised coefficients by coordinate descent on the prediction error they add: with
+/// `d` the difference between the real and the quantised coefficients (in coefficient units),
+/// the extra residual energy is `d' R d` for the autocorrelation matrix `R`. Rounding each
+/// coefficient to its nearest integer is not the minimum of that form when the signal is highly
+/// predictable and the matrix badly conditioned, where it matters: one more bit of residual per
+/// sample for every halving of the coefficients' accuracy. Steps of one unit, passes over every
+/// coefficient, at most `passes` of them.
+#[cfg(test)]
+#[allow(clippy::needless_range_loop)]
+fn refine_simple(
     coefs: &[f64],
     q: &mut [i32],
     shift: u32,
@@ -848,6 +959,48 @@ mod tests {
                 );
                 let lim = 1i32 << (precision - 1);
                 assert!(q.iter().all(|&v| v >= -lim && v < lim));
+            }
+        }
+    }
+
+    proptest::proptest! {
+        /// The refinement with its products hoisted takes the same steps as the plain one.
+        #[test]
+        fn refine_equals_the_plain_definition(
+            seed in proptest::prelude::any::<u64>(),
+            order in 1usize..=12,
+            precision in 5u32..=15,
+            ridge in 0usize..4,
+        ) {
+            let mut state = seed | 1;
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 11) as f64 / (1u64 << 53) as f64
+            };
+            // A few random sines and some noise: from very predictable to not at all.
+            let tones: Vec<(f64, f64)> = (0..3).map(|_| (next() * 0.3, next() * 3000.0)).collect();
+            let noise = [0.0, 0.01, 1.0, 100.0][ridge];
+            let x: Vec<f64> = (0..1024)
+                .map(|t| {
+                    let t = f64::from(t);
+                    tones.iter().map(|&(f, a)| (t * f).sin() * a).sum::<f64>() + (next() - 0.5) * noise
+                })
+                .collect();
+            let mut autoc = [0.0; MAX_ORDER + 1];
+            autocorrelation(&x, &mut autoc[..=order]);
+            autoc[0] *= 1.0 + 1e-12;
+            let (mut c, mut e) = ([[0.0; MAX_ORDER]; MAX_ORDER], [0.0; MAX_ORDER]);
+            let orders = levinson(&autoc, order, &mut c, &mut e);
+            for m in 1..=orders {
+                let coefs = &c[m - 1][..m];
+                let mut q = vec![0i32; m];
+                let Some(shift) = quantize(coefs, precision, &mut q) else { continue };
+                let mut slow = q.clone();
+                refine(coefs, &mut q, shift, precision, &autoc, 8);
+                refine_simple(coefs, &mut slow, shift, precision, &autoc, 8);
+                proptest::prop_assert_eq!(&q, &slow);
             }
         }
     }
