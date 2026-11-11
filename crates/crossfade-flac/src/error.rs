@@ -42,5 +42,6 @@ mod tests {
             Error::UnexpectedEof { offset: 7 }.to_string(),
             "unexpected end of input at byte 7"
         );
+        assert_eq!(Error::Internal("z".into()).to_string(), "internal error: z");
     }
 }

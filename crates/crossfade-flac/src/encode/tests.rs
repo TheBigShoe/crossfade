@@ -388,7 +388,7 @@ fn a_panic_in_a_worker_is_an_error_from_then_on() {
         let first = enc
             .write(&samples, &mut out)
             .and_then(|()| enc.flush(&mut out));
-        let Err(Error::Unsupported(what)) = first else {
+        let Err(Error::Internal(what)) = first else {
             panic!("{threads} threads: {first:?}")
         };
         assert!(
@@ -403,9 +403,9 @@ fn a_panic_in_a_worker_is_an_error_from_then_on() {
         assert_eq!(out, before, "{threads} threads");
         assert!(matches!(
             enc.write(&samples[..2], &mut out),
-            Err(Error::Unsupported(_))
+            Err(Error::Internal(_))
         ));
-        assert!(matches!(enc.flush(&mut out), Err(Error::Unsupported(_))));
+        assert!(matches!(enc.flush(&mut out), Err(Error::Internal(_))));
     }
 }
 

@@ -72,6 +72,16 @@ mod tests {
     use super::*;
     use crossfade_core::{Channel::*, SampleFormat};
 
+    #[test]
+    fn an_internal_error_keeps_its_text() {
+        assert_eq!(
+            engine_error(crossfade_flac::Error::Internal("x".into())),
+            Error::Unsupported {
+                what: "internal error: x".into()
+            }
+        );
+    }
+
     fn block(rate: u32, channels: u8, bits: u8, total: u64) -> StreamInfoBlock {
         StreamInfoBlock {
             min_block_size: 4096,

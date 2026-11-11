@@ -471,3 +471,15 @@ fn frames_are_handed_over_without_reallocating() {
     assert!(seen.len() <= 2, "{} distinct buffers", seen.len());
     assert_eq!(d.receive_frame(&mut out), Ok(false));
 }
+
+/// A worker panic is a bug, not the input; the engine has no variant of its own for it, so it
+/// arrives as `Unsupported` with the text that says what happened.
+#[test]
+fn an_internal_error_keeps_its_text() {
+    assert_eq!(
+        engine_error(crossfade_flac::Error::Internal("flac decoder: boom".into())),
+        Error::Unsupported {
+            what: "internal error: flac decoder: boom".into()
+        }
+    );
+}
