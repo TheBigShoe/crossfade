@@ -10,11 +10,11 @@
 //!
 //! # Limits
 //!
-//! 8, 16, 24 and 32 bit integer samples, 1 to 8 channels, 1 to 1 048 575 Hz. The engine's
-//! samples are left-justified in their container and carry no true bit depth, so a stream is
-//! coded at the container depth (STREAMINFO says 8, 16, 24 or 32). A 20-bit source decoded
-//! into 24-bit containers has four zero low bits in every sample; the encoder finds and drops
-//! them, so the frames are as small as a 20-bit stream's, but STREAMINFO still says 24.
+//! 8, 16, 24 and 32 bit integer containers, 1 to 8 channels, 1 to 1 048 575 Hz. The engine's
+//! samples are left-justified in their container. `EncodeOptions::bits_per_sample` names the
+//! true depth (4 up to the container's width); the encoder shifts the samples right to it, so a
+//! 20-bit source decoded into 24-bit containers is coded as 20-bit again, STREAMINFO and MD5
+//! included. Without it the stream is coded at the container depth.
 
 use crate::EncodeOptions;
 use crate::flac::decode::engine_error as map;
@@ -49,6 +49,8 @@ struct FlacEncoder {
     rate: u32,
     channels: u16,
     format: SampleFormat,
+    /// Container width minus the true depth: how far samples shift right.
+    shift: u32,
     block: u64,
     /// Samples per channel taken in, and in frames already emitted.
     taken: u64,
@@ -75,7 +77,13 @@ pub fn encoder_threads(
     options: &EncodeOptions,
     threads: usize,
 ) -> Result<Box<dyn Encoder>, Error> {
-    let bits = bits_of(spec.format())?;
+    let width = bits_of(spec.format())?;
+    let bits = options.bits_per_sample.unwrap_or(width);
+    if !(4..=width).contains(&bits) {
+        return Err(unsupported(format!(
+            "flac cannot code {bits}-bit samples from a {width}-bit container (4 to {width})"
+        )));
+    }
     let channels = spec.layout().channels();
     if channels > MAX_CHANNELS {
         return Err(unsupported(format!(
@@ -109,6 +117,7 @@ pub fn encoder_threads(
         rate,
         channels,
         format: spec.format(),
+        shift: u32::from(width - bits),
         block: block as u64,
         taken: 0,
         emitted: 0,
@@ -196,13 +205,17 @@ impl Encoder for FlacEncoder {
         let mut raw = std::mem::take(&mut self.raw);
         raw.clear();
         let result = match &frame.samples {
-            Samples::S32(v) => self.write(v),
+            Samples::S32(v) if self.shift == 0 => self.write(v),
+            Samples::S32(v) => {
+                raw.extend(v.iter().map(|&x| x >> self.shift));
+                self.write(&raw)
+            }
             Samples::U8(v) => {
-                raw.extend(v.iter().map(|&x| i32::from(x) - 128));
+                raw.extend(v.iter().map(|&x| (i32::from(x) - 128) >> self.shift));
                 self.write(&raw)
             }
             Samples::S16(v) => {
-                raw.extend(v.iter().map(|&x| i32::from(x)));
+                raw.extend(v.iter().map(|&x| i32::from(x) >> self.shift));
                 self.write(&raw)
             }
             Samples::S24(v) => {
@@ -214,8 +227,11 @@ impl Encoder for FlacEncoder {
                     Err(Error::Malformed {
                         what: "24-bit sample outside -2^23..2^23-1".into(),
                     })
-                } else {
+                } else if self.shift == 0 {
                     self.write(v)
+                } else {
+                    raw.extend(v.iter().map(|&x| x >> self.shift));
+                    self.write(&raw)
                 }
             }
             Samples::F32(_) | Samples::F64(_) => {

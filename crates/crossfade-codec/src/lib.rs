@@ -12,6 +12,9 @@ use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
 pub struct EncodeOptions {
     /// FLAC: 0 (fastest) to 8 (smallest). Other codecs ignore it.
     pub compression_level: Option<u8>,
+    /// FLAC: the true bit depth of samples carried left-justified in a wider container
+    /// (`None`: the container's own width). Other codecs ignore it.
+    pub bits_per_sample: Option<u8>,
 }
 
 /// What a thread count of 0 ("the machine's parallelism") stands for here.
