@@ -55,7 +55,8 @@ pub struct ProbeDocument {
     pub tags: Vec<ProbeTag>,
     /// Omitted unless asked for, so the schema-1 document is unchanged without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub loudness: Option<Loudness>,
+    /// Boxed so the document stays small where it sits in a front end's enum.
+    pub loudness: Option<Box<Loudness>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +128,7 @@ impl ProbeReport {
                     value: t.value.clone(),
                 })
                 .collect(),
-            loudness: self.loudness,
+            loudness: self.loudness.map(Box::new),
         }
     }
 }

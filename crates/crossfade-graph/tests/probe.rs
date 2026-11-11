@@ -136,7 +136,7 @@ fn probe_with_loudness_reads_an_ebu_tone() {
     assert!(l.true_peak_dbtp.unwrap() >= l.sample_peak_dbfs.unwrap());
     assert!((l.sample_peak_dbfs.unwrap() + 23.0).abs() < 0.01);
     assert!(l.range_lu.is_some());
-    assert_eq!(report.document().loudness, Some(l));
+    assert_eq!(report.document().loudness, Some(Box::new(l)));
 }
 
 #[test]
