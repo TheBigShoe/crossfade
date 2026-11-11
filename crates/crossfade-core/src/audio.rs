@@ -63,7 +63,40 @@ pub enum Channel {
     BackRight,
     SideLeft,
     SideRight,
+    FrontLeftOfCenter,
+    FrontRightOfCenter,
+    BackCenter,
+    TopCenter,
+    TopFrontLeft,
+    TopFrontCenter,
+    TopFrontRight,
+    TopBackLeft,
+    TopBackCenter,
+    TopBackRight,
 }
+
+/// The speaker positions of the WAVE channel mask (`WAVEFORMATEXTENSIBLE`, also FLAC's
+/// `WAVEFORMATEXTENSIBLE_CHANNEL_MASK`), by bit number. Files store channels in this bit order.
+const MASK_BITS: [Channel; 18] = [
+    Channel::FrontLeft,
+    Channel::FrontRight,
+    Channel::FrontCenter,
+    Channel::Lfe,
+    Channel::BackLeft,
+    Channel::BackRight,
+    Channel::FrontLeftOfCenter,
+    Channel::FrontRightOfCenter,
+    Channel::BackCenter,
+    Channel::SideLeft,
+    Channel::SideRight,
+    Channel::TopCenter,
+    Channel::TopFrontLeft,
+    Channel::TopFrontCenter,
+    Channel::TopFrontRight,
+    Channel::TopBackLeft,
+    Channel::TopBackCenter,
+    Channel::TopBackRight,
+];
 
 /// Either an ordered list of distinct speaker positions, or just a count
 /// when the source does not say where the channels go.
@@ -113,6 +146,37 @@ impl ChannelLayout {
             positions: None,
             count,
         })
+    }
+
+    /// The layout a WAVE channel mask describes, positions in bit order. `None` unless every set
+    /// bit is a defined position and their count is `channels`.
+    pub fn from_mask(mask: u32, channels: u16) -> Option<Self> {
+        if mask >> MASK_BITS.len() != 0 || mask.count_ones() != u32::from(channels) {
+            return None;
+        }
+        let positions = MASK_BITS
+            .iter()
+            .enumerate()
+            .filter(|&(bit, _)| mask & (1 << bit) != 0)
+            .map(|(_, &c)| c)
+            .collect();
+        Self::from_positions(positions).ok()
+    }
+
+    /// The WAVE channel mask, when the layout is positioned and its channels already stand in
+    /// bit order (a mask is a set, so any other order would be lost).
+    pub fn to_mask(&self) -> Option<u32> {
+        let mut last = None;
+        let mut mask = 0;
+        for c in self.positions()? {
+            let bit = MASK_BITS.iter().position(|m| m == c)?;
+            if last.is_some_and(|l| bit < l) {
+                return None;
+            }
+            last = Some(bit);
+            mask |= 1 << bit;
+        }
+        Some(mask)
     }
 
     pub fn channels(&self) -> u16 {
