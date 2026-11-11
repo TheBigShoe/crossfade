@@ -10,6 +10,8 @@
 //! Each button carries a focus node of its own and dispatches from it: a dispatch from the
 //! window's focus would miss the dialog whenever something else held focus at the click.
 
+use std::rc::Rc;
+
 use crate::prelude::*;
 
 /// The id of the primary button, for tests that click it.
@@ -22,7 +24,13 @@ pub const CANCEL_BUTTON: &str = "dialog-cancel";
 pub struct DialogButtons {
     ok: SharedString,
     ok_disabled: bool,
+    cancel: SharedString,
+    danger: bool,
+    on_ok: Option<OkClick>,
 }
+
+/// What the primary button does in place of dispatching [`Confirm`].
+type OkClick = Rc<dyn Fn(&mut Window, &mut App)>;
 
 impl DialogButtons {
     /// A footer whose primary button says `ok` ("Save", "Convert").
@@ -30,7 +38,30 @@ impl DialogButtons {
         Self {
             ok: ok.into(),
             ok_disabled: false,
+            cancel: "Cancel".into(),
+            danger: false,
+            on_ok: None,
         }
+    }
+
+    /// Name the cancel button for what it keeps ("Keep Converting").
+    pub fn cancel_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.cancel = label.into();
+        self
+    }
+
+    /// Style the primary button as the destructive choice.
+    pub fn danger(mut self) -> Self {
+        self.danger = true;
+        self
+    }
+
+    /// Run `handler` when the primary button is clicked, leaving Enter, which dispatches
+    /// [`Confirm`], to the dialog's own `on_ok`: a destructive dialog can then make Enter
+    /// the safe answer.
+    pub fn on_ok_click(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_ok = Some(Rc::new(handler));
+        self
     }
 
     /// Grey out the primary button; Enter is the dialog's own and its `on_ok` decides.
@@ -44,21 +75,23 @@ impl RenderOnce for DialogButtons {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let cancel = Anchor::new("dialog-cancel-anchor", window, cx);
         let ok = Anchor::new("dialog-ok-anchor", window, cx);
+        let (danger, on_ok) = (self.danger, self.on_ok);
         DialogFooter::new()
             .child(
                 Button::new(CANCEL_BUTTON)
-                    .label("Cancel")
+                    .label(self.cancel)
                     .child(cancel.element())
                     .on_click(move |_, window, cx| cancel.dispatch(&Cancel, window, cx)),
             )
             .child(
                 Button::new(OK_BUTTON)
-                    .primary()
+                    .when_else(danger, |b| b.danger(), |b| b.primary())
                     .disabled(self.ok_disabled)
                     .label(self.ok)
                     .child(ok.element())
-                    .on_click(move |_, window, cx| {
-                        ok.dispatch(&Confirm { secondary: false }, window, cx);
+                    .on_click(move |_, window, cx| match &on_ok {
+                        Some(handler) => handler(window, cx),
+                        None => ok.dispatch(&Confirm { secondary: false }, window, cx),
                     }),
             )
     }

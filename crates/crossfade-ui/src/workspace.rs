@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crossfade_app::Request;
 use crossfade_app::inputs::{InputState, Inputs, probe_path};
-use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent};
+use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent, quit_warning};
 use crossfade_app::sheet::ConvertSheet;
 use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
@@ -21,6 +21,7 @@ use crate::config::{self, Config};
 use crate::convert_sheet::{ConvertDialog, ConvertEvent};
 use crate::keymap::snapshot_kit_bindings;
 use crate::prelude::*;
+use crate::quit_confirm::{self, QuitConfirm};
 
 /// What the window is called.
 pub const APP_TITLE: &str = "Crossfade";
@@ -100,6 +101,9 @@ pub struct Workspace {
     flash: Option<String>,
     flash_serial: u64,
     quit: QuitFn,
+    window: AnyWindowHandle,
+    /// The "Quit Crossfade?" dialog is open (or about to be): another quit request waits.
+    confirming: bool,
     /// Cancelled everything and waiting for the runner to confirm before quitting.
     quitting: bool,
     quit_done: bool,
@@ -129,6 +133,7 @@ impl Workspace {
                     batch.push(more);
                 }
                 let applied = this.update(cx, |this, cx| {
+                    let mut close_prompt = false;
                     for (id, event) in batch {
                         this.queue.apply(id, event);
                     }
@@ -136,10 +141,24 @@ impl Workspace {
                     if this.quitting && this.queue.is_idle() {
                         this.finish_quit(cx);
                     }
+                    // Nothing is left to lose: the question is moot, and nobody said quit.
+                    if this.confirming && this.queue.is_idle() {
+                        this.confirming = false;
+                        close_prompt = true;
+                    }
                     cx.notify();
+                    close_prompt
                 });
-                if applied.is_err() {
-                    return;
+                match applied {
+                    Err(_) => return,
+                    Ok(true) => {
+                        let window = this.update(cx, |this, _| this.window).ok();
+                        if let Some(window) = window {
+                            cx.update_window(window, |_, window, cx| window.close_dialog(cx))
+                                .ok();
+                        }
+                    }
+                    Ok(false) => {}
                 }
             }
         });
@@ -171,6 +190,8 @@ impl Workspace {
             flash: None,
             flash_serial: 0,
             quit: Rc::new(|cx| cx.quit()),
+            window: window.window_handle(),
+            confirming: false,
             quitting: false,
             quit_done: false,
             _config: cx.observe_global::<Config>(|_, cx| cx.notify()),
@@ -253,13 +274,73 @@ impl Workspace {
         self.quit = quit;
     }
 
-    /// Cancel every conversion and quit once the worker has reported it stopped, which
-    /// is after the engine discarded its partial output. Never blocks the UI thread; the
-    /// wait ends after [`QUIT_GRACE`] if the worker is stuck.
+    /// What the quit dialog says, or `None` when no conversion is running or waiting.
+    pub fn quit_prompt(&self) -> Option<String> {
+        quit_warning(self.queue.summary())
+    }
+
+    /// Quit, asking first when conversions would be lost (unless `confirm_quit` is off).
+    /// Never blocks the UI thread; see [`Self::begin_quit`] for what happens after.
     pub fn request_quit(&mut self, cx: &mut Context<Self>) {
-        if self.quitting {
+        if self.quitting || self.confirming {
             return;
         }
+        let ask = !self.queue.is_idle()
+            && cx
+                .try_global::<Config>()
+                .is_none_or(|config| config.settings().confirm_quit);
+        if !ask {
+            self.begin_quit(cx);
+            return;
+        }
+        self.confirming = true;
+        // Dialogs open through a window, and this may run inside one's event dispatch.
+        let window = self.window;
+        cx.spawn(async move |this, cx| {
+            cx.update_window(window, |_, window, cx| {
+                this.update(cx, |this, cx| this.open_quit_dialog(window, cx))
+                    .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The user's "Quit" in the dialog.
+    pub(crate) fn confirm_quit(&mut self, cx: &mut Context<Self>) {
+        self.confirming = false;
+        self.begin_quit(cx);
+    }
+
+    /// Ask "Quit Crossfade?". Enter and Escape both keep converting: the destructive
+    /// button answers only to a click.
+    fn open_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.queue.is_idle() {
+            self.confirming = false;
+            return;
+        }
+        let this = cx.entity().downgrade();
+        let content = cx.new(|_| QuitConfirm::new(this.clone()));
+        window.open_dialog(cx, move |dialog, _, _| {
+            let closed = this.clone();
+            dialog
+                .title(quit_confirm::TITLE)
+                .w(px(420.))
+                .child(content.clone())
+                .on_ok(|_, _, _| true)
+                .on_close(move |_, _, cx| {
+                    closed
+                        .update(cx, |workspace, _| workspace.confirming = false)
+                        .ok();
+                })
+        });
+        cx.notify();
+    }
+
+    /// Cancel every conversion and quit once the worker has reported it stopped, which
+    /// is after the engine discarded its partial output. The wait ends after
+    /// [`QUIT_GRACE`] if the worker is stuck.
+    fn begin_quit(&mut self, cx: &mut Context<Self>) {
         self.queue.cancel_all();
         cx.notify();
         if self.queue.is_idle() {

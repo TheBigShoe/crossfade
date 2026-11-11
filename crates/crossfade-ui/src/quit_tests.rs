@@ -9,9 +9,9 @@ use crossfade_app::Request;
 use crossfade_app::queue::RunnerEvent;
 
 use crate::actions::Quit;
-use crate::prelude::*;
 use crate::config::{self, ConfigPiece};
 use crate::config_test_support::TempDir as ConfigDir;
+use crate::prelude::*;
 use crate::test_support::{Rig, click, draw, has, open_rig, open_rig_in, press, step};
 
 fn request(rig: &Rig, name: &str) -> Request {
@@ -143,9 +143,7 @@ fn escape_keeps_converting_too(cx: &mut TestAppContext) {
 }
 
 #[gpui_test]
-fn quit_in_the_dialog_cancels_the_job_and_waits_for_the_runner_to_say_so(
-    cx: &mut TestAppContext,
-) {
+fn quit_in_the_dialog_cancels_the_job_and_waits_for_the_runner_to_say_so(cx: &mut TestAppContext) {
     let rig = open_rig(cx);
     let quits = count_quits(cx, &rig);
     enqueue(cx, &rig, "a");
@@ -216,9 +214,7 @@ fn a_second_quit_while_the_dialog_is_open_opens_no_second_one(cx: &mut TestAppCo
 }
 
 #[gpui_test]
-fn the_dialog_closes_by_itself_when_the_queue_goes_idle_and_the_app_stays(
-    cx: &mut TestAppContext,
-) {
+fn the_dialog_closes_by_itself_when_the_queue_goes_idle_and_the_app_stays(cx: &mut TestAppContext) {
     let rig = open_rig(cx);
     let quits = count_quits(cx, &rig);
     enqueue(cx, &rig, "a");
@@ -242,13 +238,24 @@ fn the_dialog_opens_over_the_convert_sheet(cx: &mut TestAppContext) {
     assert!(has(cx, rig.window, "dialog-ok"));
     quit(cx, &rig);
     assert!(asking(cx, &rig));
-    // Keeping the work leaves the sheet where it was.
-    click(cx, rig.window, "dialog-cancel");
+    // Keeping the work leaves the sheet where it was; both footers carry the same ids, so
+    // the click names its dialog.
+    cx.update_window(rig.window, |_, window, cx| {
+        window.within("quit-confirm").click("dialog-cancel", cx);
+    })
+    .expect("open");
+    cx.run_until_parked();
     step(cx, 3);
     draw(cx, rig.window);
     assert!(!asking(cx, &rig));
-    assert!(rig.workspace.read_with(cx, |w, _| w.convert_dialog().is_some()));
-    assert!(has(cx, rig.window, "convert-sheet"));
+    assert!(
+        rig.workspace
+            .read_with(cx, |w, _| w.convert_dialog().is_some())
+    );
+    assert!(
+        has(cx, rig.window, "sheet-output"),
+        "the sheet is still drawn"
+    );
     assert_eq!(quits.get(), 0);
 }
 
