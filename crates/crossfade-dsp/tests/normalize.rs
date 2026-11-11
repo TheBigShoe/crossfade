@@ -53,15 +53,67 @@ fn roles_of_every_named_layout() {
         ("3.0", &[R::Left, R::Right, R::Centre]),
         ("3.1", &[R::Left, R::Right, R::Centre, R::Lfe]),
         ("4.0", &[R::Left, R::Right, R::Centre, R::Unweighted]),
-        ("quad", &[R::Left, R::Right, R::LeftSurround, R::RightSurround]),
-        ("quad-side", &[R::Left, R::Right, R::LeftSurround, R::RightSurround]),
-        ("5.0", &[R::Left, R::Right, R::Centre, R::LeftSurround, R::RightSurround]),
-        ("5.0-back", &[R::Left, R::Right, R::Centre, R::LeftSurround, R::RightSurround]),
-        ("5.1", &[R::Left, R::Right, R::Centre, R::Lfe, R::LeftSurround, R::RightSurround]),
-        ("5.1-back", &[R::Left, R::Right, R::Centre, R::Lfe, R::LeftSurround, R::RightSurround]),
+        (
+            "quad",
+            &[R::Left, R::Right, R::LeftSurround, R::RightSurround],
+        ),
+        (
+            "quad-side",
+            &[R::Left, R::Right, R::LeftSurround, R::RightSurround],
+        ),
+        (
+            "5.0",
+            &[
+                R::Left,
+                R::Right,
+                R::Centre,
+                R::LeftSurround,
+                R::RightSurround,
+            ],
+        ),
+        (
+            "5.0-back",
+            &[
+                R::Left,
+                R::Right,
+                R::Centre,
+                R::LeftSurround,
+                R::RightSurround,
+            ],
+        ),
+        (
+            "5.1",
+            &[
+                R::Left,
+                R::Right,
+                R::Centre,
+                R::Lfe,
+                R::LeftSurround,
+                R::RightSurround,
+            ],
+        ),
+        (
+            "5.1-back",
+            &[
+                R::Left,
+                R::Right,
+                R::Centre,
+                R::Lfe,
+                R::LeftSurround,
+                R::RightSurround,
+            ],
+        ),
         (
             "6.1",
-            &[R::Left, R::Right, R::Centre, R::Lfe, R::Unweighted, R::LeftSurround, R::RightSurround],
+            &[
+                R::Left,
+                R::Right,
+                R::Centre,
+                R::Lfe,
+                R::Unweighted,
+                R::LeftSurround,
+                R::RightSurround,
+            ],
         ),
         (
             "7.1",
@@ -142,7 +194,11 @@ fn both_surround_pairs_of_a_7_1_weigh_1_41() {
     // 7.1 order: FL FR FC LFE BL BR SL SR.
     for ch in [4, 5, 6, 7] {
         let m = lufs(&measure(&s, &tone(48_000, 8, &[ch], -20.0, 10), 4800));
-        assert!((m - front - 1.49).abs() < 0.02, "channel {ch}: {}", m - front);
+        assert!(
+            (m - front - 1.49).abs() < 0.02,
+            "channel {ch}: {}",
+            m - front
+        );
     }
 }
 
@@ -168,7 +224,10 @@ fn silence_and_a_programme_under_400_ms_have_no_loudness() {
 
 #[test]
 fn any_split_into_frames_gives_the_same_bits() {
-    for layout in [ChannelLayout::stereo(), ChannelLayout::from_name("5.1").unwrap()] {
+    for layout in [
+        ChannelLayout::stereo(),
+        ChannelLayout::from_name("5.1").unwrap(),
+    ] {
         let ch = usize::from(layout.channels());
         let s = spec(44_100, layout);
         let mut x = tone(44_100, ch, &(0..ch).collect::<Vec<_>>(), -17.0, 4);
@@ -223,7 +282,10 @@ fn m_with(integrated: Option<f64>, sample_peak: f64, true_peak: Option<f64>) -> 
 
 #[test]
 fn a_quiet_programme_is_raised_to_the_target() {
-    let plan = NormalizePlan { target_lufs: -16.0, ceiling_dbtp: -1.0 };
+    let plan = NormalizePlan {
+        target_lufs: -16.0,
+        ceiling_dbtp: -1.0,
+    };
     let g = plan.gain(&m_with(Some(-26.0), 0.1, Some(0.1)));
     assert!(!g.limited_by_ceiling);
     let want = normalisation_gain(Some(-26.0), -16.0, 0.1, -1.0);
@@ -233,7 +295,10 @@ fn a_quiet_programme_is_raised_to_the_target() {
 
 #[test]
 fn a_loud_programme_is_lowered() {
-    let plan = NormalizePlan { target_lufs: -23.0, ceiling_dbtp: -1.0 };
+    let plan = NormalizePlan {
+        target_lufs: -23.0,
+        ceiling_dbtp: -1.0,
+    };
     let g = plan.gain(&m_with(Some(-10.0), 0.9, Some(0.9)));
     assert!(!g.limited_by_ceiling);
     assert!(g.gain.linear < 0.3);
@@ -241,7 +306,10 @@ fn a_loud_programme_is_lowered() {
 
 #[test]
 fn the_ceiling_limits_the_gain_and_says_so() {
-    let plan = NormalizePlan { target_lufs: -10.0, ceiling_dbtp: -1.0 };
+    let plan = NormalizePlan {
+        target_lufs: -10.0,
+        ceiling_dbtp: -1.0,
+    };
     let g = plan.gain(&m_with(Some(-26.0), 0.5, Some(0.5)));
     assert!(g.limited_by_ceiling);
     let want = normalisation_gain(Some(-26.0), -10.0, 0.5, -1.0);
@@ -252,17 +320,25 @@ fn the_ceiling_limits_the_gain_and_says_so() {
 
 #[test]
 fn the_sample_peak_stands_in_when_there_is_no_true_peak() {
-    let plan = NormalizePlan { target_lufs: -10.0, ceiling_dbtp: -1.0 };
+    let plan = NormalizePlan {
+        target_lufs: -10.0,
+        ceiling_dbtp: -1.0,
+    };
     let g = plan.gain(&m_with(Some(-26.0), 0.5, None));
     assert_eq!(
         g.gain.linear.to_bits(),
-        normalisation_gain(Some(-26.0), -10.0, 0.5, -1.0).linear.to_bits()
+        normalisation_gain(Some(-26.0), -10.0, 0.5, -1.0)
+            .linear
+            .to_bits()
     );
 }
 
 #[test]
 fn silence_gets_unity() {
-    let plan = NormalizePlan { target_lufs: -16.0, ceiling_dbtp: -1.0 };
+    let plan = NormalizePlan {
+        target_lufs: -16.0,
+        ceiling_dbtp: -1.0,
+    };
     let g = plan.gain(&m_with(None, 0.0, Some(0.0)));
     assert_eq!(g.gain.linear, 1.0);
     assert!(!g.limited_by_ceiling);
