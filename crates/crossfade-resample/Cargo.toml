@@ -1,0 +1,22 @@
+[package]
+name = "crossfade-resample"
+description = "Sample-rate conversion in pure Rust: band-limited polyphase interpolation, streaming, the same bits on every platform."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# libm only, for filter design: std's transcendental functions are not the same bits everywhere.
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "resample"
+harness = false

@@ -25,7 +25,7 @@ conformance:
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
     for t in aarch64-apple-ios aarch64-linux-android; do \
-        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-loudness -p crossfade-dsp -p crossfade-graph; \
+        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-loudness -p crossfade-resample -p crossfade-dsp -p crossfade-graph; \
     done
 
 # Speed baselines: in-memory conversion through the engine, then FLAC decode/encode with

@@ -66,11 +66,19 @@ dependencies = [
  "crossfade-flac",
  "crossfade-format",
  "crossfade-loudness",
+ "crossfade-resample",
  "libfuzzer-sys",
 ]
 
 [[package]]
 name = "crossfade-loudness"
+version = "0.0.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "crossfade-resample"
 version = "0.0.0"
 dependencies = [
  "libm",

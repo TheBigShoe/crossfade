@@ -15,14 +15,14 @@ and a GPUI desktop app (`crossfade-gui`).
 2. **Commits:** `<type>: <what changed>`, types `feat fix refactor docs test
    chore style`. Stage files by name (never `git add .` or `-A`). End every
    message with the `Co-Authored-By:` trailer.
-3. **Pure Rust engine.** The engine crates (core, flac, loudness, format, codec, dsp, graph)
+3. **Pure Rust engine.** The engine crates (core, flac, loudness, resample, format, codec, dsp, graph)
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
 4. **Dependency direction:** core, flac, loudness <- codec, dsp <- format <- graph <-
    app <- cli, ui. Standalone crates (`crossfade-flac` first, then `crossfade-loudness`) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
-   adapters. A demuxer needs a codec's frame-header parser to split packets (as
+   adapters. `crossfade-resample` stands alone the same way (only `libm`). A demuxer needs a codec's frame-header parser to split packets (as
    FFmpeg's libavformat uses libavcodec's parsers), so format depends on the
    standalone codec crate directly, never on the engine's `codec`. `appconfig` stands alone and only ui uses it.
    `crossfade-testkit` depends only on core and is only a dev-dependency.
@@ -46,6 +46,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader and writer (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
 | `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out; `push_frame` decodes on threads), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic at any thread count), the `pool` its threads run on, its own `Error`. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
+| `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
 | `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |

@@ -1570,6 +1570,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-resample"
+version = "0.0.0"
+dependencies = [
+ "criterion 0.5.1",
+ "libm",
+ "proptest",
+]
+
+[[package]]
 name = "crossfade-testkit"
 version = "0.0.0"
 dependencies = [
