@@ -16,6 +16,8 @@ crossfade-format = { path = "../crates/crossfade-format" }
 crossfade-flac = { path = "../crates/crossfade-flac" }
 crossfade-loudness = { path = "../crates/crossfade-loudness" }
 crossfade-resample = { path = "../crates/crossfade-resample" }
+crossfade-graph = { path = "../crates/crossfade-graph" }
+serde_json = "1"
 
 # Not a member of the engine workspace: libFuzzer is C++.
 [workspace]
@@ -103,6 +105,13 @@ bench = false
 [[bin]]
 name = "resample"
 path = "fuzz_targets/resample.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_spec"
+path = "fuzz_targets/filter_spec.rs"
 test = false
 doc = false
 bench = false

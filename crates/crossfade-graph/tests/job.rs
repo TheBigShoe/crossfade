@@ -125,6 +125,7 @@ fn codec_and_compression_level_round_trip_and_keep_old_jobs_unchanged() {
         sample_format: Some(SampleFormat::S16),
         codec: Some("flac".into()),
         compression_level: Some(8),
+        ..AudioSettings::default()
     };
     let mut j = job(None);
     j.outputs[0].audio = audio;

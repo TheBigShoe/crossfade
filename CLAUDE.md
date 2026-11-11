@@ -42,17 +42,17 @@ and a GPUI desktop app (`crossfade-gui`).
 
 | Crate | Role |
 |---|---|
-| `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
+| `crossfade-core` | Time types, audio description (named layouts: `ChannelLayout::from_name`), `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`, `Filter`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
 | `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader and writer (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
 | `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out; `push_frame` decodes on threads), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic at any thread count), the `pool` its threads run on, its own `Error`. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
-| `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
-| `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |
+| `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s), `dither` (TPDF, clip count), `level` (dB through `libm`) |
+| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` (the I/O-free plan and check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`) |
-| `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert` |
+| `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
 | `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
 | `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest, fetch/seed/verify into `.corpus-cache`, `require(id)` for tier-3 tests (not an engine crate) |
@@ -69,6 +69,42 @@ can, and never allocates a length it read from the file without checking
 development oracles only; committed tests never call an external tool.
 Small reference-encoder fixtures live under `crates/*/tests/fixtures/` with a
 README giving the command that made each (5 MB budget for the repository).
+
+## Processing (DSP) rules
+
+- **Working format.** Filters process interleaved `f64` frames. The `Chain`
+  (in `crossfade-dsp`) converts its input to `f64` with `convert`'s rule, runs
+  the filters in order, then quantises to the output format.
+- **Bit-exact when nothing is asked.** A job with no filters and no rate or
+  channel change has no chain (`filter::plan` returns `None`) and takes the
+  unprocessed path byte for byte; only a chain converts to `f64`.
+- **Dither and clipping.** After a chain, integer output gets TPDF dither
+  (`--dither none` turns it off) from SplitMix64 with a fixed seed, one draw
+  per sample in stream order: the same bytes on every platform, at every
+  thread count and however frames are split. Integer output saturates; the
+  count (signal past full scale, not dither alone) reaches the front end as
+  `Event::Clipped`. Float output is never dithered or clipped. Processed
+  output's true depth is its format's full width (overriding `output_depth`).
+- **Determinism.** Engine DSP uses no `std` transcendental functions (`sin`,
+  `cos`, `exp`, `ln`, `log10`, `powf`) and no `mul_add`: `libm` only, so a
+  gain is the same bits everywhere. Plain `+ - * /`, `round`, `sqrt` and
+  integer powers are exact IEEE operations and fine.
+- **Where things live.** The user's words (units, seconds, dB, the text form,
+  serde) are `crossfade-graph`'s `filter::FilterSpec`; what runs (frames at
+  each filter's own input rate, linear gains) is `crossfade-dsp`'s
+  `FilterPlan`. `crossfade_graph::filter::plan` is the one mapping, and it
+  appends the output's rate and channel conversions as ordinary filters.
+  `crossfade_dsp::filters::build` is the one place a plan becomes a running
+  filter.
+- **Timing.** A filter's output pts count output frames at its output rate,
+  without gaps, starting at its first input pts rescaled (see `Filter`).
+- **Adding a filter** (its text, JSON and plan already exist): write the
+  `Filter` in its module under `crates/crossfade-dsp/src/filters/` next to its
+  plan, test it there and in `crates/crossfade-dsp/tests/`, then change its arm
+  in `build` from `not_built(..)` to the constructor (one line). Update the
+  `validate:` lines of `crates/crossfade-graph/tests/snapshots/filter_plans__plans.snap`
+  that change, and the README's filter table.
+- **Stream copy** refuses filters and any rate or channel change.
 
 The purity gate lives in its own crate so its `serde_json` dependency and
 `cargo metadata` call never touch an engine crate's dependency graph.

@@ -14,6 +14,7 @@ fn settings(format: Option<SampleFormat>, codec: Option<&str>, level: Option<u8>
         sample_format: format,
         codec: codec.map(Into::into),
         compression_level: level,
+        ..AudioSettings::default()
     }
 }
 

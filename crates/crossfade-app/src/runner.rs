@@ -142,6 +142,8 @@ fn work(
                     });
                 }
             }
+            // The queue has no place for it yet; the app shows clipping in a later milestone.
+            Event::Clipped { .. } => {}
             Event::Finished { frames } => {
                 // The last state always goes out, whatever the throttle said.
                 if latest.0 > throttle.last_emitted() {

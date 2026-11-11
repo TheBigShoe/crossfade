@@ -367,3 +367,81 @@ fn flac_aiff_and_copy_intents_build_what_the_cli_builds() {
         );
     }
 }
+
+/// Processing typed with shortcuts or filters renders back (every filter as `--filter`, in
+/// the job's order) to a command line that parses to the same request; the sheet's controls
+/// for these come later and will be held to the same table.
+#[test]
+fn processing_intents_render_back_to_the_same_request() {
+    let table: &[&[&str]] = &[
+        &["convert", "in.wav", "-o", "out.flac", "--gain", "-6dB"],
+        &[
+            "convert",
+            "in.wav",
+            "-o",
+            "out.flac",
+            "--filter",
+            "gain -6dB",
+        ],
+        &[
+            "convert",
+            "in.wav",
+            "-o",
+            "out.wav",
+            "--start",
+            "1:30",
+            "--fade-out",
+            "3s",
+            "--filter",
+            "mix mono",
+            "--normalize",
+            "-16LUFS",
+            "--true-peak",
+            "-2dBTP",
+        ],
+        &[
+            "convert",
+            "my song.wav",
+            "-o",
+            "out.flac",
+            "--sample-rate",
+            "44.1kHz",
+            "--channels",
+            "stereo",
+            "--dither",
+            "none",
+            "--sample-format",
+            "s16",
+        ],
+        &[
+            "convert",
+            "in.wav",
+            "-o",
+            "out.flac",
+            "--filter",
+            "resample 96kHz quality=best",
+            "--filter",
+            "mix 2 matrix=1,0.5/0,0.5",
+            "--force",
+        ],
+        &[
+            "concat",
+            "a.wav",
+            "b.flac",
+            "-o",
+            "ab.flac",
+            "--fade-in",
+            "500ms",
+        ],
+        &["concat", "--output=x.wav", "--", "-a.wav", "b.wav"],
+    ];
+    for typed in table {
+        let request = request_from_args(typed.iter().copied()).unwrap().unwrap();
+        let rendered = crossfade_app::command_args(&request).unwrap();
+        assert_eq!(
+            request_from_args(&rendered).unwrap(),
+            Some(request),
+            "{typed:?} -> {rendered:?}"
+        );
+    }
+}

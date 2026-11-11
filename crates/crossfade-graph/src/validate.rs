@@ -2,11 +2,16 @@
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
 use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
+use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
 };
-use crossfade_core::{AudioSpec, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags};
+use crossfade_core::{
+    AudioSpec, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
+};
+use crossfade_dsp::chain::Chain;
+use crossfade_dsp::filters::resample::{Quality, ResamplePlan};
 use crossfade_format::{FormatId, create_muxer};
 use std::io::Cursor;
 
@@ -23,10 +28,11 @@ pub struct OutputPlan {
     pub copy: bool,
 }
 
-/// The codecs a transcode runs; a copy has none.
+/// The codecs a transcode runs, and its chain when it processes; a copy has none.
 pub(crate) struct Codecs {
     pub decoder: Box<dyn Decoder>,
     pub encoder: Box<dyn Encoder>,
+    pub chain: Option<Chain>,
 }
 
 /// The true bit depth of what a transcode writes: the input's while the sample format stays as
@@ -50,16 +56,16 @@ pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
     }
 }
 
-/// Copy or transcode: the output stream, and the codecs when there is a transcode, sharing
-/// `threads` between them (see `Limits::max_threads` and `share_threads`).
-pub(crate) fn resolve(
+/// What the output will be: copy or transcode, the output stream, and the chain when one
+/// runs. Pure: nothing is built.
+fn plan_output(
     input: &StreamInfo,
     output_format: FormatId,
     settings: &AudioSettings,
-    threads: usize,
-) -> Result<(OutputPlan, Option<Codecs>), Error> {
+) -> Result<(OutputPlan, Option<ChainPlan>), Error> {
     let requested = settings.codec.as_deref();
     if requested == Some("copy") {
+        refuse_processing_on_copy(input, settings)?;
         if settings.sample_format.is_some() {
             return Err(unsupported("--codec copy cannot change the sample format"));
         }
@@ -90,20 +96,91 @@ pub(crate) fn resolve(
         return Ok((plan, None));
     }
     let in_spec = &input.audio;
+    let chain = filter::plan(in_spec, settings)?;
     let out_format = settings.sample_format.unwrap_or(in_spec.format());
     let codec = output_codec(output_format, out_format, requested)?;
-    let depth = output_depth(input, out_format);
-    let options = EncodeOptions {
-        bits_per_sample: depth,
-        ..encode_options(codec, settings.compression_level)?
+    let (out_spec, frames, depth, time_base) = match &chain {
+        // Processed audio uses every bit of its format.
+        Some(c) => {
+            let (s, frames) = c.output(in_spec, input.frames)?;
+            let time_base = if s.sample_rate() == in_spec.sample_rate() {
+                input.time_base
+            } else {
+                TimeBase::new(1, i64::from(s.sample_rate()))?
+            };
+            let spec = AudioSpec::new(s.sample_rate(), out_format, s.layout().clone())?;
+            (spec, frames, None, time_base)
+        }
+        None => (
+            AudioSpec::new(in_spec.sample_rate(), out_format, in_spec.layout().clone())?,
+            input.frames,
+            output_depth(input, out_format),
+            input.time_base,
+        ),
     };
-    let out_spec = AudioSpec::new(in_spec.sample_rate(), out_format, in_spec.layout().clone())?;
+    // The codec's options are checked here too, so a pure plan refuses what a build would.
+    encode_options(codec, settings.compression_level)?;
     let output = StreamInfo {
-        frames: input.frames,
+        frames,
         bits_per_raw_sample: depth,
-        ..StreamInfo::new(0, codec, out_spec.clone(), input.time_base)
+        ..StreamInfo::new(0, codec, out_spec, time_base)
     };
-    let threaded = (is_threaded(input.codec), is_threaded(codec));
+    let plan = OutputPlan {
+        output_format,
+        output,
+        copy: false,
+    };
+    Ok((plan, chain))
+}
+
+/// Copying passes packets through untouched, so it cannot honour anything that changes them.
+fn refuse_processing_on_copy(input: &StreamInfo, settings: &AudioSettings) -> Result<(), Error> {
+    let why = "(copying passes the packets through untouched; leave out --codec copy to \
+               process the audio)";
+    if !settings.filters.is_empty() {
+        return Err(unsupported(format!(
+            "--codec copy cannot apply filters {why}"
+        )));
+    }
+    if settings
+        .sample_rate
+        .is_some_and(|r| r != input.audio.sample_rate())
+    {
+        return Err(unsupported(format!(
+            "--codec copy cannot change the sample rate {why}"
+        )));
+    }
+    let layout = input.audio.layout();
+    if settings
+        .channels
+        .as_ref()
+        .is_some_and(|c| c.resolve(layout) != *layout)
+    {
+        return Err(unsupported(format!(
+            "--codec copy cannot change the channels {why}"
+        )));
+    }
+    Ok(())
+}
+
+/// Copy or transcode: the output stream, and the codecs and chain when there is a transcode,
+/// sharing `threads` between the codecs (see `Limits::max_threads` and `share_threads`).
+pub(crate) fn resolve(
+    input: &StreamInfo,
+    output_format: FormatId,
+    settings: &AudioSettings,
+    threads: usize,
+) -> Result<(OutputPlan, Option<Codecs>), Error> {
+    let (plan, chain) = plan_output(input, output_format, settings)?;
+    if plan.copy {
+        return Ok((plan, None));
+    }
+    let out = &plan.output;
+    let options = EncodeOptions {
+        bits_per_sample: out.bits_per_raw_sample,
+        ..encode_options(out.codec, settings.compression_level)?
+    };
+    let threaded = (is_threaded(input.codec), is_threaded(out.codec));
     let (decoder_threads, encoder_threads) = match (threads, threaded) {
         // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
         (0, (true, false)) => (0, 1),
@@ -111,21 +188,34 @@ pub(crate) fn resolve(
         (0, (d, e)) => share_threads(auto_thread_count(), d, e),
         (n, (d, e)) => share_threads(n, d, e),
     };
+    let chain = match &chain {
+        Some(c) => Some(Chain::new(&input.audio, c, out.audio.format())?),
+        None => None,
+    };
     let codecs = Codecs {
         decoder: decoder_for_threads(input, decoder_threads)?,
-        encoder: encoder_for_threads(codec, &out_spec, &options, encoder_threads)?,
-    };
-    let plan = OutputPlan {
-        output_format,
-        output,
-        copy: false,
+        encoder: encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?,
+        chain,
     };
     Ok((plan, Some(codecs)))
 }
 
+/// What a job will write, from the input stream and the settings alone, without checking
+/// that it can be built: an output description for a front end to show. [`validate`] says
+/// whether it can run.
+pub fn describe(
+    input: &StreamInfo,
+    output_path: &str,
+    settings: &AudioSettings,
+) -> Result<OutputPlan, Error> {
+    let format = output_format_for(output_path)?;
+    plan_output(input, format, settings).map(|(plan, _)| plan)
+}
+
 /// Checks a job's output against its input stream without touching any file: the container from
-/// the extension, the copy rules, the codec and its options, and that the encoder and the
-/// container's muxer accept the result (FLAC's channel limit shows up here).
+/// the extension, the copy rules, the codec and its options, the filters (each must be built),
+/// and that the encoder and the container's muxer accept the result (FLAC's channel limit shows
+/// up here).
 pub fn validate(
     input: &StreamInfo,
     output_path: &str,
@@ -142,6 +232,83 @@ pub fn validate(
         &Tags::new(),
     )?;
     Ok(plan)
+}
+
+/// The stream several inputs make once joined, as the filters see it: the first input's rate
+/// and layout unless the settings name others (every input is conformed to it), the first
+/// input's sample format, and a known length only when every input's is known.
+fn joined(inputs: &[StreamInfo], settings: &AudioSettings) -> Result<StreamInfo, Error> {
+    let [first, ..] = inputs else {
+        return Err(unsupported("concat needs at least one input"));
+    };
+    if settings.codec.as_deref() == Some("copy") {
+        return Err(unsupported(
+            "--codec copy cannot join inputs (joining decodes them)",
+        ));
+    }
+    let first_spec = &first.audio;
+    let rate = settings.sample_rate.unwrap_or(first_spec.sample_rate());
+    let layout = settings.channels.as_ref().map_or_else(
+        || first_spec.layout().clone(),
+        |c| c.resolve(first_spec.layout()),
+    );
+    let frames = inputs.iter().try_fold(0u64, |sum, i| {
+        let n = if i.audio.sample_rate() == rate {
+            i.frames
+        } else {
+            ResamplePlan {
+                rate,
+                quality: Quality::default(),
+            }
+            .output_frames(i.audio.sample_rate(), i.frames)
+        };
+        sum.checked_add(n?)
+    });
+    // The true depth carries through only when every input is the same and none is conformed.
+    let alike = inputs.iter().all(|i| {
+        i.audio.sample_rate() == rate
+            && *i.audio.layout() == layout
+            && i.audio.format() == first_spec.format()
+            && i.bits_per_raw_sample == first.bits_per_raw_sample
+    });
+    Ok(StreamInfo {
+        frames,
+        bits_per_raw_sample: first.bits_per_raw_sample.filter(|_| alike),
+        ..StreamInfo::new(
+            0,
+            first.codec,
+            AudioSpec::new(rate, first_spec.format(), layout)?,
+            TimeBase::new(1, i64::from(rate))?,
+        )
+    })
+}
+
+/// [`describe`] for a job that joins `inputs` in order (`crossfade concat`).
+pub fn describe_concat(
+    inputs: &[StreamInfo],
+    output_path: &str,
+    settings: &AudioSettings,
+) -> Result<OutputPlan, Error> {
+    let joined = joined(inputs, settings)?;
+    describe(&joined, output_path, settings)
+}
+
+/// [`validate`] for a job that joins `inputs` in order. The joining pipeline is not built yet,
+/// so after every other check this refuses as `Pipeline::open` does.
+pub fn validate_concat(
+    inputs: &[StreamInfo],
+    output_path: &str,
+    settings: &AudioSettings,
+) -> Result<OutputPlan, Error> {
+    let joined = joined(inputs, settings)?;
+    validate(&joined, output_path, settings)?;
+    Err(concat_not_built(inputs.len()))
+}
+
+pub(crate) fn concat_not_built(inputs: usize) -> Error {
+    unsupported(format!(
+        "joining {inputs} inputs (crossfade concat) is not built yet"
+    ))
 }
 
 #[cfg(test)]

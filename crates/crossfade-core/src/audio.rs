@@ -179,6 +179,72 @@ impl ChannelLayout {
         Some(mask)
     }
 
+    /// Every name [`from_name`](Self::from_name) takes, in the order help text lists them.
+    pub const NAMES: [&'static str; 14] = [
+        "mono",
+        "stereo",
+        "2.1",
+        "3.0",
+        "3.1",
+        "4.0",
+        "quad",
+        "quad-side",
+        "5.0",
+        "5.0-back",
+        "5.1",
+        "5.1-back",
+        "6.1",
+        "7.1",
+    ];
+
+    /// A named layout. Names follow FFmpeg's, with `-back`/`-side` for its parenthesised
+    /// variants so a name needs no quoting in a shell: "5.1" has side surrounds, "5.1-back"
+    /// back ones.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let mask = match name {
+            "mono" => 0x4,
+            "stereo" => 0x3,
+            "2.1" => 0xB,
+            "3.0" => 0x7,
+            "3.1" => 0xF,
+            "4.0" => 0x107,
+            "quad" => 0x33,
+            "quad-side" => 0x603,
+            "5.0" => 0x607,
+            "5.0-back" => 0x37,
+            "5.1" => 0x60F,
+            "5.1-back" => 0x3F,
+            "6.1" => 0x70F,
+            "7.1" => 0x63F,
+            _ => return None,
+        };
+        Self::from_mask(mask, mask.count_ones() as u16)
+    }
+
+    /// The name of this exact layout (positions and order), if it has one.
+    pub fn name(&self) -> Option<&'static str> {
+        Self::NAMES
+            .into_iter()
+            .find(|n| Self::from_name(n).as_ref() == Some(self))
+    }
+
+    /// FLAC's default layout for `count` channels (RFC 9639 section 9.1.3, side surrounds as
+    /// the reference decoder reads them); unpositioned past eight.
+    pub fn default_for(count: u16) -> Result<Self, Error> {
+        let name = match count {
+            1 => "mono",
+            2 => "stereo",
+            3 => "3.0",
+            4 => "quad",
+            5 => "5.0",
+            6 => "5.1",
+            7 => "6.1",
+            8 => "7.1",
+            _ => return Self::unpositioned(count),
+        };
+        Self::from_name(name).ok_or(Error::EmptyChannelLayout)
+    }
+
     pub fn channels(&self) -> u16 {
         self.count
     }

@@ -260,6 +260,7 @@ impl ConvertSheet {
             },
             codec: None,
             compression_level: level,
+            ..AudioSettings::default()
         }
     }
 

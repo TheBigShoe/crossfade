@@ -47,6 +47,7 @@ fn request() -> impl Strategy<Value = Request> {
                         sample_format: format,
                         codec: codec.map(Into::into),
                         compression_level: level,
+                        ..AudioSettings::default()
                     },
                 }],
             },

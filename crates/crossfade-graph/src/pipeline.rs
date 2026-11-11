@@ -1,9 +1,10 @@
 use crate::job::{AudioSettings, Job};
-use crate::validate::{output_format_for, resolve};
+use crate::validate::{concat_not_built, output_format_for, resolve};
 use crossfade_core::{
-    AudioFrame, Decoder, Demuxer, Encoder, Error, JobIo, Limits, Muxer, Packet, SampleFormat,
-    StreamInfo, Tags,
+    AudioFrame, Decoder, Demuxer, Encoder, Error, Filter, JobIo, Limits, Muxer, Packet,
+    SampleFormat, StreamInfo, Tags,
 };
+use crossfade_dsp::chain::Chain;
 use crossfade_dsp::convert::convert_format;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
 
@@ -30,7 +31,10 @@ pub enum Step {
 struct Transcoder {
     decoder: Box<dyn Decoder>,
     encoder: Box<dyn Encoder>,
+    /// Between decoder and encoder when the job processes; `None` is the bit-exact path.
+    chain: Option<Chain>,
     decoded: AudioFrame,
+    /// The format conversion's output, or the chain's.
     converted: AudioFrame,
 }
 
@@ -60,11 +64,10 @@ impl Pipeline {
         if job.version != Job::VERSION {
             return Err(unsupported(format!("job version {}", job.version)));
         }
-        let [input] = job.inputs.as_slice() else {
-            return Err(unsupported(format!(
-                "{} inputs (exactly one is supported)",
-                job.inputs.len()
-            )));
+        let input = match job.inputs.as_slice() {
+            [input] => input,
+            [] => return Err(unsupported("0 inputs (exactly one is supported)")),
+            several => return Err(concat_not_built(several.len())),
         };
         let [output] = job.outputs.as_slice() else {
             return Err(unsupported(format!(
@@ -116,6 +119,7 @@ impl Pipeline {
             Some(c) => Engine::Transcode(Box::new(Transcoder {
                 decoder: c.decoder,
                 encoder: c.encoder,
+                chain: c.chain,
                 decoded: AudioFrame::new(&stream.audio),
                 converted: AudioFrame::new(&output.output.audio),
             })),
@@ -141,6 +145,15 @@ impl Pipeline {
 
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Samples the output format could not hold and saturated, so far; only a processing
+    /// chain can clip.
+    pub fn clipped(&self) -> u64 {
+        match &self.engine {
+            Engine::Transcode(t) => t.chain.as_ref().map_or(0, Chain::clipped),
+            Engine::Copy => 0,
+        }
     }
 
     /// Moves one packet through the pipeline. At the end of input it drains
@@ -184,6 +197,10 @@ impl Pipeline {
                 &mut *self.muxer,
                 self.plan.output.audio.format(),
             )?;
+            if let Some(chain) = &mut t.chain {
+                chain.drain();
+            }
+            t.pump_chain(&mut self.packet, &mut *self.muxer)?;
             t.encoder.drain();
             t.pump_packets(&mut self.packet, &mut *self.muxer)?;
             let extradata = t.encoder.extradata();
@@ -209,6 +226,11 @@ impl Transcoder {
         let mut frames = 0;
         while self.decoder.receive_frame(&mut self.decoded)? {
             frames += self.decoded.frames() as u64;
+            if let Some(chain) = &mut self.chain {
+                chain.send_frame(&self.decoded)?;
+                self.pump_chain(packet, muxer)?;
+                continue;
+            }
             let frame = if self.decoded.samples.format() == out_format {
                 &self.decoded
             } else {
@@ -219,6 +241,20 @@ impl Transcoder {
             self.pump_packets(packet, muxer)?;
         }
         Ok(frames)
+    }
+
+    /// Chain to encoder, until the chain has nothing more for now.
+    fn pump_chain(&mut self, packet: &mut Packet, muxer: &mut dyn Muxer) -> Result<(), Error> {
+        let Some(chain) = &mut self.chain else {
+            return Ok(());
+        };
+        while chain.receive_frame(&mut self.converted)? {
+            self.encoder.send_frame(&self.converted)?;
+            while self.encoder.receive_packet(packet)? {
+                muxer.write_packet(packet)?;
+            }
+        }
+        Ok(())
     }
 
     fn pump_packets(&mut self, packet: &mut Packet, muxer: &mut dyn Muxer) -> Result<(), Error> {
