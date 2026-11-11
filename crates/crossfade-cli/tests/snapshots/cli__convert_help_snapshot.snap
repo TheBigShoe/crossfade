@@ -14,6 +14,10 @@ Options:
           File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC)
       --sample-format <SAMPLE_FORMAT>
           Output sample format; defaults to the input's [possible values: u8, s16, s24, s32, f32, f64]
+      --sample-rate <HZ>
+          Output sample rate, such as 48000 or 44.1kHz; defaults to the input's. Converted after the filters
+      --channels <LAYOUT>
+          Output channels: a layout (mono, stereo, 5.1, ...) or a count; defaults to the input's. Converted after the filters
       --codec <CODEC>
           How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the container's own [possible values: copy, pcm, flac]
       --compression-level <COMPRESSION_LEVEL>
@@ -26,3 +30,21 @@ Options:
           Print the job as JSON and exit without touching any file
   -h, --help
           Print help
+
+Processing:
+      --filter <FILTER>   A filter: a name, an optional value, then key=value words, such as "gain -3dB" or "fade out=3s curve=equal-power". Repeat for more; they run in the order given
+      --gain <dB>         Change the level, such as -6dB (not with --normalize, which sets the level itself)
+      --start <TIME>      Start at this time, such as 10s or 1:30
+      --end <TIME>        End at this time
+      --duration <TIME>   Keep this long from the start
+      --fade-in <TIME>    Fade in from silence over this long
+      --fade-out <TIME>   Fade out to silence over this long, ending at the end
+      --normalize <LUFS>  Bring the integrated loudness to this target, such as -16LUFS (measures the whole programme first)
+      --true-peak <dBTP>  The true peak --normalize may not pass [default: -1dBTP]
+      --dither <DITHER>   How processed audio is rounded to an integer format: tpdf (triangular dither, the default) or none. Only used when something is processed; float output is never dithered [possible values: tpdf, none]
+
+Processing order: --start/--end/--duration (one trim), then each --filter in the order given, then --fade-in/--fade-out (one fade), --gain, --normalize; last, the conversions --sample-rate and --channels ask for. The job lists the filters in that order.
+
+Filters: gain <dB> | trim start=<time> end=<time> duration=<time> | fade in=<time> out=<time> curve=linear|equal-power|s-curve | normalize <LUFS> peak=<dBTP> | resample <rate> quality=fast|good|best | mix <layout or count> matrix=<rows>
+Units are written: 10s, 500ms, 1:30, 1:02:03.5; -3dB; -16LUFS; -1dBTP; 48000, 48000Hz, 44.1kHz.
+Layouts: mono, stereo, 2.1, 3.0, 3.1, 4.0, quad, quad-side, 5.0, 5.0-back, 5.1, 5.1-back, 6.1, 7.1.

@@ -5,10 +5,17 @@
 mod probe_report;
 
 use clap::builder::PossibleValuesParser;
-use clap::{Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use crossfade_app::{FsIo, Request};
 use crossfade_core::{Error, JobIo, Limits, SampleFormat};
-use crossfade_graph::{AudioSettings, CancelToken, Event, Job, JobInput, JobOutput, probe, run};
+use crossfade_graph::filter::{
+    Channels, Curve, DEFAULT_TRUE_PEAK_DBTP, FilterSpec, parse_channels, parse_db, parse_dbtp,
+    parse_lufs, parse_rate, parse_time,
+};
+use crossfade_graph::{
+    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, probe, run,
+};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +33,25 @@ struct Cli {
     command: Command,
 }
 
+/// How shortcuts and filters combine, shown under `convert --help` and `concat --help`.
+const PROCESSING_HELP: &str = "\
+Processing order: --start/--end/--duration (one trim), then each --filter in the order given, \
+then --fade-in/--fade-out (one fade), --gain, --normalize; last, the conversions --sample-rate \
+and --channels ask for. The job lists the filters in that order.
+
+Filters: gain <dB> | trim start=<time> end=<time> duration=<time> | fade in=<time> out=<time> \
+curve=linear|equal-power|s-curve | normalize <LUFS> peak=<dBTP> | resample <rate> \
+quality=fast|good|best | mix <layout or count> matrix=<rows>
+Units are written: 10s, 500ms, 1:30, 1:02:03.5; -3dB; -16LUFS; -1dBTP; 48000, 48000Hz, 44.1kHz.
+Layouts: mono, stereo, 2.1, 3.0, 3.1, 4.0, quad, quad-side, 5.0, 5.0-back, 5.1, 5.1-back, 6.1, \
+7.1.";
+
+const CONCAT_HELP: &str = "\
+Every input is conformed to the first input's sample rate and channel layout (or to \
+--sample-rate and --channels), then they are joined in order and the filters run on the joined \
+stream. `crossfade convert` takes exactly one input, so a shell glob never joins files by \
+accident.";
+
 #[derive(Subcommand)]
 enum Command {
     /// Show what a media file contains.
@@ -36,36 +62,102 @@ enum Command {
         json: bool,
     },
     /// Convert a media file.
+    #[command(after_help = PROCESSING_HELP)]
     Convert {
         /// File to read: wav, flac, aiff/aifc or ogg (FLAC inside).
         input: String,
-        /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC).
-        #[arg(short, long)]
-        output: String,
-        /// Output sample format; defaults to the input's.
-        #[arg(
-            long,
-            value_parser = PossibleValuesParser::new(["u8", "s16", "s24", "s32", "f32", "f64"])
-        )]
-        sample_format: Option<String>,
-        /// How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the
-        /// container's own.
-        #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac"]))]
-        codec: Option<String>,
-        /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
-        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
-        compression_level: Option<u8>,
-        /// Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything
-        /// on one thread. The output is the same either way.
-        #[arg(long, default_value = "auto", value_parser = parse_threads)]
-        threads: usize,
-        /// Replace an existing output file.
-        #[arg(long)]
-        force: bool,
-        /// Print the job as JSON and exit without touching any file.
-        #[arg(long)]
-        emit_job: bool,
+        #[command(flatten)]
+        out: OutputArgs,
     },
+    /// Join media files end to end into one.
+    #[command(after_help = format!("{CONCAT_HELP}\n\n{PROCESSING_HELP}"))]
+    Concat {
+        /// Files to read, in order (at least two): wav, flac, aiff/aifc or ogg (FLAC inside).
+        #[arg(required = true, num_args = 2..)]
+        inputs: Vec<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// What `convert` and `concat` share: where to write, how, and the processing.
+#[derive(Args)]
+struct OutputArgs {
+    /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC).
+    #[arg(short, long)]
+    output: String,
+    /// Output sample format; defaults to the input's.
+    #[arg(
+        long,
+        value_parser = PossibleValuesParser::new(["u8", "s16", "s24", "s32", "f32", "f64"])
+    )]
+    sample_format: Option<String>,
+    /// Output sample rate, such as 48000 or 44.1kHz; defaults to the input's. Converted after
+    /// the filters.
+    #[arg(long, value_name = "HZ", value_parser = value(parse_rate))]
+    sample_rate: Option<u32>,
+    /// Output channels: a layout (mono, stereo, 5.1, ...) or a count; defaults to the input's.
+    /// Converted after the filters.
+    #[arg(long, value_name = "LAYOUT", value_parser = value(parse_channels))]
+    channels: Option<Channels>,
+    /// How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the
+    /// container's own.
+    #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac"]))]
+    codec: Option<String>,
+    /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
+    compression_level: Option<u8>,
+    /// A filter: a name, an optional value, then key=value words, such as "gain -3dB" or
+    /// "fade out=3s curve=equal-power". Repeat for more; they run in the order given.
+    #[arg(long = "filter", value_name = "FILTER", value_parser = value(str::parse::<FilterSpec>), help_heading = "Processing")]
+    filters: Vec<FilterSpec>,
+    /// Change the level, such as -6dB (not with --normalize, which sets the level itself).
+    #[arg(long, value_name = "dB", allow_hyphen_values = true, value_parser = value(parse_db), conflicts_with = "normalize", help_heading = "Processing")]
+    gain: Option<f64>,
+    /// Start at this time, such as 10s or 1:30.
+    #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
+    start: Option<f64>,
+    /// End at this time.
+    #[arg(long, value_name = "TIME", value_parser = value(parse_time), conflicts_with = "duration", help_heading = "Processing")]
+    end: Option<f64>,
+    /// Keep this long from the start.
+    #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
+    duration: Option<f64>,
+    /// Fade in from silence over this long.
+    #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
+    fade_in: Option<f64>,
+    /// Fade out to silence over this long, ending at the end.
+    #[arg(long, value_name = "TIME", value_parser = value(parse_time), help_heading = "Processing")]
+    fade_out: Option<f64>,
+    /// Bring the integrated loudness to this target, such as -16LUFS (measures the whole
+    /// programme first).
+    #[arg(long, value_name = "LUFS", allow_hyphen_values = true, value_parser = value(parse_lufs), help_heading = "Processing")]
+    normalize: Option<f64>,
+    /// The true peak --normalize may not pass [default: -1dBTP].
+    #[arg(long, value_name = "dBTP", allow_hyphen_values = true, value_parser = value(parse_dbtp), requires = "normalize", help_heading = "Processing")]
+    true_peak: Option<f64>,
+    /// How processed audio is rounded to an integer format: tpdf (triangular dither, the
+    /// default) or none. Only used when something is processed; float output is never
+    /// dithered.
+    #[arg(long, value_parser = PossibleValuesParser::new(Dither::NAMES), help_heading = "Processing")]
+    dither: Option<String>,
+    /// Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything
+    /// on one thread. The output is the same either way.
+    #[arg(long, default_value = "auto", value_parser = parse_threads)]
+    threads: usize,
+    /// Replace an existing output file.
+    #[arg(long)]
+    force: bool,
+    /// Print the job as JSON and exit without touching any file.
+    #[arg(long)]
+    emit_job: bool,
+}
+
+/// A value parser from one of the filter word parsers, keeping its message.
+fn value<T, E: ToString>(
+    f: impl Fn(&str) -> Result<T, E> + Clone + Send + Sync + 'static,
+) -> impl Fn(&str) -> Result<T, String> + Clone + Send + Sync + 'static {
+    move |s| f(s).map_err(|e| e.to_string())
 }
 
 /// Most threads `--threads` takes; the encoder uses no more than this anyway.
@@ -82,30 +174,93 @@ fn parse_threads(s: &str) -> Result<usize, String> {
     }
 }
 
-struct Choices<'a> {
-    sample_format: Option<&'a str>,
-    codec: Option<&'a str>,
-    compression_level: Option<u8>,
-}
+impl OutputArgs {
+    /// The ordered filter list: the trim shortcuts, every `--filter`, then the fade, gain and
+    /// normalise shortcuts (see `PROCESSING_HELP`). A shortcut's value is checked here, as its
+    /// filter is.
+    fn filters(&self) -> Result<Vec<FilterSpec>, String> {
+        let mut shortcuts = Vec::new();
+        if self.start.is_some() || self.end.is_some() || self.duration.is_some() {
+            shortcuts.push((
+                "--start/--end/--duration",
+                FilterSpec::Trim {
+                    start_seconds: self.start,
+                    end_seconds: self.end,
+                    duration_seconds: self.duration,
+                },
+            ));
+        }
+        let first_after = shortcuts.len();
+        if self.fade_in.is_some() || self.fade_out.is_some() {
+            shortcuts.push((
+                "--fade-in/--fade-out",
+                FilterSpec::Fade {
+                    in_seconds: self.fade_in,
+                    out_seconds: self.fade_out,
+                    curve: Curve::Linear,
+                },
+            ));
+        }
+        if let Some(db) = self.gain {
+            shortcuts.push(("--gain", FilterSpec::Gain { db }));
+        }
+        if let Some(lufs) = self.normalize {
+            shortcuts.push((
+                "--normalize",
+                FilterSpec::Normalize {
+                    lufs,
+                    true_peak_dbtp: self.true_peak.unwrap_or(DEFAULT_TRUE_PEAK_DBTP),
+                },
+            ));
+        }
+        for (flags, f) in &shortcuts {
+            f.check().map_err(|e| format!("{flags}: {e}"))?;
+        }
+        let mut shortcuts = shortcuts.into_iter().map(|(_, f)| f);
+        let mut all: Vec<FilterSpec> = shortcuts.by_ref().take(first_after).collect();
+        all.extend(self.filters.iter().cloned());
+        all.extend(shortcuts);
+        Ok(all)
+    }
 
-fn convert_job(input: String, output: String, choices: Choices<'_>) -> Job {
-    Job {
-        version: Job::VERSION,
-        inputs: vec![JobInput { path: input }],
-        outputs: vec![JobOutput {
-            path: output,
-            audio: AudioSettings {
-                // The parser only lets valid names through.
-                sample_format: choices.sample_format.and_then(SampleFormat::from_name),
-                codec: choices.codec.map(str::to_owned),
-                compression_level: choices.compression_level,
-                ..AudioSettings::default()
-            },
-        }],
+    fn settings(&self) -> Result<AudioSettings, String> {
+        Ok(AudioSettings {
+            // The parsers only let valid names through.
+            sample_format: self
+                .sample_format
+                .as_deref()
+                .and_then(SampleFormat::from_name),
+            codec: self.codec.clone(),
+            compression_level: self.compression_level,
+            sample_rate: self.sample_rate,
+            channels: self.channels.clone(),
+            dither: self
+                .dither
+                .as_deref()
+                .and_then(Dither::from_name)
+                .unwrap_or_default(),
+            filters: self.filters()?,
+        })
+    }
+
+    fn job(&self, inputs: Vec<String>) -> Result<Job, String> {
+        Ok(Job {
+            version: Job::VERSION,
+            inputs: inputs.into_iter().map(|path| JobInput { path }).collect(),
+            outputs: vec![JobOutput {
+                path: self.output.clone(),
+                audio: self.settings()?,
+            }],
+        })
     }
 }
 
-/// Parses arguments (without `argv[0]`): `Some` for `convert`, `None` for any
+/// A job's arguments that clap cannot check alone, refused as clap refuses a bad value.
+fn invalid(message: String) -> clap::Error {
+    Cli::command().error(ErrorKind::ValueValidation, message)
+}
+
+/// Parses arguments (without `argv[0]`): `Some` for `convert` and `concat`, `None` for any
 /// other subcommand. This is what a front end checks its own job against.
 pub fn request_from_args<I, S>(args: I) -> Result<Option<Request>, clap::Error>
 where
@@ -113,29 +268,28 @@ where
     S: Into<std::ffi::OsString> + Clone,
 {
     let argv = std::iter::once("crossfade".into()).chain(args.into_iter().map(Into::into));
-    Ok(match Cli::try_parse_from(argv)?.command {
-        Command::Convert {
-            input,
-            output,
-            sample_format,
-            codec,
-            compression_level,
-            force,
-            ..
-        } => Some(Request {
-            job: convert_job(
-                input,
-                output,
-                Choices {
-                    sample_format: sample_format.as_deref(),
-                    codec: codec.as_deref(),
-                    compression_level,
-                },
-            ),
-            overwrite: force,
-        }),
-        Command::Probe { .. } => None,
-    })
+    let (inputs, out) = match Cli::try_parse_from(argv)?.command {
+        Command::Convert { input, out } => (vec![input], out),
+        Command::Concat { inputs, out } => (inputs, out),
+        Command::Probe { .. } => return Ok(None),
+    };
+    Ok(Some(Request {
+        job: out.job(inputs).map_err(invalid)?,
+        overwrite: out.force,
+    }))
+}
+
+/// What the CLI prints, after `crossfade: warning: `, when a run saturated samples.
+pub fn clip_warning(samples: u64) -> String {
+    let (noun, pronoun) = if samples == 1 {
+        ("sample", "it")
+    } else {
+        ("samples", "them")
+    };
+    format!(
+        "{samples} {noun} clipped: the output format cannot hold {pronoun}. Lower the level \
+         (for example --gain -3dB) or write floating point (--sample-format f32)"
+    )
 }
 
 /// Exit code of a run stopped by an interrupt: 128 plus SIGINT, the shell convention.
@@ -175,41 +329,50 @@ fn execute(
             }),
             Err(e) => Outcome::Failed(e.to_string()),
         },
-        Command::Convert {
-            input,
-            output,
-            sample_format,
-            codec,
-            compression_level,
-            threads,
-            force,
-            emit_job,
-        } => {
-            let choices = Choices {
-                sample_format: sample_format.as_deref(),
-                codec: codec.as_deref(),
-                compression_level,
-            };
-            let job = convert_job(input, output.clone(), choices);
-            if emit_job {
-                return Outcome::Done(format!("{}\n", job.to_json_pretty()));
-            }
-            if !force && Path::new(&output).exists() {
-                return Outcome::Failed(format!(
-                    "{output} already exists (use --force to replace it)"
-                ));
-            }
-            // How many threads is the run's business, not the job's.
-            let limits = Limits {
-                max_threads: threads,
-                ..Limits::default()
-            };
-            match run(&job, io, &limits, cancel, on_event) {
-                Ok(()) => Outcome::Done(String::new()),
-                Err(Error::Cancelled) => Outcome::Cancelled,
-                Err(e) => Outcome::Failed(e.to_string()),
-            }
+        Command::Convert { input, out } => convert(vec![input], &out, io, cancel, on_event),
+        Command::Concat { inputs, out } => convert(inputs, &out, io, cancel, on_event),
+    }
+}
+
+fn convert(
+    inputs: Vec<String>,
+    out: &OutputArgs,
+    io: &mut dyn JobIo,
+    cancel: &CancelToken,
+    on_event: &mut dyn FnMut(&Event),
+) -> Outcome {
+    let job = match out.job(inputs) {
+        Ok(job) => job,
+        Err(e) => return Outcome::Failed(e),
+    };
+    if out.emit_job {
+        return Outcome::Done(format!("{}\n", job.to_json_pretty()));
+    }
+    let output = &out.output;
+    if !out.force && Path::new(output).exists() {
+        return Outcome::Failed(format!(
+            "{output} already exists (use --force to replace it)"
+        ));
+    }
+    // How many threads is the run's business, not the job's.
+    let limits = Limits {
+        max_threads: out.threads,
+        ..Limits::default()
+    };
+    match run(&job, io, &limits, cancel, on_event) {
+        Ok(()) => Outcome::Done(String::new()),
+        Err(Error::Cancelled) => Outcome::Cancelled,
+        Err(e) => Outcome::Failed(e.to_string()),
+    }
+}
+
+/// Refuses, as a usage error, what only the whole job shows (a shortcut's value out of range).
+fn check_job(command: &Command) -> Result<(), clap::Error> {
+    match command {
+        Command::Convert { out, .. } | Command::Concat { out, .. } => {
+            out.settings().map(|_| ()).map_err(invalid)
         }
+        Command::Probe { .. } => Ok(()),
     }
 }
 
@@ -226,24 +389,32 @@ where
     S: Into<std::ffi::OsString> + Clone,
 {
     let argv = std::iter::once("crossfade".into()).chain(args.into_iter().map(Into::into));
-    Ok(execute(
-        Cli::try_parse_from(argv)?.command,
-        io,
-        cancel,
-        on_event,
-    ))
+    let command = Cli::try_parse_from(argv)?.command;
+    check_job(&command)?;
+    Ok(execute(command, io, cancel, on_event))
 }
 
 pub fn main() -> ExitCode {
     // clap prints help/usage to stderr and picks exit code 2 for both the
     // no-argument and the bad-flag case; --version goes to stdout with 0.
     let cli = Cli::parse();
+    if let Err(e) = check_job(&cli.command) {
+        e.exit();
+    }
     let cancel = CancelToken::new();
     // Only a conversion has anything to cancel; elsewhere the default (die) is right.
-    if matches!(cli.command, Command::Convert { .. }) {
+    if matches!(
+        cli.command,
+        Command::Convert { .. } | Command::Concat { .. }
+    ) {
         install_interrupt_handler(&cancel);
     }
-    let outcome = execute(cli.command, &mut FsIo::new(), &cancel, &mut |_| {});
+    let mut on_event = |e: &Event| {
+        if let Event::Clipped { samples } = e {
+            eprintln!("crossfade: warning: {}", clip_warning(*samples));
+        }
+    };
+    let outcome = execute(cli.command, &mut FsIo::new(), &cancel, &mut on_event);
     match &outcome {
         Outcome::Done(stdout) => print!("{stdout}"),
         Outcome::Failed(message) => eprintln!("crossfade: {message}"),
