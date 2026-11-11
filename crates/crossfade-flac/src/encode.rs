@@ -55,9 +55,17 @@
 //!   orders to code, because linear prediction usually wins anyway.
 //! - **Linear prediction** from level 3: a window (Tukey-like, tapered with a smoothstep
 //!   polynomial), autocorrelation, one Levinson-Durbin run for every order up to the maximum,
-//!   coefficients quantised to 12 bits with the largest shift that fits. The best few orders
-//!   by the reference encoder's size estimate (the count in the table) are coded for real; the
-//!   cheapest wins.
+//!   coefficients quantised with the largest shift that fits. The precision follows the
+//!   reference encoder: below 16 bits `2 + depth / 2` (at least 5); at 16 bits 7 to 13 by block
+//!   size (12 at 4096); above 16 bits 12, 13, then 15 by block size (15 at 4096); never over
+//!   15. The best few orders by the reference encoder's size estimate (the count in the table)
+//!   are coded for real; the cheapest wins.
+//!   A block whose best fit still lands more than 3.5 bits per sample above its own estimate
+//!   (predictable, band-limited audio at a high rate, where coefficients of a wide dynamic
+//!   range quantise coarsely) gets a closer look: a search for a better integer point near the
+//!   rounded coefficients, and from level 5 a few more coefficient sets from a ridge added to
+//!   the autocorrelation (2 extra at levels 5 and 6, 3 at 7, 5 at 8), each coded for real.
+//!   Ordinary audio never gets there, so it pays nothing for it.
 //! - **Rice coding** with the partition order searched from 0 up to the level's maximum (and
 //!   as far as the block size and predictor order allow). Each partition's parameter is the
 //!   exact optimum; 5-bit parameters are used when a partition wants one above 14 and they
@@ -202,7 +210,11 @@ impl Encoder {
                 .map(|_| Plan::new(level.block))
                 .collect(),
             level,
-            analyzer: Analyzer::new(level, channels == 2 && config.bits_per_sample == 32),
+            analyzer: Analyzer::new(
+                level,
+                u32::from(config.bits_per_sample),
+                channels == 2 && config.bits_per_sample == 32,
+            ),
             #[cfg(test)]
             force: None,
         })

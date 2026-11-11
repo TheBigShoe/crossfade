@@ -74,7 +74,7 @@ use super::rice::RAW;
 
 fn analyze16(level: u8, x: &[i32]) -> Plan {
     let mut plan = Plan::new(4096);
-    Analyzer::new(Level::new(level), false).analyze(x, 16, &mut plan);
+    Analyzer::new(Level::new(level), 16, false).analyze(x, 16, &mut plan);
     plan
 }
 
@@ -130,7 +130,7 @@ fn large_residuals_get_five_bit_parameters() {
         .map(|(i, &v)| v + (i as i32 % 64) * 100_000)
         .collect();
     let mut plan = Plan::new(4096);
-    Analyzer::new(Level::new(5), false).analyze(&x, 24, &mut plan);
+    Analyzer::new(Level::new(5), 24, false).analyze(&x, 24, &mut plan);
     assert!(plan.rice.method5, "{:?}", plan.kind);
     assert!(
         plan.rice.params[..1 << plan.rice.order]
@@ -171,4 +171,64 @@ fn steady_state_does_not_grow_any_buffer() {
             "{channels} ch {bits} bit level {level}"
         );
     }
+}
+
+/// Three sines below 4 kHz (at a 192 kHz rate) and a few LSBs of noise, as 24-bit stereo:
+/// strongly band-limited, so linear prediction can reach far below the noise floor if its
+/// coefficients are fine enough. `sin` is fine here (a test input, not the encoder); the
+/// pinned size has slack for any platform difference in the last bit.
+fn band_limited(frames: usize) -> Vec<i32> {
+    let mut rng = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng >> 33) as i64
+    };
+    let mut out = Vec::with_capacity(frames * 2);
+    for t in 0..frames {
+        let x = t as f64 / 192_000.0;
+        let tau = std::f64::consts::TAU;
+        for c in 0..2 {
+            let phase = f64::from(c) * 0.3;
+            let v = 0.3 * (tau * 440.0 * x + phase).sin()
+                + 0.2 * (tau * 1300.0 * x).sin()
+                + 0.1 * (tau * 3100.0 * x + phase).sin();
+            let noisy = (v * 8_388_607.0) as i64 + next() % 7 - 3;
+            out.push(noisy.clamp(-(1 << 23), (1 << 23) - 1) as i32);
+        }
+    }
+    out
+}
+
+fn band_limited_size() -> usize {
+    let samples = band_limited(4096 * 3);
+    let mut enc = Encoder::new(EncoderConfig {
+        sample_rate: 192_000,
+        channels: 2,
+        bits_per_sample: 24,
+        level: 5,
+    })
+    .unwrap();
+    let mut out = Vec::new();
+    enc.write(&samples, &mut out).unwrap();
+    out.len()
+}
+
+/// Level 5 on the signal above, as the encoder was before it followed the reference
+/// encoder's choice of coefficient precision (12 bits at every depth).
+const SIZE_WITH_12_BIT_COEFFICIENTS: usize = 21_931;
+/// The encoder as fixed (15-bit coefficients at 24-bit depth, a ridge search and a refined
+/// quantiser on predictable blocks).
+const PINNED: usize = 17_260;
+
+#[test]
+fn band_limited_high_rate_audio_needs_fine_coefficients() {
+    let size = band_limited_size();
+    assert!(
+        size * 5 <= SIZE_WITH_12_BIT_COEFFICIENTS * 4,
+        "{size} bytes, 12-bit coefficients gave {SIZE_WITH_12_BIT_COEFFICIENTS}"
+    );
+    // Pinned from the fixed encoder plus 1%: a regression in precision fails this.
+    assert!(size <= PINNED + PINNED / 100, "{size} bytes");
 }
