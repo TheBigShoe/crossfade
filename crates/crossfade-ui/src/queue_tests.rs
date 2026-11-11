@@ -309,3 +309,48 @@ fn the_status_counts_name_each_non_zero_state(cx: &mut TestAppContext) {
         "1 running \u{b7} 1 waiting \u{b7} 1 failed \u{b7} 1 done"
     );
 }
+
+#[gpui_test]
+fn a_finished_job_that_clipped_says_so_beside_its_state(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "one.wav");
+    enqueue(cx, &rig, "a.wav", "two.wav");
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_clip(0)),
+        None
+    );
+
+    send(cx, &rig, 0, RunnerEvent::Clipped { samples: 12_340 });
+    send(cx, &rig, 0, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(state(cx, &rig.workspace, 0), "Done \u{b7} 10 frames");
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_clip(0)),
+        Some("12,340 samples clipped".to_owned())
+    );
+    assert!(has(cx, rig.window, "queue-clip-0"));
+    let advice = rig
+        .workspace
+        .read_with(cx, |w, _| w.queue_row_clip_advice(0))
+        .expect("advice");
+    assert!(advice.contains("level") && advice.contains("Normalize"));
+
+    // A job that did not clip shows nothing new.
+    send(cx, &rig, 1, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_clip(1)),
+        None
+    );
+    assert!(!has(cx, rig.window, "queue-clip-1"));
+}
+
+#[gpui_test]
+fn one_clipped_sample_is_singular(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "one.wav");
+    send(cx, &rig, 0, RunnerEvent::Clipped { samples: 1 });
+    send(cx, &rig, 0, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_clip(0)),
+        Some("1 sample clipped".to_owned())
+    );
+}
