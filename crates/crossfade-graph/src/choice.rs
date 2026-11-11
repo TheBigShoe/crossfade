@@ -75,7 +75,8 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
 /// Threads for the decoder and the encoder out of a run's `budget` (at least 1; 0, "the
 /// machine", is resolved before). A codec that cannot use threads gets 1; the other gets the
 /// whole budget. When both can (FLAC to FLAC) the decoder, several times cheaper per sample,
-/// gets a quarter and the encoder the rest. The calling thread works for both (it runs queued
+/// gets a quarter but at least two where the budget allows (its MD5 then has a thread of its
+/// own instead of the caller's), and the encoder the rest. The calling thread works for both (it runs queued
 /// frames while it waits for either), so it is counted once: `decoder + encoder - 1 <=
 /// budget`, and two automatic counts never fight over the machine.
 pub(crate) fn share_threads(
@@ -86,7 +87,8 @@ pub(crate) fn share_threads(
     let budget = budget.max(1);
     match (decoder_threaded, encoder_threaded) {
         (true, true) => {
-            let decoder = (budget / 4).max(1);
+            // Two lets the decoder's MD5 leave the calling thread, which both codecs need.
+            let decoder = (budget / 4).max(2).min(budget - 1).max(1);
             (decoder, budget - decoder + 1)
         }
         (true, false) => (budget, 1),
