@@ -53,6 +53,8 @@ impl FsIo {
 /// enough that system calls are rare, small enough that the first one starts
 /// soon.
 const CHUNK: usize = 256 * 1024;
+/// The read that answers a reader's first request after opening or seeking.
+const FIRST_READ: usize = 16 * 1024;
 /// Chunks in flight per direction.
 const DEPTH: usize = 2;
 
@@ -80,6 +82,8 @@ struct FileSource {
     byte_len: Option<u64>,
     /// The thread saw the end of the file and has stopped.
     at_end: bool,
+    /// Nothing has been read since opening or the last seek.
+    fresh: bool,
 }
 
 enum ReadState {
@@ -147,6 +151,7 @@ impl FileSource {
             pos: 0,
             byte_len,
             at_end: false,
+            fresh: true,
         }
     }
 
@@ -170,10 +175,15 @@ impl FileSource {
 
     fn next_chunk(&mut self) -> io::Result<()> {
         if let ReadState::Idle(file) = &mut self.state {
-            if self.at_end {
-                // Past the end a thread would only find the end again; read
-                // here, in case a pipe or a growing file has more.
-                self.chunk.resize(CHUNK, 0);
+            // Headers are read in small pieces between seeks, so the first
+            // read after opening or seeking is done here: a thread started
+            // now would read ahead into what the next seek throws away. Past
+            // the end a thread would only find the end again; reading here
+            // also lets a pipe or a growing file deliver more.
+            if self.at_end || self.fresh {
+                self.fresh = false;
+                self.chunk
+                    .resize(if self.at_end { CHUNK } else { FIRST_READ }, 0);
                 let n = loop {
                     match Read::read(file, &mut self.chunk) {
                         Err(e) if e.kind() == ErrorKind::Interrupted => {}
@@ -260,6 +270,7 @@ impl MediaSource for FileSource {
         };
         let mut file = self.stop()?;
         self.at_end = false;
+        self.fresh = true;
         let result = Seek::seek(&mut file, target);
         if let Ok(at) = result {
             self.pos = at;
