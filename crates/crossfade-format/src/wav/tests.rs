@@ -436,9 +436,31 @@ fn unsupported_tags_and_depths_name_what_they_are() {
 }
 
 #[test]
-fn extensible_valid_bits_must_match_the_container() {
+fn extensible_valid_bits_below_the_container_become_the_raw_depth() {
+    for (bits, valid, raw) in [
+        (24, 20, Some(20)),
+        (16, 12, Some(12)),
+        (8, 6, Some(6)),
+        (32, 25, Some(25)),
+        (24, 24, None),
+        (16, 16, None),
+    ] {
+        let fmt = Fmt::new(TAG_PCM, 2, 48000, bits);
+        let d = open(ext_file(&fmt, valid, 3, 1, &[])).unwrap();
+        assert_eq!(d.streams()[0].bits_per_raw_sample, raw, "{valid} in {bits}");
+    }
+    let plain = open(simple(&Fmt::new(TAG_PCM, 2, 48000, 24), &[])).unwrap();
+    assert_eq!(plain.streams()[0].bits_per_raw_sample, None);
+}
+
+#[test]
+fn extensible_valid_bits_must_make_sense() {
     let fmt = Fmt::new(TAG_PCM, 2, 48000, 24);
-    unsupported(open(ext_file(&fmt, 20, 3, 1, &[])), "valid");
+    unsupported(open(ext_file(&fmt, 25, 3, 1, &[])), "valid");
+    unsupported(open(ext_file(&fmt, 0, 3, 1, &[])), "valid");
+    // Float has no room for fewer valid bits.
+    let float = Fmt::new(TAG_FLOAT, 2, 48000, 32);
+    unsupported(open(ext_file(&float, 24, 3, 3, &[])), "valid");
     // An unsupported sub-format is named too.
     unsupported(open(ext_file(&fmt, 24, 3, 0x11, &[])), "0x11");
 }
@@ -698,6 +720,38 @@ mod writer {
         }
         m.finish().unwrap();
         sink.bytes()
+    }
+
+    fn fmt_body(bytes: &[u8]) -> Vec<u8> {
+        parse(bytes).1.remove(0).1
+    }
+
+    #[test]
+    fn a_depth_below_the_container_is_written_as_extensible_with_valid_bits() {
+        for (format, depth) in [
+            (SampleFormat::U8, 6),
+            (SampleFormat::S16, 12),
+            (SampleFormat::S24, 20),
+            (SampleFormat::S32, 28),
+        ] {
+            let mut s = info(44100, format, ChannelLayout::stereo());
+            s.bits_per_raw_sample = Some(depth);
+            let fmt = fmt_body(&write(&s, &[]));
+            assert_eq!(fmt.len(), 40, "{format:?}");
+            assert_eq!(u16_le(&fmt[0..]), 0xFFFE);
+            assert_eq!(u16_le(&fmt[14..]) as usize, format.bits());
+            assert_eq!(u16_le(&fmt[16..]), 22);
+            assert_eq!(u16_le(&fmt[18..]), u16::from(depth), "{format:?}");
+            assert_eq!(u32_le(&fmt[20..]), 3);
+            assert_eq!(u16_le(&fmt[24..]), 1);
+        }
+    }
+
+    #[test]
+    fn a_full_width_stream_keeps_its_header() {
+        let mut s = info(44100, SampleFormat::S16, ChannelLayout::stereo());
+        s.bits_per_raw_sample = Some(16);
+        assert_eq!(fmt_body(&write(&s, &[])).len(), 16);
     }
 
     #[test]
