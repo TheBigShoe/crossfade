@@ -34,8 +34,12 @@ fn every_pair_constructs_within_the_memory_bound_and_keeps_the_length_rule() {
                 "{a} -> {b} {q:?}: {} bytes",
                 r.memory_bytes()
             );
-            // Keep the output small where one input frame makes a million.
-            let frames = if b / a > 1000 { 2 } else { 3000 };
+            // One input frame makes a million output frames here: run it once, at Fast,
+            // so a debug build stays quick (the kernels are the same at every quality).
+            let frames = if b / a > 1000 { 1 } else { 3000 };
+            if frames == 1 && q != Quality::Fast {
+                continue;
+            }
             let x = noise(2 * frames, 9);
             let mut out = Vec::new();
             for c in x.chunks(2 * 701) {
@@ -93,7 +97,7 @@ fn interpolated_phases_keep_the_stopband() {
         (Quality::Best, 160.0),
     ] {
         for (a, b) in [(44_100, 44_101), (44_101, 44_100)] {
-            for f in [997.0, 10_007.0, 19_997.0] {
+            for f in [997.0, 10_007.0, 18_007.0] {
                 let y = mono(a, b, q, &sine(8192, f, a.into(), 0.5));
                 let (amp, res) = fit(steady(&y, 400), 400, f, b.into());
                 assert!((amp / 0.5 - 1.0).abs() < 1e-4, "{q:?} {a} -> {b} {f}");

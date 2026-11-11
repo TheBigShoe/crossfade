@@ -8,6 +8,8 @@ mod io;
 mod kernel;
 mod quality;
 mod sample;
+mod scatter;
+mod table;
 
 pub use error::{Error, Result};
 pub use quality::Quality;
@@ -55,6 +57,7 @@ pub struct Resampler<S: Sample = f64> {
 enum Engine<S> {
     Pass,
     Gather(gather::Gather<S>),
+    Scatter(scatter::Scatter<S>),
 }
 
 impl Resampler {
@@ -84,7 +87,11 @@ impl<S: Sample> Resampler<S> {
         } else {
             let g = gcd(u64::from(input_rate), u64::from(output_rate));
             let (up, down) = (u64::from(output_rate) / g, u64::from(input_rate) / g);
-            Engine::Gather(gather::Gather::new(&quality.params(), up, down, channels))
+            if down > up.saturating_mul(MAX_GATHER_DECIMATION) {
+                Engine::Scatter(scatter::Scatter::new(&quality.params(), up, down, channels))
+            } else {
+                Engine::Gather(gather::Gather::new(&quality.params(), up, down, channels))
+            }
         };
         Ok(Self {
             input_rate,
@@ -116,7 +123,20 @@ impl<S: Sample> Resampler<S> {
         match &self.engine {
             Engine::Pass => 0,
             Engine::Gather(g) => g.latency(),
+            Engine::Scatter(s) => s.latency(),
         }
+    }
+
+    /// Bytes held for tables, history and accumulators: fixed at construction. For any rates
+    /// and quality, at most about 2.4 MiB plus 190 KiB per channel (Best at 64:1 decimation;
+    /// 44.1 kHz to 48 kHz at the default holds 0.25 MiB plus 10 KiB per channel).
+    pub fn memory_bytes(&self) -> usize {
+        let samples = match &self.engine {
+            Engine::Pass => 0,
+            Engine::Gather(g) => g.memory(),
+            Engine::Scatter(s) => s.memory(),
+        };
+        samples * size_of::<S>()
     }
 
     /// Converts interleaved frames and appends the output frames now complete to `output`.
@@ -164,6 +184,7 @@ impl<S: Sample> Resampler<S> {
         match &mut self.engine {
             Engine::Pass => {}
             Engine::Gather(g) => g.reset(),
+            Engine::Scatter(s) => s.reset(),
         }
     }
 
@@ -182,6 +203,7 @@ impl<S: Sample> Resampler<S> {
         match &mut self.engine {
             Engine::Pass => output.copy_from(input),
             Engine::Gather(g) => g.process(input, output),
+            Engine::Scatter(s) => s.process(input, output),
         }
     }
 
@@ -189,6 +211,7 @@ impl<S: Sample> Resampler<S> {
         match &mut self.engine {
             Engine::Pass => {}
             Engine::Gather(g) => g.flush(output),
+            Engine::Scatter(s) => s.flush(output),
         }
     }
 }

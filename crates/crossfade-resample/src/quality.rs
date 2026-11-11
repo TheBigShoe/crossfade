@@ -20,7 +20,7 @@ pub enum Quality {
 pub(crate) struct Params {
     pub(crate) pass: f64,
     pub(crate) atten: f64,
-    pub(crate) rows_per_sample: usize,
+    pub(crate) rows_per_sample: u64,
 }
 
 impl Quality {

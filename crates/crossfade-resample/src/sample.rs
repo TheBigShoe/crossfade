@@ -2,7 +2,7 @@
 //! path is an `impl Sample for f32` plus its tests, since tables and buffers are all `Vec<S>`.
 
 use std::fmt::Debug;
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Div, Mul, Sub};
 
 mod private {
     pub trait Sealed {}
@@ -22,15 +22,18 @@ pub trait Sample:
     + Add<Output = Self>
     + Sub<Output = Self>
     + Mul<Output = Self>
+    + Div<Output = Self>
     + private::Sealed
 {
     const ZERO: Self;
+    const ONE: Self;
     /// Rounds a designed coefficient to this type.
     fn from_f64(x: f64) -> Self;
 }
 
 impl Sample for f64 {
     const ZERO: Self = 0.0;
+    const ONE: Self = 1.0;
     fn from_f64(x: f64) -> Self {
         x
     }

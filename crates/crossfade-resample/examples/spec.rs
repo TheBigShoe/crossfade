@@ -12,7 +12,7 @@ const N: usize = 1 << 15;
 fn ripple(a: u32, b: u32, q: Quality, edge: f64) -> f64 {
     let mut worst: f64 = 0.0;
     for k in 1..=40 {
-        let f = edge * k as f64 / 40.0;
+        let f = edge * f64::from(k) / 40.0;
         let y = mono(a, b, q, &sine(N, f, a.into(), 0.5));
         let (amp, _) = fit(steady(&y, 2000), 2000, f, b.into());
         worst = worst.max(db(amp / 0.5).abs());
@@ -26,7 +26,7 @@ fn ripple(a: u32, b: u32, q: Quality, edge: f64) -> f64 {
 fn spurious(a: u32, b: u32, q: Quality, top: f64) -> f64 {
     let mut worst = f64::NEG_INFINITY;
     for k in 0..60 {
-        let f = 10.0 + (top - 20.0) * k as f64 / 59.0;
+        let f = 10.0 + (top - 20.0) * f64::from(k) / 59.0;
         let y = mono(a, b, q, &sine(N, f, a.into(), 0.5));
         let s = steady(&y, 2000);
         let level = if f < f64::from(b) / 2.0 {

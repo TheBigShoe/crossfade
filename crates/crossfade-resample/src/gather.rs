@@ -7,6 +7,7 @@ use crate::design::{self, Kernel};
 use crate::io::{Input, Output};
 use crate::kernel;
 use crate::quality::Params;
+use crate::table::{Norm, Table};
 
 /// Input frames copied into the history per step; bounds the history to `taps + BLOCK`.
 const BLOCK: usize = 1024;
@@ -17,8 +18,8 @@ pub(crate) struct Gather<S> {
     up: u64,
     down: u64,
     taps: usize,
-    /// Row `p` holds the coefficients for an output `p / up` of a frame after an input frame.
-    table: Vec<S>,
+    /// The coefficients for an output `p / up` of a frame after an input frame.
+    table: Table<S>,
     /// One buffer per channel; `hist[c][0]` is input frame `start` (negative frames are the
     /// zeros before the stream).
     hist: Vec<Vec<S>>,
@@ -41,13 +42,14 @@ impl<S: Sample> Gather<S> {
         };
         let taps = design::taps(params, scale);
         let kernel = Kernel::new(params, scale, (taps / 2) as f64);
-        let mut table = design::rows(&kernel, taps, up as usize, |r| r as f64 / up as f64);
-        design::normalise_rows(&mut table, taps);
+        // Rows per input sample when interpolating: the same resolution in kernel time.
+        let per = (libm::ceil(params.rows_per_sample as f64 * scale) as u64).max(4);
+        let table = Table::new(&kernel, taps, up, per, |_, _| Norm::Rows);
         let mut g = Self {
             up,
             down,
             taps,
-            table: table.into_iter().map(S::from_f64).collect(),
+            table,
             hist: vec![vec![S::ZERO; taps + BLOCK]; channels],
             start: 0,
             len: 0,
@@ -58,6 +60,10 @@ impl<S: Sample> Gather<S> {
         };
         g.reset();
         g
+    }
+
+    pub(crate) fn memory(&self) -> usize {
+        self.table.len() + self.hist.iter().map(Vec::len).sum::<usize>()
     }
 
     fn half(&self) -> usize {
@@ -128,8 +134,7 @@ impl<S: Sample> Gather<S> {
                 .min(u128::from(limit - self.produced)) as u64;
             output.reserve(count as usize, self.hist.len());
             for _ in 0..count {
-                let row = self.phase as usize * self.taps;
-                let row = &self.table[row..row + self.taps];
+                let row = self.table.coefs(self.phase, self.up);
                 let from = (self.at as i64 - half + 1 - self.start) as usize;
                 for (ch, h) in self.hist.iter().enumerate() {
                     output.push(ch, kernel::dot(row, &h[from..from + self.taps]));

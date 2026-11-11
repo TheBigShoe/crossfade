@@ -20,26 +20,27 @@ pub(crate) fn dot<S: Sample>(a: &[S], b: &[S]) -> S {
             *s = *s + p * q;
         }
     }
-    let [
-        a0,
-        a1,
-        a2,
-        a3,
-        a4,
-        a5,
-        a6,
-        a7,
-        a8,
-        a9,
-        a10,
-        a11,
-        a12,
-        a13,
-        a14,
-        a15,
-    ] = acc;
-    (((a0 + a8) + (a4 + a12)) + ((a2 + a10) + (a6 + a14)))
-        + (((a1 + a9) + (a5 + a13)) + ((a3 + a11) + (a7 + a15)))
+    let a = acc;
+    (((a[0] + a[8]) + (a[4] + a[12])) + ((a[2] + a[10]) + (a[6] + a[14])))
+        + (((a[1] + a[9]) + (a[5] + a[13])) + ((a[3] + a[11]) + (a[7] + a[15])))
+}
+
+/// `acc[k] += x * coefs[k]`: one input sample spread over the outputs it reaches.
+#[inline(never)]
+pub(crate) fn axpy<S: Sample>(acc: &mut [S], x: S, coefs: &[S]) {
+    for (a, &c) in acc.iter_mut().zip(coefs) {
+        *a = *a + x * c;
+    }
+}
+
+/// `out[k] = w0 r0[k] + w1 r1[k] + w2 r2[k] + w3 r3[k]`, summed left to right.
+#[inline(never)]
+pub(crate) fn blend4<S: Sample>(out: &mut [S], w: [S; 4], rows: [&[S]; 4]) {
+    let [w0, w1, w2, w3] = w;
+    let [r0, r1, r2, r3] = rows;
+    for ((((o, &a), &b), &c), &d) in out.iter_mut().zip(r0).zip(r1).zip(r2).zip(r3) {
+        *o = w0 * a + w1 * b + w2 * c + w3 * d;
+    }
 }
 
 #[cfg(test)]
@@ -52,5 +53,19 @@ mod tests {
         let b = vec![2.0; 48];
         assert_eq!(dot(&a, &b), 2.0 * (47.0 * 48.0 / 2.0));
         assert_eq!(dot::<f64>(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn axpy_and_blend4_combine_rows() {
+        let mut acc = vec![1.0, 2.0];
+        axpy(&mut acc, 2.0, &[0.5, -1.0]);
+        assert_eq!(acc, [2.0, 0.0]);
+        let mut out = vec![0.0; 2];
+        blend4(
+            &mut out,
+            [1.0, 2.0, 3.0, 4.0],
+            [&[1.0, 0.0], &[1.0, 1.0], &[1.0, 2.0], &[1.0, 3.0]],
+        );
+        assert_eq!(out, [10.0, 20.0]);
     }
 }

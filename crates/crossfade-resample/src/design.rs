@@ -81,31 +81,6 @@ pub(crate) fn taps(params: &Params, scale: f64) -> usize {
     n.div_ceil(TAP_MULTIPLE) * TAP_MULTIPLE
 }
 
-/// Row `r` of `rows` holds the coefficients for fractional position `pos(r)`: tap `k`
-/// multiplies the sample `k - taps / 2 + 1` places from the position's integer part.
-pub(crate) fn rows(
-    kernel: &Kernel,
-    taps: usize,
-    count: usize,
-    pos: impl Fn(usize) -> f64,
-) -> Vec<f64> {
-    let top = (taps / 2) as f64 - 1.0;
-    let mut table = Vec::with_capacity(count * taps);
-    for r in 0..count {
-        let f = pos(r);
-        table.extend((0..taps).map(|k| kernel.at(f + top - k as f64)));
-    }
-    table
-}
-
-/// Scales every row of `table` to sum to exactly 1 (to rounding), so DC passes unchanged.
-pub(crate) fn normalise_rows(table: &mut [f64], taps: usize) {
-    for row in table.chunks_exact_mut(taps) {
-        let sum: f64 = row.iter().sum();
-        row.iter_mut().for_each(|c| *c /= sum);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,15 +89,15 @@ mod tests {
     fn bessel_i0_matches_known_values() {
         assert_eq!(bessel_i0(0.0), 1.0);
         assert!((bessel_i0(1.0) - 1.266_065_877_752_008_4).abs() < 1e-15);
-        assert!((bessel_i0(10.0) / 2815.716_628_466_254 - 1.0).abs() < 1e-14);
+        assert!((bessel_i0(10.0) / 2_815.716_628_466_254 - 1.0).abs() < 1e-14);
     }
 
     #[test]
     fn sinc_is_exactly_zero_at_nonzero_integers() {
         assert_eq!(sinc(0.0), 1.0);
         for k in 1..50 {
-            assert_eq!(sinc(k as f64), 0.0);
-            assert_eq!(sinc(-(k as f64)), 0.0);
+            assert_eq!(sinc(f64::from(k)), 0.0);
+            assert_eq!(sinc(-f64::from(k)), 0.0);
         }
         assert!((sinc(0.5) - 2.0 / PI).abs() < 1e-16);
     }
