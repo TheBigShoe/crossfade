@@ -9,6 +9,7 @@ pub mod inspector;
 pub mod queue;
 pub mod runner;
 pub mod sheet;
+pub mod waveform;
 
 pub use command::{NotExpressible, Request, command_args, command_line, convert_args};
 pub use fsio::FsIo;
