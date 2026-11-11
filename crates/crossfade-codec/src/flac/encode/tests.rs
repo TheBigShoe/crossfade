@@ -9,6 +9,7 @@ fn spec(rate: u32, format: SampleFormat, channels: u16) -> AudioSpec {
 fn opts(level: Option<u8>) -> EncodeOptions {
     EncodeOptions {
         compression_level: level,
+        ..EncodeOptions::default()
     }
 }
 
@@ -587,5 +588,66 @@ fn the_packet_sequence_is_the_same_at_any_thread_count() {
                 "{format:?} x{channels} level {level:?}, {threads} threads"
             );
         }
+    }
+}
+
+fn depth_opts(depth: u8) -> EncodeOptions {
+    EncodeOptions {
+        bits_per_sample: Some(depth),
+        ..EncodeOptions::default()
+    }
+}
+
+#[test]
+fn a_true_depth_below_the_container_is_coded_right_justified() {
+    for (format, width, depth) in [
+        (SampleFormat::U8, 8, 4),
+        (SampleFormat::U8, 8, 6),
+        (SampleFormat::S16, 16, 9),
+        (SampleFormat::S16, 16, 12),
+        (SampleFormat::S24, 24, 17),
+        (SampleFormat::S24, 24, 20),
+        (SampleFormat::S32, 32, 25),
+        (SampleFormat::S32, 32, 28),
+    ] {
+        let spec = spec(48000, format, 2);
+        let right = signal(2, 5000, u32::from(depth), 3);
+        let left: Vec<i32> = right.iter().map(|&v| v << (width - depth)).collect();
+        let mut e = encoder(&spec, &depth_opts(depth)).unwrap();
+        assert_eq!(
+            StreamInfoBlock::parse(e.extradata())
+                .unwrap()
+                .bits_per_sample,
+            depth,
+            "provisional {format:?} {depth}"
+        );
+        e.send_frame(&audio_frame(&spec, &left)).unwrap();
+        e.drain();
+        let mut packet = Packet::default();
+        let mut first = None;
+        while e.receive_packet(&mut packet).unwrap() {
+            first.get_or_insert_with(|| packet.clone());
+        }
+        let info = StreamInfoBlock::parse(e.extradata()).unwrap();
+        assert_eq!(info.bits_per_sample, depth, "{format:?} {depth}");
+        assert_eq!(
+            info.md5,
+            rfc_md5(u32::from(depth), &right),
+            "{format:?} {depth}"
+        );
+        let h = parse_header(&first.unwrap().data).unwrap();
+        assert!(h.bits_per_sample.is_none_or(|b| b == depth));
+    }
+}
+
+#[test]
+fn a_depth_the_container_cannot_hold_is_refused() {
+    for (format, depth) in [
+        (SampleFormat::S16, 17),
+        (SampleFormat::U8, 3),
+        (SampleFormat::S24, 33),
+    ] {
+        let what = unsupported(encoder(&spec(44100, format, 2), &depth_opts(depth)));
+        assert!(what.contains(&depth.to_string()), "{what}");
     }
 }

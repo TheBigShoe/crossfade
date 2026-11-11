@@ -109,6 +109,7 @@ pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions
         ))),
         Some(l) => Ok(EncodeOptions {
             compression_level: Some(l),
+            ..EncodeOptions::default()
         }),
     }
 }
@@ -243,7 +244,8 @@ mod tests {
             assert_eq!(
                 encode_options(CodecId::Flac, Some(l)),
                 Ok(EncodeOptions {
-                    compression_level: Some(l)
+                    compression_level: Some(l),
+                    ..EncodeOptions::default()
                 })
             );
         }
