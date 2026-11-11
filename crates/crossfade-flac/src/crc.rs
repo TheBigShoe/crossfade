@@ -41,14 +41,16 @@ const fn table16() -> [u16; 256] {
     t
 }
 
-/// `t[k][v]` is the CRC-16 of the byte `v` followed by `k` zero bytes, so eight bytes fold into
-/// one step of eight independent lookups.
-const fn sliced16() -> [[u16; 256]; 8] {
+/// `t[k][v]` is the CRC-16 of the byte `v` followed by `k` zero bytes, so sixteen bytes fold into
+/// one step of sixteen independent lookups. The CRC carried from one step to the next goes
+/// through two lookups and a XOR tree, so the wider the step the fewer of those chains a frame
+/// waits on.
+const fn sliced16() -> [[u16; 256]; SLICES] {
     let base = table16();
-    let mut t = [[0u16; 256]; 8];
+    let mut t = [[0u16; 256]; SLICES];
     t[0] = base;
     let mut k = 1;
-    while k < 8 {
+    while k < SLICES {
         let mut i = 0;
         while i < 256 {
             let prev = t[k - 1][i];
@@ -61,7 +63,8 @@ const fn sliced16() -> [[u16; 256]; 8] {
 }
 
 static TABLE8: [u8; 256] = table8();
-static SLICED16: [[u16; 256]; 8] = sliced16();
+const SLICES: usize = 16;
+static SLICED16: [[u16; 256]; SLICES] = sliced16();
 
 /// x^8 + x^2 + x + 1.
 pub fn crc8(data: &[u8]) -> u8 {
@@ -80,17 +83,15 @@ pub fn crc16(data: &[u8]) -> u16 {
 
 pub fn crc16_update(mut crc: u16, data: &[u8]) -> u16 {
     let t = &SLICED16;
-    let (chunks, rest) = data.as_chunks::<8>();
+    let (chunks, rest) = data.as_chunks::<SLICES>();
     for c in chunks {
+        // The bytes past the CRC's two do not depend on it, so their lookups run ahead.
+        let mut next = 0;
+        for (j, &b) in c.iter().enumerate().skip(2) {
+            next ^= t[SLICES - 1 - j][usize::from(b)];
+        }
         let v = crc ^ u16::from_be_bytes([c[0], c[1]]);
-        crc = t[7][usize::from(v >> 8)]
-            ^ t[6][usize::from(v & 0xff)]
-            ^ t[5][usize::from(c[2])]
-            ^ t[4][usize::from(c[3])]
-            ^ t[3][usize::from(c[4])]
-            ^ t[2][usize::from(c[5])]
-            ^ t[1][usize::from(c[6])]
-            ^ t[0][usize::from(c[7])];
+        crc = next ^ t[SLICES - 1][usize::from(v >> 8)] ^ t[SLICES - 2][usize::from(v & 0xff)];
     }
     bytewise16(crc, rest)
 }

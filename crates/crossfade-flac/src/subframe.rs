@@ -107,23 +107,49 @@ impl<'a> Bits<'a> {
     /// Rice-decodes `out.len()` residuals with parameter `k` (below 32). A code that fits the
     /// window is taken in one step; a long one, or one at the end of the data, goes the slow way.
     fn read_rice<T: Sample>(&mut self, out: &mut [T], k: u32) -> Result<()> {
-        for v in out {
-            if self.n < 48 {
-                self.refill();
-            }
-            let lead = self.acc.leading_zeros();
-            let used = lead + 1 + k;
-            let folded = if used <= self.n {
-                let low = ((self.acc << (lead + 1)) >> 1) >> (63 - k);
-                self.acc <<= used;
-                self.n -= used;
-                (u64::from(lead) << k) | low
-            } else {
-                let q = u64::from(self.read_unary()?);
-                (q << k) | self.read(k)?
+        // The window lives in locals for the loop: kept in `self` it went through memory on
+        // every code, putting a store and a reload on the chain from one code to the next.
+        let data = self.data;
+        let (mut acc, mut n, mut next) = (self.acc, self.n, self.next);
+        macro_rules! code {
+            ($v:expr) => {
+                let lead = acc.leading_zeros();
+                let used = lead + 1 + k;
+                let folded = if used <= n {
+                    // `t` starts with the stop bit; the `k` bits after it are the low part.
+                    let t = acc << lead;
+                    let low = (t ^ (1 << 63)) >> (63 - k);
+                    acc = t << (k + 1);
+                    n -= used;
+                    (u64::from(lead) << k) | low
+                } else {
+                    (self.acc, self.n, self.next) = (acc, n, next);
+                    let q = u64::from(self.read_unary()?);
+                    let folded = (q << k) | self.read(k)?;
+                    (acc, n, next) = (self.acc, self.n, self.next);
+                    folded
+                };
+                *$v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
             };
-            *v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
         }
+        // Two codes per top-up: after one the window holds at least 56 bits, which nearly
+        // always covers both, and a code that does not fit takes the slow path.
+        for pair in out.chunks_mut(2) {
+            if let Some(word) = data.get(next..).and_then(|d| d.first_chunk::<8>()) {
+                acc |= u64::from_be_bytes(*word) >> n;
+                let take = (63 - n) >> 3;
+                next += take as usize;
+                n += take * 8;
+            } else if n < 48 {
+                (self.acc, self.n, self.next) = (acc, n, next);
+                self.refill();
+                (acc, n, next) = (self.acc, self.n, self.next);
+            }
+            for v in pair {
+                code!(v);
+            }
+        }
+        (self.acc, self.n, self.next) = (acc, n, next);
         Ok(())
     }
 
@@ -209,18 +235,28 @@ impl Sample for i32 {
             .map(|c| u64::from(c.unsigned_abs()))
             .sum::<u64>()
             << (bps - 1);
-        let narrow = bound < 1 << 31;
-        macro_rules! by_order {
-            ($($n:literal)*) => {
+        lpc_i32(out, coefs, shift, bound < 1 << 31);
+    }
+}
+
+/// `narrow`: the sum of products wraps at 32 bits, which equals the exact sum when it fits.
+fn lpc_i32(out: &mut [i32], coefs: &[i32], shift: u32, narrow: bool) {
+    macro_rules! by_order {
+            ($($r:literal $f:ident)*; $($n:literal)*) => {
                 match (coefs.len(), narrow) {
+                    $(($r, true) => $f::<false>(out, coefs, shift),
+                    ($r, false) => $f::<true>(out, coefs, shift),)*
                     $(($n, true) => lpc32::<$n, false>(out, coefs, shift),
                     ($n, false) => lpc32::<$n, true>(out, coefs, shift),)*
                     _ => lpc_any(out, coefs, shift),
                 }
             };
         }
-        by_order!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
-    }
+    by_order!(
+        1 lpc_r1 2 lpc_r2 3 lpc_r3 4 lpc_r4 5 lpc_r5 6 lpc_r6 7 lpc_r7 8 lpc_r8 9 lpc_r9
+        10 lpc_r10 11 lpc_r11 12 lpc_r12;
+        13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32
+    );
 }
 
 /// `WIDE` picks the 64-bit accumulator; the order is a constant so the taps unroll.
@@ -230,22 +266,65 @@ fn lpc32<const N: usize, const WIDE: bool>(out: &mut [i32], coefs: &[i32], shift
     };
     for i in N..out.len() {
         let h = <&[i32; N]>::try_from(&out[i - N..i]).unwrap();
-        let p = if WIDE {
-            let mut sum = 0i64;
-            for j in 0..N {
-                sum = sum.wrapping_add(i64::from(h[j]) * i64::from(c[j]));
-            }
+        let mut sum = 0i64;
+        for j in 0..N {
+            sum = sum.wrapping_add(i64::from(h[j]) * i64::from(c[j]));
+        }
+        let p = if WIDE || sum == i64::from(sum as i32) {
             (sum >> shift) as i32
         } else {
-            let mut sum = 0i32;
-            for j in 0..N {
-                sum = sum.wrapping_add(h[j].wrapping_mul(c[j]));
-            }
-            sum >> shift
+            (sum as i32) >> shift
         };
         out[i] = out[i].wrapping_add(p);
     }
 }
+
+/// LPC restoration with the history in named locals, for the orders encoders actually use.
+/// Reading the history back from `out` waits on the store just made (and mixed-width reloads of
+/// it defeat store forwarding); in registers, with the newest sample added last, one multiply,
+/// add, shift and add separate one sample from the next.
+macro_rules! lpc_regs {
+    ($name:ident, $n:literal: $first:ident $fi:literal $(, $rest:ident $ri:literal)*) => {
+        fn $name<const WIDE: bool>(out: &mut [i32], coefs: &[i32], shift: u32) {
+            let Ok(c) = <&[i32; $n]>::try_from(coefs) else {
+                return;
+            };
+            let Some((&mut [mut $first $(, mut $rest)*], tail)) =
+                out.split_first_chunk_mut::<$n>()
+            else {
+                return;
+            };
+            for v in tail {
+                // Always 64-bit multiply-adds: NEON has no 64-bit lane multiply, so this stays
+                // scalar, where 32-bit products get vectorised around the loop-carried history.
+                // The low 32 bits are the narrow sum, wrapped exactly as before.
+                let sum = (i64::from($first) * i64::from(c[$fi]))
+                    $(.wrapping_add(i64::from($rest) * i64::from(c[$ri])))*;
+                let p = if WIDE || sum == i64::from(sum as i32) {
+                    (sum >> shift) as i32
+                } else {
+                    (sum as i32) >> shift
+                };
+                let x = v.wrapping_add(p);
+                *v = x;
+                ($first $(, $rest)*) = ($($rest, )* x);
+            }
+        }
+    };
+}
+
+lpc_regs!(lpc_r1, 1: a 0);
+lpc_regs!(lpc_r2, 2: a 0, b 1);
+lpc_regs!(lpc_r3, 3: a 0, b 1, d 2);
+lpc_regs!(lpc_r4, 4: a 0, b 1, d 2, e 3);
+lpc_regs!(lpc_r5, 5: a 0, b 1, d 2, e 3, f 4);
+lpc_regs!(lpc_r6, 6: a 0, b 1, d 2, e 3, f 4, g 5);
+lpc_regs!(lpc_r7, 7: a 0, b 1, d 2, e 3, f 4, g 5, h 6);
+lpc_regs!(lpc_r8, 8: a 0, b 1, d 2, e 3, f 4, g 5, h 6, i 7);
+lpc_regs!(lpc_r9, 9: a 0, b 1, d 2, e 3, f 4, g 5, h 6, i 7, j 8);
+lpc_regs!(lpc_r10, 10: a 0, b 1, d 2, e 3, f 4, g 5, h 6, i 7, j 8, k 9);
+lpc_regs!(lpc_r11, 11: a 0, b 1, d 2, e 3, f 4, g 5, h 6, i 7, j 8, k 9, l 10);
+lpc_regs!(lpc_r12, 12: a 0, b 1, d 2, e 3, f 4, g 5, h 6, i 7, j 8, k 9, l 10, m 11);
 
 /// An order the table above does not list cannot occur (1 to 32); this keeps the match total.
 fn lpc_any(out: &mut [i32], coefs: &[i32], shift: u32) {
@@ -494,7 +573,42 @@ mod tests {
         )
     }
 
+    /// The plain loop the kernels must equal on any input, valid or not: a 32-bit wrapping sum
+    /// when `narrow`, a 64-bit one otherwise.
+    fn lpc_reference(out: &mut [i32], coefs: &[i32], shift: u32, narrow: bool) {
+        let order = coefs.len();
+        for i in order..out.len() {
+            let h = &out[i - order..i];
+            let p = if narrow {
+                h.iter()
+                    .zip(coefs)
+                    .fold(0i32, |a, (&h, &c)| a.wrapping_add(h.wrapping_mul(c)))
+                    >> shift
+            } else {
+                (h.iter().zip(coefs).fold(0i64, |a, (&h, &c)| {
+                    a.wrapping_add(i64::from(h) * i64::from(c))
+                }) >> shift) as i32
+            };
+            out[i] = out[i].wrapping_add(p);
+        }
+    }
+
     proptest! {
+        // Corrupt data that got past the CRC must decode to the same noise on every path.
+        #[test]
+        fn every_lpc_kernel_equals_the_plain_loop_on_any_input(
+            coefs in prop::collection::vec(any::<i32>(), 1..=32),
+            data in prop::collection::vec(prop_oneof![Just(i32::MIN), Just(i32::MAX), any::<i32>()], 0..80),
+            shift in 0u32..=15,
+            narrow in any::<bool>(),
+        ) {
+            let mut fast = data.clone();
+            lpc_i32(&mut fast, &coefs, shift, narrow);
+            let mut slow = data;
+            lpc_reference(&mut slow, &coefs, shift, narrow);
+            prop_assert_eq!(fast, slow);
+        }
+
         // Whatever predictor the fast path takes (32-bit sums, 64-bit sums of 32-bit
         // products, or the i64 samples), a valid stream comes back exactly.
         #[test]

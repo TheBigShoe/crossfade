@@ -27,6 +27,14 @@ assert_eq!(decoder.finish()?, Verification::Md5Matched);
 Parameters that change mid-stream are rejected as `Error::Unsupported`. Arithmetic on
 hostile data wraps instead of panicking; the frame CRC reports the damage.
 
+Decoding always verifies: every frame's CRC-16, and the MD5 of the whole stream. With the
+file in memory, splitting it into frames (`crossfade-format`'s reader) and decoding and
+verifying every frame takes about 32 / 40 / 45 ms for 60 s of 44.1 kHz 16-bit stereo coded by
+the reference `flac` 1.5.0 at levels 0 / 5 / 8, on an Apple M1 Max, where `flac -t` takes
+48 / 64 / 65 ms of wall time; on 10 s of 96 kHz 24-bit stereo, 16 / 18 / 21 ms against
+25 / 27 / 28 ms. The MD5 is about a third of that time on 16-bit audio and half on 24-bit,
+and it is one serial chain. `crossfade-format`'s `examples/profile_flac_read.rs` measures it.
+
 ## Encoding
 
 `Encoder` takes interleaved `i32` samples (sign-extended, any depth from 4 to 32 bits, 1 to 8
