@@ -1,8 +1,11 @@
 //! Sample-rate conversion in pure Rust.
 #![forbid(unsafe_code)]
 
+mod design;
 mod error;
+mod gather;
 mod io;
+mod kernel;
 mod quality;
 mod sample;
 
@@ -16,6 +19,18 @@ use io::{Input, Output};
 pub const MAX_RATE: u32 = 1_048_575;
 /// The most channels one resampler takes.
 pub const MAX_CHANNELS: usize = 256;
+/// The largest input-to-output ratio converted in the direct (gather) form.
+pub const MAX_GATHER_DECIMATION: u64 = 64;
+
+/// `ceil(frames * up / down)`, saturating.
+pub(crate) fn ceil_ratio(frames: u64, up: u64, down: u64) -> u64 {
+    let n = (u128::from(frames) * u128::from(up)).div_ceil(u128::from(down));
+    u64::try_from(n).unwrap_or(u64::MAX)
+}
+
+fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
 
 /// The number of output frames `frames` input frames become: `ceil(frames * out / in)`,
 /// saturating at `u64::MAX`; 0 when `input_rate` is 0.
@@ -23,8 +38,7 @@ pub fn output_len(frames: u64, input_rate: u32, output_rate: u32) -> u64 {
     if input_rate == 0 {
         return 0;
     }
-    let n = (u128::from(frames) * u128::from(output_rate)).div_ceil(u128::from(input_rate));
-    u64::try_from(n).unwrap_or(u64::MAX)
+    ceil_ratio(frames, u64::from(output_rate), u64::from(input_rate))
 }
 
 /// A streaming sample-rate converter for one stream of `channels` channels.
@@ -40,7 +54,7 @@ pub struct Resampler<S: Sample = f64> {
 #[derive(Debug, Clone)]
 enum Engine<S> {
     Pass,
-    Convert(std::marker::PhantomData<S>),
+    Gather(gather::Gather<S>),
 }
 
 impl Resampler {
@@ -68,7 +82,9 @@ impl<S: Sample> Resampler<S> {
         let engine = if input_rate == output_rate {
             Engine::Pass
         } else {
-            Engine::Convert(std::marker::PhantomData)
+            let g = gcd(u64::from(input_rate), u64::from(output_rate));
+            let (up, down) = (u64::from(output_rate) / g, u64::from(input_rate) / g);
+            Engine::Gather(gather::Gather::new(&quality.params(), up, down, channels))
         };
         Ok(Self {
             input_rate,
@@ -97,7 +113,10 @@ impl<S: Sample> Resampler<S> {
 
     /// Input frames of lookahead: nothing comes out until `latency() + 1` frames have gone in.
     pub fn latency(&self) -> u64 {
-        0
+        match &self.engine {
+            Engine::Pass => 0,
+            Engine::Gather(g) => g.latency(),
+        }
     }
 
     /// Converts interleaved frames and appends the output frames now complete to `output`.
@@ -141,7 +160,12 @@ impl<S: Sample> Resampler<S> {
     }
 
     /// Forgets the stream so far, as if just constructed; keeps every allocation.
-    pub fn reset(&mut self) {}
+    pub fn reset(&mut self) {
+        match &mut self.engine {
+            Engine::Pass => {}
+            Engine::Gather(g) => g.reset(),
+        }
+    }
 
     fn check_planar(&self, got: usize) -> Result<()> {
         if got == self.channels {
@@ -157,9 +181,14 @@ impl<S: Sample> Resampler<S> {
     fn run(&mut self, input: &Input<'_, S>, output: &mut Output<'_, S>) {
         match &mut self.engine {
             Engine::Pass => output.copy_from(input),
-            Engine::Convert(_) => {}
+            Engine::Gather(g) => g.process(input, output),
         }
     }
 
-    fn finish(&mut self, _output: &mut Output<'_, S>) {}
+    fn finish(&mut self, output: &mut Output<'_, S>) {
+        match &mut self.engine {
+            Engine::Pass => {}
+            Engine::Gather(g) => g.flush(output),
+        }
+    }
 }
