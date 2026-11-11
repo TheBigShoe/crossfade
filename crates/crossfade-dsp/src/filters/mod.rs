@@ -29,8 +29,8 @@ pub enum FilterPlan {
 pub fn build(plan: &FilterPlan, input: &AudioSpec) -> Result<Box<dyn Filter>, Error> {
     match plan {
         FilterPlan::Gain(p) => Ok(Box::new(gain::Gain::new(input, p))),
-        FilterPlan::Trim(_) => Err(not_built("trim")),
-        FilterPlan::Fade(_) => Err(not_built("fade")),
+        FilterPlan::Trim(p) => Ok(Box::new(trim::Trim::new(input, p))),
+        FilterPlan::Fade(p) => Ok(Box::new(fade::Fade::new(input, p)?)),
         FilterPlan::Normalize(_) => Err(not_built("normalize")),
         FilterPlan::Resample(_) => Err(not_built("resample")),
         FilterPlan::Mix(_) => Err(not_built("mix")),

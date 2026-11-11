@@ -166,21 +166,6 @@ fn a_filter_not_built_yet_says_so_by_name() {
     let input = spec(48000, SampleFormat::F64, ChannelLayout::stereo());
     let cases = [
         (
-            FilterPlan::Trim(TrimPlan {
-                start: 0,
-                end: Some(10),
-            }),
-            "trim",
-        ),
-        (
-            FilterPlan::Fade(FadePlan {
-                fade_in: 10,
-                fade_out: 0,
-                curve: Curve::Linear,
-            }),
-            "fade",
-        ),
-        (
             FilterPlan::Normalize(NormalizePlan {
                 target_lufs: -16.0,
                 ceiling_dbtp: -1.0,
