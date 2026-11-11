@@ -6,6 +6,8 @@
 //! `decode` (the standalone decoder with its CRC-16 and MD5 checks over packets split
 //! beforehand) and `read` (demux, decode and verify together, the samples discarded).
 //! `--loop MODE` repeats one mode on the first file forever, for a sampling profiler.
+//! `--threads N` decodes through `push_frame` on N threads (0: automatic); without it, one
+//! frame at a time through `decode_frame`.
 
 use crossfade_core::{Limits, Packet};
 use crossfade_flac::Decoder;
@@ -33,24 +35,40 @@ fn split(bytes: Vec<u8>) -> usize {
     n
 }
 
-fn decode(info: &StreamInfoBlock, packets: &[Vec<u8>]) -> usize {
-    let mut dec = Decoder::new(info).expect("decoder");
+/// One frame into `dec`: through `decode_frame`, or `push_frame` when `threads` is set.
+fn feed(dec: &mut Decoder, frame: &[u8], threads: Option<usize>, n: &mut usize) {
+    if threads.is_some() {
+        dec.push_frame(frame, &mut |b| *n += b.len())
+            .expect("decode");
+    } else {
+        *n += dec.decode_frame(frame).expect("decode").len();
+    }
+}
+
+fn open(info: &StreamInfoBlock, threads: Option<usize>) -> Decoder {
+    Decoder::with_threads(info, threads.unwrap_or(1)).expect("decoder")
+}
+
+fn decode(info: &StreamInfoBlock, packets: &[Vec<u8>], threads: Option<usize>) -> usize {
+    let mut dec = open(info, threads);
     let mut n = 0;
     for p in packets {
-        n += dec.decode_frame(p).expect("decode").len();
+        feed(&mut dec, p, threads, &mut n);
     }
+    dec.flush(&mut |b| n += b.len()).expect("decode");
     dec.finish().expect("verify");
     n
 }
 
-fn read(bytes: Vec<u8>) -> usize {
+fn read(bytes: Vec<u8>, threads: Option<usize>) -> usize {
     let mut d = demuxer(bytes);
-    let mut dec = Decoder::new(&info(d.as_ref())).expect("decoder");
+    let mut dec = open(&info(d.as_ref()), threads);
     let mut p = Packet::default();
     let mut n = 0;
     while d.read_packet(&mut p).expect("demux") {
-        n += dec.decode_frame(&p.data).expect("decode").len();
+        feed(&mut dec, &p.data, threads, &mut n);
     }
+    dec.flush(&mut |b| n += b.len()).expect("decode");
     dec.finish().expect("verify");
     n
 }
@@ -69,11 +87,12 @@ fn best<P>(passes: usize, mut prepare: impl FnMut() -> P, mut run: impl FnMut(P)
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let (mut passes, mut looping, mut files) = (20, None, Vec::new());
+    let (mut passes, mut looping, mut files, mut threads) = (20, None, Vec::new(), None);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--passes" => passes = args.next().and_then(|v| v.parse().ok()).expect("a count"),
             "--loop" => looping = args.next(),
+            "--threads" => threads = args.next().and_then(|v| v.parse().ok()),
             _ => files.push(a),
         }
     }
@@ -94,8 +113,8 @@ fn main() {
         loop {
             std::hint::black_box(match mode.as_str() {
                 "split" => split(bytes.clone()),
-                "decode" => decode(&info, &pk),
-                _ => read(bytes.clone()),
+                "decode" => decode(&info, &pk, threads),
+                _ => read(bytes.clone(), threads),
             });
         }
     }
@@ -110,8 +129,8 @@ fn main() {
         let (mut s, mut d, mut r) = (f64::MAX, f64::MAX, f64::MAX);
         for _ in 0..passes {
             s = s.min(best(1, || bytes.clone(), split));
-            d = d.min(best(1, || (), |()| decode(&info, &pk)));
-            r = r.min(best(1, || bytes.clone(), read));
+            d = d.min(best(1, || (), |()| decode(&info, &pk, threads)));
+            r = r.min(best(1, || bytes.clone(), |b| read(b, threads)));
         }
         let name = f.rsplit('/').next().unwrap_or(f);
         println!("{name:<28}{s:>10.2}{d:>10.2}{r:>10.2}");

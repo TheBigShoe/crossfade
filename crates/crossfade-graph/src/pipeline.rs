@@ -149,7 +149,15 @@ impl Pipeline {
         if self.finished {
             return Ok(Step::Finished);
         }
-        if self.demuxer.read_packet(&mut self.packet)? {
+        let read = self.demuxer.read_packet(&mut self.packet);
+        if let (Err(e), Engine::Transcode(t)) = (&read, &mut self.engine) {
+            // A threaded decoder may still hold a frame read before this packet that fails;
+            // its error came first.
+            t.decoder.flush()?;
+            while t.decoder.receive_frame(&mut t.decoded)? {}
+            return Err(e.clone());
+        }
+        if read? {
             match &mut self.engine {
                 Engine::Copy => {
                     self.muxer.write_packet(&self.packet)?;

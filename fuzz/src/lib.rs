@@ -2,7 +2,7 @@
 //! and loops that read or decode a stream to its end or first error.
 #![forbid(unsafe_code)]
 
-use crossfade_codec::decoder_for;
+use crossfade_codec::{decoder_for, decoder_for_threads};
 use crossfade_core::{AudioFrame, Demuxer, Error, Limits, MediaSink, MediaSource, Packet};
 use std::io::{self, Cursor, SeekFrom};
 use std::sync::{Arc, Mutex};
@@ -106,4 +106,49 @@ pub fn decode_all(demux: &mut dyn Demuxer, data_len: usize) -> Result<u64, Error
         while decoder.receive_frame(&mut frame)? {}
     }
     panic!("decode loop did not end");
+}
+
+/// Everything a decode shows: the packets read, every frame's pts and samples (as debug text
+/// of the sample buffer), and the first error's text, read to the end or the first error as
+/// the pipeline reads. With threads the reader may get further before a bad frame's error
+/// shows, so compare the frames and the error, not the packets read.
+pub fn decode_outcome(
+    demux: &mut dyn Demuxer,
+    data_len: usize,
+    threads: usize,
+) -> (u64, Vec<(i64, String)>, Result<(), String>) {
+    let stream = demux.streams()[0].clone();
+    let mut frames = Vec::new();
+    let mut packets = 0;
+    let result = (|| -> Result<(), Error> {
+        let mut decoder = decoder_for_threads(&stream, threads)?;
+        let (mut packet, mut frame) = (Packet::default(), AudioFrame::new(&stream.audio));
+        for _ in 0..data_len as u64 + 16 {
+            match demux.read_packet(&mut packet) {
+                Ok(true) => {}
+                Ok(false) => {
+                    decoder.drain();
+                    while decoder.receive_frame(&mut frame)? {
+                        frames.push((frame.pts, format!("{:?}", frame.samples)));
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    // As the pipeline does: an earlier frame's error comes first.
+                    decoder.flush()?;
+                    while decoder.receive_frame(&mut frame)? {
+                        frames.push((frame.pts, format!("{:?}", frame.samples)));
+                    }
+                    return Err(e);
+                }
+            }
+            packets += 1;
+            decoder.send_packet(&packet)?;
+            while decoder.receive_frame(&mut frame)? {
+                frames.push((frame.pts, format!("{:?}", frame.samples)));
+            }
+        }
+        panic!("decode loop did not end");
+    })();
+    (packets, frames, result.map_err(|e| e.to_string()))
 }

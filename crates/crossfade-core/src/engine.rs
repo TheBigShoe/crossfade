@@ -40,6 +40,15 @@ pub trait Decoder {
     /// Signals end of input; `receive_frame` then returns what is left and
     /// finally `Ok(false)`.
     fn drain(&mut self);
+
+    /// Finishes decoding every packet sent so far without ending the stream, so that
+    /// `receive_frame` can return the frames and a failure among them is reported (here or
+    /// by `receive_frame`). A decoder that holds nothing back, the default, has nothing to do.
+    /// A reader that fails calls this first, so an earlier frame's error is not hidden behind
+    /// its own.
+    fn flush(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 /// Frames in, packets out; same protocol as [`Decoder`]: call

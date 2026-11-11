@@ -56,3 +56,10 @@ mod subframe;
 pub use decode::{Block, Decoder, Verification};
 pub use encode::{Encoder, EncoderConfig};
 pub use error::{Error, Result};
+
+/// What an automatic thread count (`threads: 0`) stands for on this machine, for the encoder
+/// and the decoder: its parallelism less three (the MD5 thread, and the caller's reading and
+/// writing), at least 2 and at most 8; 1 or 2 on a machine with that many.
+pub fn auto_thread_count() -> usize {
+    pool::auto_threads(std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
+}

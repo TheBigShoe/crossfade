@@ -297,3 +297,90 @@ fn compression_level_is_checked_against_the_codec() {
     let r = build(FormatId::Wav, d(), &s, &Log::default(), &Rc::default());
     assert_eq!(unsupported(r), "--compression-level applies to flac only");
 }
+
+/// Reads `ok` packets, then fails.
+struct FailingDemuxer {
+    streams: Vec<StreamInfo>,
+    tags: Tags,
+    ok: usize,
+}
+
+impl Demuxer for FailingDemuxer {
+    fn streams(&self) -> &[StreamInfo] {
+        &self.streams
+    }
+    fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        if self.ok == 0 {
+            return Err(Error::Malformed {
+                what: "reader".into(),
+            });
+        }
+        self.ok -= 1;
+        *out = packet(&[1, 0], 1);
+        Ok(true)
+    }
+    fn tags(&self) -> &Tags {
+        &self.tags
+    }
+}
+
+/// A decoder still working on what it was sent (as a threaded one is), which finds a bad frame
+/// only when asked to hand over everything.
+struct LaggingDecoder {
+    flushed: bool,
+}
+
+impl Decoder for LaggingDecoder {
+    fn send_packet(&mut self, _: &Packet) -> Result<(), Error> {
+        Ok(())
+    }
+    fn receive_frame(&mut self, _: &mut AudioFrame) -> Result<bool, Error> {
+        Ok(false)
+    }
+    fn drain(&mut self) {}
+    fn flush(&mut self) -> Result<(), Error> {
+        self.flushed = true;
+        Err(Error::Malformed {
+            what: "an earlier frame".into(),
+        })
+    }
+}
+
+/// A reader error after packets the decoder has not finished with: the decoder's error about
+/// an earlier frame wins, as it would have one frame at a time.
+#[test]
+fn a_reader_error_reports_a_decoding_error_from_before_it_first() {
+    let (log, seen) = (Log::default(), Rc::default());
+    let d: Box<dyn Demuxer> = Box::new(FailingDemuxer {
+        streams: vec![stream(CodecId::PcmS16Le)],
+        tags: Tags::new(),
+        ok: 2,
+    });
+    let mut p = build(FormatId::Wav, d, &settings(None), &log, &seen).unwrap();
+    let Engine::Transcode(t) = &mut p.engine else {
+        panic!("not copying");
+    };
+    t.decoder = Box::new(LaggingDecoder { flushed: false });
+    assert!(p.step().is_ok());
+    assert!(p.step().is_ok());
+    assert_eq!(
+        p.step(),
+        Err(Error::Malformed {
+            what: "an earlier frame".into()
+        })
+    );
+    // A decoder with nothing held back leaves the reader's error as it was.
+    let d: Box<dyn Demuxer> = Box::new(FailingDemuxer {
+        streams: vec![stream(CodecId::PcmS16Le)],
+        tags: Tags::new(),
+        ok: 1,
+    });
+    let mut p = build(FormatId::Wav, d, &settings(None), &log, &seen).unwrap();
+    assert!(p.step().is_ok());
+    assert_eq!(
+        p.step(),
+        Err(Error::Malformed {
+            what: "reader".into()
+        })
+    );
+}

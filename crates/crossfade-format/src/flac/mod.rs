@@ -64,6 +64,10 @@ pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
         crossfade_flac::Error::UnexpectedEof { offset } => Error::UnexpectedEof {
             offset: offset as u64,
         },
+        // The engine has no variant for a bug; the text says what it was.
+        other => Error::Unsupported {
+            what: other.to_string(),
+        },
     }
 }
 
@@ -71,6 +75,16 @@ pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
 mod tests {
     use super::*;
     use crossfade_core::{Channel::*, SampleFormat};
+
+    #[test]
+    fn an_internal_error_keeps_its_text() {
+        assert_eq!(
+            engine_error(crossfade_flac::Error::Internal("x".into())),
+            Error::Unsupported {
+                what: "internal error: x".into()
+            }
+        );
+    }
 
     fn block(rate: u32, channels: u8, bits: u8, total: u64) -> StreamInfoBlock {
         StreamInfoBlock {

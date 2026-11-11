@@ -24,6 +24,24 @@ for frame in frames {
 assert_eq!(decoder.finish()?, Verification::Md5Matched);
 ```
 
+`Decoder::with_threads(&info, threads)` adds a push interface that decodes on worker threads
+(1, what `new` gives, starts none; `Decoder::AUTO_THREADS` picks up to 3, since a frame decodes
+several times faster than the MD5 hashes it):
+
+```rust
+let mut decoder = Decoder::with_threads(&info, Decoder::AUTO_THREADS)?;
+for frame in frames {
+    decoder.push_frame(frame, &mut |block| { /* blocks arrive in order, a few frames late */ })?;
+}
+decoder.flush(&mut |block| { /* the rest */ })?;
+assert_eq!(decoder.finish()?, Verification::Md5Matched);
+```
+
+Whatever the thread count, the blocks, the verification and the errors are the same: when a
+frame fails, every block before it is delivered, then the error `decode_frame` gives for it,
+and nothing after. A frame's header is checked by the call that pushes it. The MD5 runs on a
+thread of its own, which with threads is the floor: about 650 MB/s of PCM.
+
 Parameters that change mid-stream are rejected as `Error::Unsupported`. Arithmetic on
 hostile data wraps instead of panicking; the frame CRC reports the damage.
 
@@ -33,7 +51,9 @@ verifying every frame takes about 32 / 40 / 45 ms for 60 s of 44.1 kHz 16-bit st
 the reference `flac` 1.5.0 at levels 0 / 5 / 8, on an Apple M1 Max, where `flac -t` takes
 48 / 64 / 65 ms of wall time; on 10 s of 96 kHz 24-bit stereo, 16 / 18 / 21 ms against
 25 / 27 / 28 ms. The MD5 is about a third of that time on 16-bit audio and half on 24-bit,
-and it is one serial chain. `crossfade-format`'s `examples/profile_flac_read.rs` measures it.
+and it is one serial chain. On two threads (`push_frame`) the same 60 s decode and verify in
+about 16 ms and the 10 s of 24-bit audio in 9 ms, the MD5's own pace.
+`crossfade-format`'s `examples/profile_flac_read.rs` measures it (`--threads N`).
 
 ## Encoding
 

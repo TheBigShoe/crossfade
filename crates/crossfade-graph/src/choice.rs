@@ -72,6 +72,31 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
     }
 }
 
+/// Threads for the decoder and the encoder out of a run's `budget` (at least 1; 0, "the
+/// machine", is resolved before). A codec that cannot use threads gets 1; the other gets the
+/// whole budget. When both can (FLAC to FLAC) the decoder, several times cheaper per sample,
+/// gets a quarter but at least two where the budget allows (its MD5 then has a thread of its
+/// own instead of the caller's), and the encoder the rest. The calling thread works for both (it runs queued
+/// frames while it waits for either), so it is counted once: `decoder + encoder - 1 <=
+/// budget`, and two automatic counts never fight over the machine.
+pub(crate) fn share_threads(
+    budget: usize,
+    decoder_threaded: bool,
+    encoder_threaded: bool,
+) -> (usize, usize) {
+    let budget = budget.max(1);
+    match (decoder_threaded, encoder_threaded) {
+        (true, true) => {
+            // Two lets the decoder's MD5 leave the calling thread, which both codecs need.
+            let decoder = (budget / 4).max(2).min(budget - 1).max(1);
+            (decoder, budget - decoder + 1)
+        }
+        (true, false) => (budget, 1),
+        (false, true) => (1, budget),
+        (false, false) => (1, 1),
+    }
+}
+
 /// The encoder options for `codec`; a level only means something to FLAC.
 pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions, Error> {
     match level {
@@ -92,6 +117,28 @@ pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions
 mod tests {
     use super::*;
     use SampleFormat::*;
+
+    /// The budget goes whole to the one threaded codec. When both are (FLAC to FLAC) the
+    /// decoder, far the cheaper, gets a quarter but at least two (one thread more than the
+    /// caller, so that its MD5 leaves the calling thread: on one, the decoder alone held a
+    /// re-encode at 52 ms against 22 ms with two), and the encoder the rest; the calling
+    /// thread works for both, so together they take no more threads than the budget.
+    #[test]
+    fn a_budget_is_shared_between_a_threaded_decoder_and_encoder() {
+        assert_eq!(share_threads(7, false, true), (1, 7));
+        assert_eq!(share_threads(7, true, false), (7, 1));
+        assert_eq!(share_threads(7, false, false), (1, 1));
+        assert_eq!(share_threads(1, true, true), (1, 1));
+        assert_eq!(share_threads(2, true, true), (1, 2));
+        assert_eq!(share_threads(3, true, true), (2, 2));
+        assert_eq!(share_threads(7, true, true), (2, 6));
+        assert_eq!(share_threads(8, true, true), (2, 7));
+        assert_eq!(share_threads(64, true, true), (16, 49));
+        for budget in 1..40 {
+            let (d, e) = share_threads(budget, true, true);
+            assert!(d >= 1 && e >= 1 && d + e - 1 <= budget, "{budget}");
+        }
+    }
 
     const ALL: [SampleFormat; 6] = [U8, S16, S24, S32, F32, F64];
 

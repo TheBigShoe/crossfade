@@ -302,6 +302,19 @@ fn a_worker_that_cannot_rebuild_its_state_still_reports_its_item() {
     }
 }
 
+/// A pool told to wait for more items queued before it starts a worker does.
+#[test]
+fn the_spawn_threshold_is_how_many_items_wait_with_nobody_free() {
+    let mut p = pool(8, 4).spawn_threshold(4);
+    for x in 0..3 {
+        p.submit(x);
+    }
+    assert_eq!(p.workers(), 0);
+    p.submit(3);
+    assert_eq!(p.workers(), 1);
+    assert_eq!(drive(&mut p, []), [0, 3, 6, 9]);
+}
+
 /// An item the caller is about to wait for (the end of a stream) is not worth a new thread.
 #[test]
 fn a_last_item_starts_no_worker() {

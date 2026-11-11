@@ -471,3 +471,120 @@ fn frames_are_handed_over_without_reallocating() {
     assert!(seen.len() <= 2, "{} distinct buffers", seen.len());
     assert_eq!(d.receive_frame(&mut out), Ok(false));
 }
+
+/// A worker panic is a bug, not the input; the engine has no variant of its own for it, so it
+/// arrives as `Unsupported` with the text that says what happened.
+#[test]
+fn an_internal_error_keeps_its_text() {
+    assert_eq!(
+        engine_error(crossfade_flac::Error::Internal("flac decoder: boom".into())),
+        Error::Unsupported {
+            what: "internal error: flac decoder: boom".into()
+        }
+    );
+}
+
+/// `blocks` frames of 16-bit stereo (1152 samples each but the last) from the standalone
+/// encoder, with pts in samples.
+fn encoded_stream(blocks: usize, extra: usize) -> (StreamInfo, Vec<Packet>) {
+    let mut enc = crossfade_flac::Encoder::new(crossfade_flac::EncoderConfig {
+        level: 0,
+        ..crossfade_flac::EncoderConfig::new(44_100, 2, 16)
+    })
+    .unwrap();
+    let samples: Vec<i32> = (0..(blocks * 1152 + extra) * 2)
+        .map(|i| ((i as i32).wrapping_mul(7919) % 30_000) - 15_000)
+        .collect();
+    let mut packets = Vec::new();
+    let mut pts = 0;
+    for chunk in samples.chunks(1152 * 2) {
+        let mut data = Vec::new();
+        enc.encode_block(chunk, &mut data).unwrap();
+        packets.push(Packet {
+            data,
+            pts,
+            duration: (chunk.len() / 2) as u64,
+            ..Packet::default()
+        });
+        pts += (chunk.len() / 2) as i64;
+    }
+    (stream_for(&enc.finish()), packets)
+}
+
+/// Every frame the engine would receive (pts and samples), then the first error, sending each
+/// packet and taking what is ready after it, as the pipeline does.
+fn engine_run(
+    info: &StreamInfo,
+    packets: &[Packet],
+    threads: usize,
+) -> (Vec<(i64, Vec<i16>)>, Option<Error>) {
+    let mut d = decoder_threads(info, threads).unwrap();
+    let mut out = AudioFrame::new(&info.audio);
+    let mut frames = Vec::new();
+    let mut take = |d: &mut Box<dyn Decoder>, frames: &mut Vec<(i64, Vec<i16>)>| loop {
+        match d.receive_frame(&mut out) {
+            Ok(true) => frames.push((out.pts, s16(&out))),
+            Ok(false) => return None,
+            Err(e) => return Some(e),
+        }
+    };
+    for p in packets {
+        if let Err(e) = d.send_packet(p) {
+            return (frames, Some(e));
+        }
+        if let Some(e) = take(&mut d, &mut frames) {
+            return (frames, Some(e));
+        }
+    }
+    d.drain();
+    let e = take(&mut d, &mut frames);
+    // Once the end is reported nothing more comes.
+    assert_eq!(
+        d.receive_frame(&mut AudioFrame::new(&info.audio)),
+        Ok(false)
+    );
+    (frames, e)
+}
+
+#[test]
+fn the_engine_sees_the_same_frames_and_errors_at_any_thread_count() {
+    let (info, packets) = encoded_stream(40, 300);
+    let want = engine_run(&info, &packets, 1);
+    assert_eq!((want.0.len(), &want.1), (41, &None));
+    for threads in [2, 4, 0] {
+        assert_eq!(
+            engine_run(&info, &packets, threads),
+            want,
+            "{threads} threads"
+        );
+    }
+    // A broken frame: the frames before it, then its error, whatever the thread count.
+    for k in [0, 7, 39, 40] {
+        let mut broken = packets.clone();
+        let mid = broken[k].data.len() / 2;
+        broken[k].data[mid] ^= 0x10;
+        let want = engine_run(&info, &broken, 1);
+        assert_eq!(want.0.len(), k);
+        assert!(want.1.is_some());
+        for threads in [2, 4, 0] {
+            assert_eq!(
+                engine_run(&info, &broken, threads),
+                want,
+                "frame {k}, {threads} threads"
+            );
+        }
+    }
+    // A wrong MD5 is the same end-of-stream error.
+    let mut wrong = StreamInfoBlock::parse(&info.extradata).unwrap();
+    wrong.md5[0] ^= 1;
+    let info = stream_for(&wrong);
+    let want = engine_run(&info, &packets, 1);
+    assert_eq!(want.0.len(), 41);
+    for threads in [2, 4, 0] {
+        assert_eq!(
+            engine_run(&info, &packets, threads),
+            want,
+            "{threads} threads"
+        );
+    }
+}

@@ -121,9 +121,9 @@
 //!   [`Encoder::new`] and reused; steady state allocates nothing but what the caller's `out`
 //!   needs. With threads, each worker has its own block of working memory and at most
 //!   `2 * threads` blocks are in flight (plus a few waiting for the MD5 thread), their buffers
-//!   reused. A panic on a worker (a bug) is `Error::Unsupported` ("a worker thread
-//!   panicked") from then on, never a hang. Arithmetic on sample data is either checked against the limits or wraps where the
-//!   result is known to fit.
+//!   reused. A panic on a worker (a bug) is [`Error::Internal`] from
+//!   then on, never a hang. Arithmetic on sample data is either checked against the limits or
+//!   wraps where the result is known to fit.
 
 mod analyze;
 mod bitsink;
@@ -135,6 +135,8 @@ mod write;
 use crate::error::{Error, Result};
 use crate::frame::{self, ChannelAssignment, FrameHeader};
 use crate::md5::Md5;
+#[cfg(test)]
+use crate::pool::auto_threads;
 use crate::pool::{Ordered, Panicked, Serial};
 use crate::streaminfo::StreamInfoBlock;
 use analyze::{Analyzer, Level, Plan, Stereo, is_constant};
@@ -170,7 +172,7 @@ impl EncoderConfig {
     pub const AUTO_THREADS: usize = 0;
     /// The most [`AUTO_THREADS`](Self::AUTO_THREADS) picks: past it the MD5 thread, not the
     /// frames, sets the pace.
-    pub const MAX_AUTO_THREADS: usize = 8;
+    pub const MAX_AUTO_THREADS: usize = crate::pool::MAX_AUTO_THREADS;
     /// The most threads an encoder uses, whatever `threads` says.
     pub const MAX_THREADS: usize = 64;
 
@@ -187,20 +189,9 @@ impl EncoderConfig {
     /// The thread count `threads` stands for on this machine.
     fn resolved_threads(&self) -> usize {
         match self.threads {
-            Self::AUTO_THREADS => {
-                auto_threads(std::thread::available_parallelism().map_or(1, std::num::NonZero::get))
-            }
+            Self::AUTO_THREADS => crate::auto_thread_count(),
             n => n.min(Self::MAX_THREADS),
         }
-    }
-}
-
-/// Threads for [`EncoderConfig::AUTO_THREADS`] on a machine that runs `cores` at once.
-fn auto_threads(cores: usize) -> usize {
-    if cores <= 2 {
-        cores
-    } else {
-        (cores - 3).clamp(2, EncoderConfig::MAX_AUTO_THREADS)
     }
 }
 
@@ -303,11 +294,9 @@ fn hash_bytes(md5: &mut Md5, bytes: &Vec<u8>) {
     md5.update(bytes);
 }
 
-/// A worker's panic is a bug, not the input. `Unsupported` carries it, not a variant of its own,
-/// so that adding threads did not break code that matches on `Error`.
 fn panicked(p: Panicked) -> Error {
-    unsupported(&format!(
-        "a worker thread panicked ({}); the stream cannot continue",
+    Error::Internal(format!(
+        "flac encoder: a worker thread panicked ({}); the stream cannot continue",
         p.0
     ))
 }

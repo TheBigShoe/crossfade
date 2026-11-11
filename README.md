@@ -31,8 +31,9 @@ crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
 ```
 
-`crossfade convert --help` lists every option. FLAC encoding uses several
-threads unless `--threads 1` says otherwise; the output is the same either way. Output is written to a
+`crossfade convert --help` lists every option. FLAC decoding and encoding use
+several threads unless `--threads 1` says otherwise; the output is the same
+either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
 existing output is never replaced without `--force`.
 
