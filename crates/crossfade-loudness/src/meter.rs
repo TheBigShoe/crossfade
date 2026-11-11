@@ -12,6 +12,7 @@ use crate::MAX_CHANNELS;
 use crate::channel::ChannelRole;
 use crate::error::{Error, Result};
 use crate::kweight::{Biquad, KWeighting};
+use crate::peak::{History, Interpolator, factor_for};
 
 /// Sub-blocks per second (20 ms each).
 const SUB_PER_SEC: u64 = 50;
@@ -86,6 +87,11 @@ pub struct Meter {
     /// Powers of the 3 s blocks at or above the absolute gate, one per 100 ms (range only).
     range_blocks: Vec<f64>,
     sanitised: u64,
+
+    sample_peaks: Vec<f64>,
+    interp: Interpolator,
+    /// Per-channel history and running true peak; empty with true peak off.
+    true_peaks: Vec<(History, f64)>,
 }
 
 impl Meter {
@@ -122,6 +128,13 @@ impl Meter {
             gate_blocks: Vec::new(),
             range_blocks: Vec::new(),
             sanitised: 0,
+            sample_peaks: vec![0.0; n],
+            interp: Interpolator::new(factor_for(sample_rate)),
+            true_peaks: if options.true_peak {
+                vec![(History::new(), 0.0); n]
+            } else {
+                Vec::new()
+            },
         })
     }
 
@@ -156,6 +169,12 @@ impl Meter {
         for &raw in samples {
             let c = self.cursor;
             let x = self.sanitise(raw);
+            if self.roles[c] != ChannelRole::Excluded {
+                self.sample_peaks[c] = self.sample_peaks[c].max(x.abs());
+                if let Some((hist, peak)) = self.true_peaks.get_mut(c) {
+                    *peak = peak.max(hist.push(&self.interp, x));
+                }
+            }
             if self.weights[c] != 0.0 {
                 let st = &mut self.stages[c];
                 let shelved = st[0].run(&self.k.shelf, x);
@@ -296,6 +315,35 @@ impl Meter {
         Some(high - low)
     }
 
+    /// Largest sample magnitude per channel (linear, 1.0 is full scale); 0 for excluded channels.
+    pub fn sample_peaks(&self) -> &[f64] {
+        &self.sample_peaks
+    }
+
+    /// Largest sample magnitude over all channels.
+    pub fn sample_peak(&self) -> f64 {
+        self.sample_peaks.iter().fold(0.0, |a, &b| a.max(b))
+    }
+
+    /// True peak per channel (linear), as if the signal ended now; `None` with true peak off.
+    pub fn true_peaks(&self) -> Option<Vec<f64>> {
+        if !self.options.true_peak {
+            return None;
+        }
+        Some(
+            self.true_peaks
+                .iter()
+                .zip(&self.sample_peaks)
+                .map(|((hist, peak), sample)| peak.max(*sample).max(hist.tail_peak(&self.interp)))
+                .collect(),
+        )
+    }
+
+    /// True peak over all channels (linear); `None` with true peak off.
+    pub fn true_peak(&self) -> Option<f64> {
+        Some(self.true_peaks()?.into_iter().fold(0.0, f64::max))
+    }
+
     /// Bytes held on the heap: 8 per 100 ms of programme above the absolute gate (twice that
     /// with the loudness range on), plus a few numbers per channel. Silence costs nothing.
     pub fn heap_bytes(&self) -> usize {
@@ -304,10 +352,21 @@ impl Meter {
             + self.weights.capacity() * 8
             + self.stages.capacity() * size_of::<[Stage; 2]>()
             + self.sum_sq.capacity() * 8
+            + self.sample_peaks.capacity() * 8
+            + self.true_peaks.capacity() * size_of::<(History, f64)>()
     }
 }
 
 /// Mean square to LUFS; `None` for no energy.
 fn lufs(power: f64) -> Option<f64> {
     (power > 0.0).then(|| OFFSET + 10.0 * libm::log10(power))
+}
+
+/// Linear amplitude to dB (dBFS or dBTP); negative infinity for zero.
+pub fn to_db(linear: f64) -> f64 {
+    if linear > 0.0 {
+        20.0 * libm::log10(linear)
+    } else {
+        f64::NEG_INFINITY
+    }
 }

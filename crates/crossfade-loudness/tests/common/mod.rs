@@ -60,6 +60,7 @@ pub fn steps(rate: u32, seq: &[(u32, f64)]) -> Vec<f64> {
 
 pub fn near(got: Option<f64>, want: f64, tol: f64, what: &str) {
     let got = got.unwrap_or_else(|| panic!("{what}: no value"));
+    eprintln!("{what}: {got:.3} (want {want})");
     assert!(
         (got - want).abs() <= tol,
         "{what}: {got} vs {want} (+-{tol})"
@@ -84,7 +85,8 @@ pub fn faded_sine(rate: u32, hz: f64, amp: f64, phase_deg: f64, ms: u32, fade_ms
     let fade = frames(rate, fade_ms).max(1);
     let mut out = Vec::with_capacity(n * 2);
     for i in 0..n {
-        let ph = phase_deg.to_radians() + 2.0 * std::f64::consts::PI * hz * i as f64 / f64::from(rate);
+        let ph =
+            phase_deg.to_radians() + 2.0 * std::f64::consts::PI * hz * i as f64 / f64::from(rate);
         let env = ((i + 1).min(n - i).min(fade)) as f64 / fade as f64;
         let s = amp * env * ph.sin();
         out.extend([s, s]);
