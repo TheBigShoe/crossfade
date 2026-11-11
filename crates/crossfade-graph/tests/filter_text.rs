@@ -550,3 +550,20 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn settings_built_in_code_are_checked_too() {
+    for channels in [Channels::Count(0), Channels::Count(65)] {
+        let s = AudioSettings {
+            channels: Some(channels.clone()),
+            ..AudioSettings::default()
+        };
+        let err = s.check().unwrap_err().to_string();
+        assert!(err.contains("expected a layout"), "{channels:?}: {err}");
+    }
+    let unnamed = AudioSettings {
+        channels: Some(Channels::Layout(ChannelLayout::unpositioned(3).unwrap())),
+        ..AudioSettings::default()
+    };
+    assert!(unnamed.check().is_err());
+}
