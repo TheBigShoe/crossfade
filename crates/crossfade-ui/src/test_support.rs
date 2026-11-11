@@ -157,6 +157,9 @@ pub(crate) fn open_in(
     config: &ConfigDir,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
     let paths = config.paths();
+    // Selecting a file starts an analysis on a worker thread, which wakes the window from that
+    // thread; the test scheduler must not take that for non-determinism.
+    cx.executor().allow_parking();
     cx.update(|cx| {
         // Animations run on the wall clock, not the test clock; with reduced motion
         // they show their end state from the first frame.

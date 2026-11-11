@@ -27,6 +27,16 @@ fn a_new_source_is_fitted() {
 }
 
 #[test]
+fn columns_stop_where_the_file_does() {
+    assert_eq!(view(10_000, 100).columns(), 100);
+    assert_eq!(view(40, 100).columns(), 40);
+    let mut v = view(10_000, 100);
+    v.zoom(4.0, 0.0);
+    v.pan_px(1e6);
+    assert_eq!(v.columns(), 100);
+}
+
+#[test]
 fn a_file_shorter_than_the_strip_is_one_frame_per_pixel() {
     let v = view(40, 100);
     assert_eq!(v.frames_per_pixel(), 1);

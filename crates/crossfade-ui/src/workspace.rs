@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crossfade_app::Request;
-use crossfade_app::inputs::{InputState, Inputs, probe_path};
+use crossfade_app::inputs::{InputId, InputState, Inputs, probe_path};
 use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent, quit_warning};
 use crossfade_app::sheet::ConvertSheet;
 use crossfade_app::{FsIo, runner::ThreadRunner};
@@ -22,6 +22,7 @@ use crate::convert_sheet::{ConvertDialog, ConvertEvent};
 use crate::keymap::snapshot_kit_bindings;
 use crate::prelude::*;
 use crate::quit_confirm::{self, QuitConfirm};
+use crate::waveform_view::WaveformStrip;
 
 /// What the window is called.
 pub const APP_TITLE: &str = "Crossfade";
@@ -87,6 +88,8 @@ pub struct Workspace {
     pub(crate) focus: FocusHandle,
     last_action: Option<AppAction>,
     pub(crate) inputs: Inputs,
+    /// The selected file's waveform and loudness, shown in the inspector.
+    strip: Entity<WaveformStrip>,
     io: IoFactory,
     pub(crate) queue: Queue,
     runner: Box<dyn Runner>,
@@ -175,10 +178,12 @@ impl Workspace {
             .unwrap_or(true)
         });
         cx.set_global(QuitTarget(cx.entity().downgrade()));
+        let strip = cx.new(|cx| WaveformStrip::new(Arc::clone(&io), cx));
         Self {
             focus,
             last_action: None,
             inputs: Inputs::new(),
+            strip,
             io,
             queue: Queue::new(),
             runner,
@@ -379,6 +384,38 @@ impl Workspace {
         self.queue.pump(&mut *self.runner);
     }
 
+    /// The waveform strip the inspector shows.
+    pub fn strip(&self) -> &Entity<WaveformStrip> {
+        &self.strip
+    }
+
+    /// Point the strip at the selected file: it starts or restores that file's analysis, and
+    /// stops one the selection has left.
+    pub(crate) fn sync_strip(&mut self, cx: &mut Context<Self>) {
+        let path = self
+            .inputs
+            .selected()
+            .filter(|entry| matches!(entry.state, InputState::Probed(_, Some(_))))
+            .map(|entry| entry.path.clone());
+        let auto = cx
+            .try_global::<Config>()
+            .is_none_or(|config| config.settings().analyze_on_select);
+        self.strip
+            .update(cx, |strip, cx| strip.select(path.as_deref(), auto, cx));
+    }
+
+    pub(crate) fn select_input(&mut self, id: InputId, cx: &mut Context<Self>) {
+        self.inputs.select(id);
+        self.sync_strip(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn remove_input(&mut self, id: InputId, cx: &mut Context<Self>) {
+        self.inputs.remove(id);
+        self.sync_strip(cx);
+        cx.notify();
+    }
+
     /// The opened files and which one is selected.
     pub fn inputs(&self) -> &Inputs {
         &self.inputs
@@ -406,6 +443,7 @@ impl Workspace {
                 if this
                     .update(cx, |this, cx| {
                         this.inputs.add(&path, state);
+                        this.sync_strip(cx);
                         cx.notify();
                     })
                     .is_err()

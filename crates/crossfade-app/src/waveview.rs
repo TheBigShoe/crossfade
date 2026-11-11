@@ -258,11 +258,16 @@ impl WaveView {
             .collect()
     }
 
+    /// Pixel columns the file spans in view (fewer than the width when it ends sooner).
+    pub fn columns(&self) -> usize {
+        let reach = self.span().min(self.frames.saturating_sub(self.start));
+        reach.div_ceil(self.fpp) as usize
+    }
+
     /// What to paint: a [`Lane`] per [`LanePlan`] lane, one column per pixel as far as the file
     /// goes. Reads the pyramid only, never samples.
     pub fn draw_columns(&self, pyramid: &Pyramid) -> Vec<Lane> {
-        let reach = self.span().min(self.frames.saturating_sub(self.start));
-        let n = reach.div_ceil(self.fpp) as usize;
+        let n = self.columns();
         match LanePlan::for_channels(pyramid.channels()) {
             LanePlan::Combined => vec![pyramid.columns_union(self.start, self.fpp, n)],
             LanePlan::Separate(lanes) => (0..lanes)

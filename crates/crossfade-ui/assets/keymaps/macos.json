@@ -16,5 +16,16 @@
       "cmd-,": "crossfade::OpenSettings"
       // crossfade::About has no default binding.
     }
+  },
+  {
+    "context": "Waveform",
+    "bindings": {
+      "+": "crossfade::WaveformZoomIn",
+      "=": "crossfade::WaveformZoomIn",
+      "-": "crossfade::WaveformZoomOut",
+      "0": "crossfade::WaveformFit",
+      "left": "crossfade::WaveformPanLeft",
+      "right": "crossfade::WaveformPanRight"
+    }
   }
 ]

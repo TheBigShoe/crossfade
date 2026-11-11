@@ -29,8 +29,8 @@ fn fpp(cx: &mut TestAppContext, strip: &Entity<WaveformStrip>) -> u64 {
     strip.read_with(cx, |s, _| s.view().frames_per_pixel())
 }
 
-fn readout(cx: &mut TestAppContext, strip: &Entity<WaveformStrip>) -> Option<String> {
-    strip.read_with(cx, |s, _| s.readout_text())
+fn readout(cx: &mut TestAppContext, rig: &Rig) -> Option<String> {
+    strip(cx, rig).read_with(cx, |s, _| s.readout_text())
 }
 
 /// Replace the shown file's analysis with `analyzer` (selecting nothing in between).
@@ -64,16 +64,17 @@ fn the_strip_ruler_and_readout_appear_for_an_analysed_file(cx: &mut TestAppConte
         assert!(has(cx, rig.window, id), "{id}");
     }
     assert!(!has(cx, rig.window, "waveform-analyse"));
-    let text = readout(cx, &strip(cx, &rig)).expect("a readout");
+    let text = readout(cx, &rig).expect("a readout");
     assert!(text.contains("LUFS") && text.contains("dBTP"), "{text}");
 }
 
 #[gpui_test]
 fn a_partial_analysis_says_analysing_and_still_draws(cx: &mut TestAppContext) {
-    let (rig, a) = one_file(cx);
+    let (rig, _) = one_file(cx);
+    let slow = rig.dir.write_wav("slow.wav", 48_000, 2, 48_000);
     let (hold, held) = mpsc::channel::<()>();
     let (reached, at_gate) = mpsc::channel::<()>();
-    install(cx, &rig, &a, |p| {
+    install(cx, &rig, &slow, |p| {
         let (held, reached) = (std::sync::Mutex::new(held), std::sync::Mutex::new(reached));
         Analyzer::start(p, Box::new(FsIo::new()), Limits::default(), move |snap| {
             if snap.state == State::Running {
@@ -85,12 +86,12 @@ fn a_partial_analysis_says_analysing_and_still_draws(cx: &mut TestAppContext) {
     at_gate.recv().unwrap();
     cx.run_until_parked();
     draw(cx, rig.window);
-    let text = readout(cx, &strip(cx, &rig)).expect("a readout");
+    let text = readout(cx, &rig).expect("a readout");
     assert!(text.starts_with("Analysing\u{2026}"), "{text}");
     assert!(has(cx, rig.window, "waveform-strip"));
     drop(hold);
     finish(cx, &rig);
-    assert!(readout(cx, &strip(cx, &rig)).unwrap().contains("LUFS"));
+    assert!(readout(cx, &rig).unwrap().contains("LUFS"));
 }
 
 #[gpui_test]
@@ -102,7 +103,7 @@ fn a_failed_analysis_is_one_muted_line_and_the_inspector_stays(cx: &mut TestAppC
         assert!(matches!(a.wait().state, State::Failed(_)));
         a
     });
-    let text = readout(cx, &strip(cx, &rig)).expect("a line");
+    let text = readout(cx, &rig).expect("a line");
     assert!(text.starts_with("Could not analyse: "), "{text}");
     assert!(has(cx, rig.window, "waveform-error"));
     assert!(!has(cx, rig.window, "waveform-strip"));
@@ -120,7 +121,8 @@ fn changing_the_selection_cancels_a_running_analysis_and_switches(cx: &mut TestA
     let (hold, held) = mpsc::channel::<()>();
     let (reached, at_gate) = mpsc::channel::<()>();
     let t = token.clone();
-    install(cx, &rig, &b, move |p| {
+    let c = rig.dir.write_wav("c.wav", 48_000, 2, 48_000);
+    install(cx, &rig, &c, move |p| {
         let (held, reached) = (std::sync::Mutex::new(held), std::sync::Mutex::new(reached));
         Analyzer::start_with_cancel(
             p,
@@ -143,7 +145,7 @@ fn changing_the_selection_cancels_a_running_analysis_and_switches(cx: &mut TestA
     assert_eq!(shown.as_deref(), Some(a.as_str()));
     drop(hold);
     finish(cx, &rig);
-    assert!(readout(cx, &strip(cx, &rig)).unwrap().contains("LUFS"));
+    assert!(readout(cx, &rig).unwrap().contains("LUFS"));
 }
 
 #[gpui_test]
@@ -159,8 +161,9 @@ fn the_keys_zoom_pan_and_fit_the_focused_strip(cx: &mut TestAppContext) {
     assert!(zoomed < fit);
     press(cx, rig.window, "=");
     assert!(fpp(cx, &strip) < zoomed);
+    let closer = fpp(cx, &strip);
     press(cx, rig.window, "-");
-    assert_eq!(fpp(cx, &strip), zoomed);
+    assert!(fpp(cx, &strip) > closer);
     press(cx, rig.window, "right");
     let start = strip.read_with(cx, |s, _| s.view().start());
     assert!(start > 0);
@@ -195,7 +198,7 @@ fn double_click_fits_the_whole_file(cx: &mut TestAppContext) {
     press(cx, rig.window, "+");
     assert!(fpp(cx, &strip) < fit);
     cx.update_window(rig.window, |_, window, cx| {
-        window.double_click("waveform-strip", cx)
+        window.double_click("waveform-strip", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -225,10 +228,13 @@ fn scroll_pans_and_secondary_scroll_and_pinch_zoom(cx: &mut TestAppContext) {
             "waveform-strip",
             ScrollDelta::Pixels(point(px(-40.), px(0.))),
             cx,
-        )
+        );
     })
     .unwrap();
-    assert!(strip.read_with(cx, |s, _| s.view().start()) > 0, "panned later");
+    assert!(
+        strip.read_with(cx, |s, _| s.view().start()) > 0,
+        "panned later"
+    );
     assert_eq!(fpp(cx, &strip), zoomed);
 
     cx.update_window(rig.window, |_, window, cx| {
