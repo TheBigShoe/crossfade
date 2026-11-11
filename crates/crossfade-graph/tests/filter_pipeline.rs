@@ -237,15 +237,13 @@ fn asking_for_the_rate_and_layout_the_input_has_changes_no_byte() {
 
 #[test]
 fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
-    for (audio, name) in [
-        (
-            AudioSettings {
-                sample_rate: Some(48000),
-                ..AudioSettings::default()
-            },
-            "resample",
-        ),
-    ] {
+    for (audio, name) in [(
+        AudioSettings {
+            sample_rate: Some(48000),
+            ..AudioSettings::default()
+        },
+        "resample",
+    )] {
         let mut io = MemoryIo::new();
         io.insert("in.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));
         let err = convert(&mut io, &job_with("in.wav", "out.flac", audio), 1).unwrap_err();
