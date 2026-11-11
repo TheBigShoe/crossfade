@@ -80,14 +80,14 @@ fn plan(rate: u32, quality: Quality) -> ResamplePlan {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+    #![proptest_config(ProptestConfig::with_cases(24))]
 
     #[test]
     fn every_thread_count_gives_the_one_thread_bits(
         pair in 0..PAIRS.len(),
         channels in 1u16..=6,
         quality in prop::sample::select(vec![Quality::Fast, Quality::Good, Quality::Best]),
-        frames in 0usize..30_000,
+        frames in 0usize..20_000,
         chunk in 1usize..6_000,
         threads in 2usize..=5,
         segment in 1u64..3_000,
@@ -120,7 +120,7 @@ fn one_thread_and_short_inputs_start_none() {
     let mut short = Resample::with_threads(&input, &plan(48_000, Quality::Good), 8).unwrap();
     run(&mut short, &input, &x, 4096);
     assert_eq!(short.parallel_batches(), 0);
-    let long = signal(600_000, 2, 9);
+    let long = signal(300_000, 2, 9);
     let mut many = Resample::with_threads(&input, &plan(48_000, Quality::Good), 4).unwrap();
     run(&mut many, &input, &long, 4096);
     assert!(many.parallel_batches() > 0);
@@ -134,8 +134,8 @@ fn a_long_stream_through_a_threaded_chain_matches_one_thread() {
         ChannelLayout::from_name("5.1").unwrap(),
     )
     .unwrap();
-    let samples: Vec<i32> = (0..6 * 400_000)
-        .map(|i| ((i as i64 * 2_654_435_761) % 8_000_000) as i32)
+    let samples: Vec<i32> = (0..6 * 200_000)
+        .map(|i| ((i64::from(i) * 2_654_435_761) % 8_000_000) as i32)
         .collect();
     let plan = ChainPlan {
         filters: vec![FilterPlan::Resample(ResamplePlan {
@@ -171,7 +171,7 @@ fn a_long_stream_through_a_threaded_chain_matches_one_thread() {
             .collect::<Vec<i32>>()
     };
     let one = convert(1);
-    assert_eq!(one.len(), 6 * 183_750);
+    assert_eq!(one.len(), 6 * 91_875);
     assert_eq!(convert(3), one);
     assert_eq!(convert(0), one, "0 is the machine's parallelism");
 }

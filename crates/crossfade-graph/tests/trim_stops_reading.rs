@@ -124,7 +124,14 @@ fn a_trimmed_conversion_reads_only_what_the_trim_keeps() {
         &["resample 48000", "trim end=1s", "fade out=100ms"],
     ] {
         let read = convert(&mut io, "long.wav", "out.wav", filters);
-        assert!(read < file / 10, "{filters:?}: read {read} of {file} bytes");
+        // A threaded resampler before the trim converts whole batches (up to 8 segments of
+        // 32,768 frames) ahead of what the trim has seen, so it reads that much further.
+        let bound = if filters[0].starts_with("resample") {
+            file / 2
+        } else {
+            file / 10
+        };
+        assert!(read < bound, "{filters:?}: read {read} of {file} bytes");
     }
 }
 

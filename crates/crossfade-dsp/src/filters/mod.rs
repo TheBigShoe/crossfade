@@ -25,8 +25,18 @@ pub enum FilterPlan {
     Mix(mix::MixPlan),
 }
 
-/// A running filter for `plan`, taking `f64` frames of `input`.
+/// A running filter for `plan`, taking `f64` frames of `input`, on the calling thread.
 pub fn build(plan: &FilterPlan, input: &AudioSpec) -> Result<Box<dyn Filter>, Error> {
+    build_threads(plan, input, 1)
+}
+
+/// [`build`], letting a filter that can use threads use up to `threads` (`0`: the machine's
+/// parallelism). The output never depends on the count.
+pub fn build_threads(
+    plan: &FilterPlan,
+    input: &AudioSpec,
+    threads: usize,
+) -> Result<Box<dyn Filter>, Error> {
     match plan {
         FilterPlan::Gain(p) => Ok(Box::new(gain::Gain::new(input, p))),
         FilterPlan::Trim(p) => Ok(Box::new(trim::Trim::new(input, p))),
@@ -38,7 +48,9 @@ pub fn build(plan: &FilterPlan, input: &AudioSpec) -> Result<Box<dyn Filter>, Er
                    a gain"
                 .into(),
         }),
-        FilterPlan::Resample(p) => Ok(Box::new(resample::Resample::new(input, p)?)),
+        FilterPlan::Resample(p) => Ok(Box::new(resample::Resample::with_threads(
+            input, p, threads,
+        )?)),
         FilterPlan::Mix(p) => Ok(Box::new(mix::Mix::new(input, p)?)),
     }
 }

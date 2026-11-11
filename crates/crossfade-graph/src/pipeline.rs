@@ -171,7 +171,8 @@ impl Pipeline {
                     pass,
                 )?;
                 let decoder = decoder_for_threads(&streams[0], codecs.decoder_threads[0])?;
-                let conform = conform_chain(&streams[0], join.conform[0].as_ref())?;
+                let conform =
+                    conform_chain(&streams[0], join.conform[0].as_ref(), limits.max_threads)?;
                 let frames_total = streams
                     .iter()
                     .try_fold(0u64, |sum, s| sum.checked_add(s.frames?));
@@ -386,7 +387,7 @@ impl Pipeline {
             return Err(unsupported("joining inputs decodes them"));
         };
         t.decoder = decoder_for_threads(&stream, next.decoder_threads)?;
-        t.conform = conform_chain(&stream, next.conform.as_ref())?;
+        t.conform = conform_chain(&stream, next.conform.as_ref(), self.limits.max_threads)?;
         t.decoded = AudioFrame::new(&stream.audio);
         self.demuxer = demuxer;
         Ok(())
@@ -412,8 +413,12 @@ impl Pipeline {
     }
 }
 
-fn conform_chain(stream: &StreamInfo, plan: Option<&ChainPlan>) -> Result<Option<Chain>, Error> {
-    plan.map(|p| Chain::new(&stream.audio, p, SampleFormat::F64))
+fn conform_chain(
+    stream: &StreamInfo,
+    plan: Option<&ChainPlan>,
+    threads: usize,
+) -> Result<Option<Chain>, Error> {
+    plan.map(|p| Chain::with_threads(&stream.audio, p, SampleFormat::F64, threads))
         .transpose()
 }
 
