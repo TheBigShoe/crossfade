@@ -225,7 +225,7 @@ job:      {"filters":[{"filter":"mix","channels":"mono"}]}
 chain:    1. mix to mono
 dither:   tpdf
 output:   44100 Hz mono s16 (full width), 441000 frames flac
-validate: unsupported: the mix filter is not built yet
+validate: ok
 
 ### output channels down: mixed before resampling
 input:    48000 Hz 5.1 s24 (full width), 48000 frames
@@ -235,7 +235,7 @@ chain:    1. mix to stereo
           2. resample to 44100 Hz (good)
 dither:   tpdf
 output:   44100 Hz stereo s24 (full width), 44100 frames flac
-validate: unsupported: the mix filter is not built yet
+validate: unsupported: the resample filter is not built yet
 
 ### output channels up: resampled before mixing
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -254,7 +254,7 @@ job:      {"channels":"6"}
 chain:    1. mix to 5.1
 dither:   tpdf
 output:   44100 Hz 5.1 s16 (full width), 441000 frames pcm_s16le
-validate: unsupported: the mix filter is not built yet
+validate: ok
 
 ### a matrix
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -263,7 +263,7 @@ job:      {"filters":[{"filter":"mix","channels":"mono","matrix":[[0.5,0.5]]}]}
 chain:    1. mix to mono by matrix [[0.5, 0.5]]
 dither:   tpdf
 output:   44100 Hz mono s16 (full width), 441000 frames flac
-validate: unsupported: the mix filter is not built yet
+validate: ok
 
 ### a matrix that does not fit the input
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -280,7 +280,7 @@ job:      {"channels":"stereo"}
 chain:    1. mix to stereo
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 1000 frames flac
-validate: unsupported: the mix filter is not built yet
+validate: ok
 
 ### more channels than FLAC holds
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -289,7 +289,7 @@ job:      {"channels":"12"}
 chain:    1. mix to 12 channels
 dither:   tpdf
 output:   44100 Hz 12 channels s16 (full width), 441000 frames flac
-validate: unsupported: the mix filter is not built yet
+validate: unsupported: no standard mix from stereo to 12 channels; give one with mix ... matrix=...
 
 ### a full chain
 input:    96000 Hz 5.1 s24 (full width), 28800000 frames

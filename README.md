@@ -76,7 +76,7 @@ crossfade concat a.wav b.wav -o both.flac                        # several input
 | fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | parses and plans; not built yet |
 | normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; not built yet |
 | resample | `resample 48kHz quality=best`; also `--sample-rate` | parses and plans; not built yet |
-| mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | parses and plans; not built yet |
+| mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | built: standard down- and up-mixes by speaker position (BS.775, LFE dropped, level-normalised), or a matrix |
 | concat | `crossfade concat a.wav b.wav -o out.flac` | parses and plans; not built yet |
 
 A filter that is not built yet is refused before any file is written. A job
