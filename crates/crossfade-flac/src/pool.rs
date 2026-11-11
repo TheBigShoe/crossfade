@@ -98,18 +98,12 @@ impl<I, O> Shared<I, O> {
 
 type Make<W> = Arc<dyn Fn() -> W + Send + Sync>;
 
-/// Runs `run` and turns a panic into an error; after one, `state` is rebuilt, since the panic
-/// may have left it half-updated.
-fn guarded<I, O, W>(
-    run: fn(&mut W, I) -> O,
-    state: &mut W,
-    make: &Make<W>,
-    item: I,
-) -> Result<O, Panicked> {
-    catch_unwind(AssertUnwindSafe(|| run(state, item))).map_err(|payload| {
-        *state = make();
-        Panicked::from_payload(&*payload)
-    })
+/// Runs `run` and turns a panic into an error. After one the caller rebuilds the state (the
+/// panic may have left it half-updated), once the result is stored: should rebuilding panic
+/// too, nobody is left waiting for that result.
+fn guarded<I, O, W>(run: fn(&mut W, I) -> O, state: &mut W, item: I) -> Result<O, Panicked> {
+    catch_unwind(AssertUnwindSafe(|| run(state, item)))
+        .map_err(|payload| Panicked::from_payload(&*payload))
 }
 
 /// An ordered worker pool; see the module documentation.
@@ -251,9 +245,15 @@ impl<I: Send + 'static, O: Send + 'static, W: 'static> Ordered<I, O, W> {
             }
             if let Some((seq, item)) = state.queue.pop_front() {
                 drop(state);
-                let result = guarded(self.run, local, &self.make, item);
+                let result = guarded(self.run, local, item);
+                let failed = result.is_err();
                 state = shared.lock();
                 state.store(seq, result);
+                if failed {
+                    drop(state);
+                    *local = (self.make)();
+                    state = shared.lock();
+                }
             } else {
                 state = shared
                     .done
@@ -290,10 +290,16 @@ fn work<I, O, W>(shared: &Shared<I, O>, make: &Make<W>, run: fn(&mut W, I) -> O)
         }
         if let Some((seq, item)) = state.queue.pop_front() {
             drop(state);
-            let result = guarded(run, &mut local, make, item);
+            let result = guarded(run, &mut local, item);
+            let failed = result.is_err();
             state = shared.lock();
             state.store(seq, result);
             shared.done.notify_one();
+            if failed {
+                drop(state);
+                local = make();
+                state = shared.lock();
+            }
         } else {
             state.idle += 1;
             state = shared

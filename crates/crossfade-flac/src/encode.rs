@@ -720,10 +720,18 @@ impl Encoder {
     }
 
     fn take_all(&mut self, out: &mut Vec<u8>, mut ends: Option<&mut Vec<usize>>) -> Result<()> {
-        while self.frames_in_flight() > 0 {
-            self.take_one(out, ends.as_deref_mut())?;
+        loop {
+            let next = match &mut self.pool {
+                Some(pool) => pool.next(&mut self.coder),
+                None => None,
+            };
+            match next {
+                Some(Ok(job)) => self.emit(job, out, ends.as_deref_mut())?,
+                Some(Err(p)) => return Err(self.failed_with(p)),
+                // Nothing in flight (or a closed pool): never spin on a count.
+                None => return Ok(()),
+            }
         }
-        Ok(())
     }
 
     fn info(&self) -> StreamInfoBlock {
