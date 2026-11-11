@@ -6,7 +6,7 @@
 //! `tests/conformance/flac.txt` (`CROSSFADE_BLESS=1` rewrites it) so a later decoder
 //! optimisation cannot change a single output bit unnoticed.
 
-use crossfade_codec::decoder_for;
+use crossfade_codec::decoder_for_threads;
 use crossfade_core::{AudioFrame, Limits, Packet, Samples};
 use crossfade_corpus::{Cache, Entry, Expect, Manifest, require_from, try_require, workspace_root};
 use crossfade_flac::md5::Md5;
@@ -61,7 +61,8 @@ fn stream_bytes(samples: &Samples, bits: u32, out: &mut Vec<u8>) {
     }
 }
 
-fn run(path: &Path) -> Run {
+/// Decodes the file through the engine's FLAC decoder on `threads` threads (0: automatic).
+fn run(path: &Path, threads: usize) -> Run {
     let mut r = Run {
         outcome: Ok(()),
         packets: 0,
@@ -81,7 +82,7 @@ fn run(path: &Path) -> Run {
                 .bits_per_raw_sample
                 .unwrap_or(stream.audio.format().bits() as u8),
         );
-        let mut decoder = decoder_for(&stream)?;
+        let mut decoder = decoder_for_threads(&stream, threads)?;
         let (mut packet, mut frame) = (Packet::default(), AudioFrame::new(&stream.audio));
         let (mut a, mut b) = (Vec::new(), Vec::new());
         let mut take = |frame: &AudioFrame, r: &mut Run| {
@@ -93,7 +94,20 @@ fn run(path: &Path) -> Run {
             sha.update(&a);
             md5.update(&b);
         };
-        while demux.read_packet(&mut packet)? {
+        loop {
+            match demux.read_packet(&mut packet) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(e) => {
+                    // The frames read before the bad packet count, even those a threaded
+                    // decoder still holds: hand them over, then report the reader's error.
+                    decoder.drain();
+                    while let Ok(true) = decoder.receive_frame(&mut frame) {
+                        take(&frame, &mut r);
+                    }
+                    return Err(e);
+                }
+            }
             r.packets += 1;
             decoder.send_packet(&packet)?;
             while decoder.receive_frame(&mut frame)? {
@@ -122,8 +136,13 @@ fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "non-string panic".into())
 }
 
-/// Every entry once per process, in manifest order, spread over the cores.
-static RESULTS: LazyLock<Vec<Result3>> = LazyLock::new(|| {
+/// Every entry once per process, decoded on one thread, in manifest order, spread over the
+/// cores.
+static RESULTS: LazyLock<Vec<Result3>> = LazyLock::new(|| run_all(1));
+/// The same with the decoder's automatic thread count: the results must not differ.
+static RESULTS_AUTO: LazyLock<Vec<Result3>> = LazyLock::new(|| run_all(0));
+
+fn run_all(threads: usize) -> Vec<Result3> {
     let root = workspace_root();
     let manifest = Manifest::load(&root.join("corpus.toml")).expect("corpus.toml");
     let cache = Cache::new(Cache::dir_from_env(&root));
@@ -145,7 +164,8 @@ static RESULTS: LazyLock<Vec<Result3>> = LazyLock::new(|| {
                     if i >= entries.len() {
                         break;
                     }
-                    let got = catch_unwind(AssertUnwindSafe(|| run(&paths[i]))).map_err(panic_text);
+                    let got = catch_unwind(AssertUnwindSafe(|| run(&paths[i], threads)))
+                        .map_err(panic_text);
                     *slots[i].lock().unwrap() = Some(got);
                 }
             });
@@ -157,7 +177,7 @@ static RESULTS: LazyLock<Vec<Result3>> = LazyLock::new(|| {
         .zip(slots)
         .map(|(e, s)| (e, s.into_inner().unwrap().expect("every entry ran")))
         .collect()
-});
+}
 
 fn check(entry: &Entry, got: &Result<Run, String>) -> Vec<String> {
     let run = match got {
@@ -235,12 +255,25 @@ const FROZEN_HEADER: &str = "\
 #[test]
 #[ignore = "needs the corpus: `just corpus`, then `just conformance`"]
 fn results_match_the_frozen_manifest() {
+    compare_with_frozen(&RESULTS, true);
+}
+
+/// Threads change nothing: not the samples, not the error, not how far the reader got.
+#[test]
+#[ignore = "needs the corpus: `just corpus`, then `just conformance`"]
+fn results_on_automatic_threads_match_the_frozen_manifest() {
+    compare_with_frozen(&RESULTS_AUTO, false);
+}
+
+/// `bless`: this run may rewrite the manifest when `CROSSFADE_BLESS` is set (the one-thread
+/// run only, so the two runs are always held to the same file).
+fn compare_with_frozen(results: &[Result3], bless: bool) {
     let mut text = String::from(FROZEN_HEADER);
-    for (e, got) in RESULTS.iter() {
+    for (e, got) in results {
         text.push_str(&frozen_line(e, got));
         text.push('\n');
     }
-    if std::env::var_os("CROSSFADE_BLESS").is_some() {
+    if bless && std::env::var_os("CROSSFADE_BLESS").is_some() {
         std::fs::write(FROZEN, &text).expect("write the frozen manifest");
         return;
     }
