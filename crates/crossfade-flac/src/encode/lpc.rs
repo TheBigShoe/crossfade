@@ -55,6 +55,71 @@ pub(super) fn autocorrelation(data: &[f64], out: &mut [f64]) {
     }
 }
 
+/// Scratch for [`windowed_autocorrelation`].
+pub(super) struct Windowed<'a> {
+    pub(super) float: &'a mut Vec<f64>,
+    pub(super) int: &'a mut Vec<i32>,
+}
+
+/// Fractional bits the windowed samples keep when the autocorrelation runs on integers: as
+/// many as `n` products of samples up to `peak` (times 2^bits) can sum in an `i64` without
+/// overflow, at most 20. `None` when not even the integer part fits.
+pub(super) fn int_scale(n: usize, peak: u64) -> Option<u32> {
+    let log_n = usize::BITS - n.saturating_sub(1).leading_zeros();
+    let width = 64 - peak.leading_zeros();
+    // |v| <= 2^(width + bits), so n products sum to at most 2^(2 (width + bits) + log_n).
+    let room = 62u32.checked_sub(log_n)? / 2;
+    room.checked_sub(width).map(|bits| bits.min(20))
+}
+
+/// The autocorrelation of `x` under `window` (lags `0..out.len()`). The windowed samples are
+/// rounded to `int_scale` fractional bits and their lagged products summed exactly in `i64`,
+/// so the order of the sums is free and the compiler vectorises them; samples too wide for
+/// that take the floating-point path.
+pub(super) fn windowed_autocorrelation<T: Sample>(
+    x: &[T],
+    window: &[f64],
+    peak: u64,
+    scratch: &mut Windowed,
+    out: &mut [f64],
+) {
+    let Some(bits) = int_scale(x.len(), peak) else {
+        scratch.float.clear();
+        scratch
+            .float
+            .extend(x.iter().zip(window).map(|(&v, &w)| v.into() as f64 * w));
+        autocorrelation(scratch.float, out);
+        return;
+    };
+    let scale = (1u64 << bits) as f64;
+    let v = &mut *scratch.int;
+    v.clear();
+    v.extend(
+        x.iter()
+            .zip(window)
+            .map(|(&s, &w)| round(s.into() as f64 * w * scale) as i32),
+    );
+    let n = v.len();
+    // Zeros past the end let every lag run over the same range.
+    v.resize(n + out.len() + 4, 0);
+    let unscale = 1.0 / (1u64 << (2 * bits)) as f64;
+    // Four lags per pass: four independent sums, and each sample loaded once for them.
+    for (group, o) in out.chunks_mut(4).enumerate() {
+        let lag = group * 4;
+        let (a, b) = (&v[..n], &v[lag..lag + n + 3]);
+        let mut acc = [0i64; 4];
+        for (i, &p) in a.iter().enumerate() {
+            let q: &[i32; 4] = b[i..i + 4].try_into().unwrap_or(&[0; 4]);
+            for k in 0..4 {
+                acc[k] += i64::from(p) * i64::from(q[k]);
+            }
+        }
+        for (o, &a) in o.iter_mut().zip(&acc) {
+            *o = a as f64 * unscale;
+        }
+    }
+}
+
 /// Levinson-Durbin recursion. `coefs[k][..=k]` are the order `k + 1` predictor coefficients
 /// (`x[i] ~ sum coefs[k][j] * x[i - 1 - j]`) and `error[k]` the remaining error energy.
 /// Returns how many orders it produced: it stops early when the energy runs out.

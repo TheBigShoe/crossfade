@@ -238,6 +238,9 @@ pub(super) struct Analyzer {
     autocs: Vec<[f64; MAX_ORDER + 1]>,
     reg: f64,
     windowed: Vec<f64>,
+    windowed_int: Vec<i32>,
+    /// Largest magnitude in the block being searched.
+    peak: u64,
     lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
     acc: lpc::Accumulators,
 }
@@ -263,6 +266,8 @@ impl Analyzer {
             autocs: vec![[0.0; MAX_ORDER + 1]; level.windows.len()],
             reg: 1e-15,
             windowed: Vec::with_capacity(level.block),
+            windowed_int: Vec::with_capacity(level.block),
+            peak: 0,
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
             acc: lpc::Accumulators::with_capacity(level.block, wide_cap),
         }
@@ -339,6 +344,7 @@ impl Analyzer {
             }
         }
         if self.level.max_lpc > 0 && n >= 16 {
+            self.peak = x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs()));
             self.reg = BASE_RIDGE;
             let mut gap = 0.0f64;
             for w in 0..self.level.windows.len() {
@@ -434,14 +440,16 @@ impl Analyzer {
         let apod = self.level.windows[w];
         // Only the span inside the window carries anything.
         let (from, to) = ((n * apod.from / 60).min(n), (n * apod.to / 60).min(n));
-        self.windowed.clear();
-        self.windowed.extend(
-            x[from..to]
-                .iter()
-                .zip(&self.windows[w][from..to])
-                .map(|(&v, &w)| v.into() as f64 * w),
+        lpc::windowed_autocorrelation(
+            &x[from..to],
+            &self.windows[w][from..to],
+            self.peak,
+            &mut lpc::Windowed {
+                float: &mut self.windowed,
+                int: &mut self.windowed_int,
+            },
+            &mut self.autocs[w][..=max_order],
         );
-        lpc::autocorrelation(&self.windowed, &mut self.autocs[w][..=max_order]);
         self.fit_lpc(x, bps, head, w, plan)
     }
 
@@ -536,6 +544,7 @@ impl Analyzer {
             self.pool32.capacity(),
             self.pool64.capacity(),
             self.windowed.capacity(),
+            self.windowed_int.capacity(),
         ]);
         v.extend(self.acc.capacities());
         v
