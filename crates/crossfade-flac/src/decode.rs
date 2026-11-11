@@ -197,6 +197,14 @@ impl Decoder {
             on_block(self.current());
             return Ok(());
         }
+        // A bad header is the push's own error, after the blocks before it, so a reader stops
+        // at the same frame whatever the thread count.
+        if let Err(e) = self.frames.header(frame) {
+            while self.frames_in_flight() > 0 {
+                self.take_one(on_block)?;
+            }
+            return Err(self.fail(e));
+        }
         let mut job = self.spare_jobs.pop().unwrap_or_else(|| FrameJob {
             number: 0,
             data: Vec::new(),
@@ -485,6 +493,17 @@ impl FrameDecoder {
         }
     }
 
+    /// The frame's header, checked against the stream: the first thing `decode` checks, and
+    /// cheap enough for the caller to check before handing the frame to a worker.
+    fn header(&self, data: &[u8]) -> Result<FrameHeader> {
+        let h = frame::parse_header(data).map_err(|e| match e {
+            HeaderError::NeedMoreData => malformed("frame header cut short"),
+            HeaderError::Invalid(why) => malformed(why),
+        })?;
+        self.check_parameters(&h)?;
+        Ok(h)
+    }
+
     fn check_parameters(&self, h: &FrameHeader) -> Result<()> {
         let unsupported = |what: &str, was: u32, now: u32| {
             Error::Unsupported(format!(
@@ -519,11 +538,7 @@ impl FrameDecoder {
     /// decorrelation, into `planes`. Returns the block size. Every error but the CRC's is
     /// reported here, and one the CRC would explain is reported as a CRC mismatch.
     fn decode(&mut self, data: &[u8], planes: &mut [Vec<i32>]) -> Result<usize> {
-        let h = frame::parse_header(data).map_err(|e| match e {
-            HeaderError::NeedMoreData => malformed("frame header cut short"),
-            HeaderError::Invalid(why) => malformed(why),
-        })?;
-        self.check_parameters(&h)?;
+        let h = self.header(data)?;
         if data.len() < h.header_len + 2 {
             return Err(crc_mismatch());
         }
