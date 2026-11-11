@@ -175,3 +175,59 @@ fn asking_for_a_wider_format_writes_that_width() {
     convert(&mut io, "in.wav", "out.flac", wider);
     assert_eq!(read(io.get("out.flac").unwrap()).streaminfo.unwrap().0, 24);
 }
+
+#[test]
+fn a_depth_survives_a_round_trip_through_wav_and_aiff() {
+    for depth in DEPTHS {
+        let src = source_flac(depth);
+        let before = read(src.clone());
+        for ext in ["wav", "aiff"] {
+            let mut io = MemoryIo::new();
+            io.insert("in.flac", src.clone());
+            let mid = format!("mid.{ext}");
+            convert(&mut io, "in.flac", &mid, AudioSettings::default());
+            let middle = read(io.get(&mid).unwrap());
+            assert_eq!(middle.raw, before.raw, "{depth} via {ext}");
+            assert_eq!(middle.samples, before.samples, "{depth} via {ext}");
+            convert(&mut io, &mid, "out.flac", AudioSettings::default());
+            let after = read(io.get("out.flac").unwrap());
+            assert_eq!(after.streaminfo, before.streaminfo, "{depth} via {ext}");
+            assert_eq!(after.samples, before.samples, "{depth} via {ext}");
+        }
+    }
+}
+
+#[test]
+fn a_changed_sample_format_writes_the_full_width() {
+    let mut io = MemoryIo::new();
+    io.insert("in.flac", source_flac(20));
+    for (format, ext, width) in [
+        (SampleFormat::S16, "flac", 16),
+        (SampleFormat::S32, "flac", 32),
+    ] {
+        let to = format!("o{width}.{ext}");
+        let settings = AudioSettings {
+            sample_format: Some(format),
+            ..AudioSettings::default()
+        };
+        convert(&mut io, "in.flac", &to, settings);
+        let out = read(io.get(&to).unwrap());
+        assert_eq!(out.streaminfo.unwrap().0, width, "{format:?}");
+        assert_eq!(out.raw, None, "{format:?}");
+    }
+}
+
+#[test]
+fn stream_copy_keeps_the_stream_as_it_is() {
+    let src = source_flac(20);
+    let mut io = MemoryIo::new();
+    io.insert("in.flac", src.clone());
+    let copy = AudioSettings {
+        codec: Some("copy".into()),
+        ..AudioSettings::default()
+    };
+    convert(&mut io, "in.flac", "out.flac", copy);
+    let (a, b) = (read(src), read(io.get("out.flac").unwrap()));
+    assert_eq!(a.streaminfo, b.streaminfo);
+    assert_eq!(b.raw, Some(20));
+}
