@@ -82,13 +82,15 @@ impl Pyramid {
 
     /// Bytes held by one level, all channels.
     pub fn heap_bytes_level(&self, level: usize) -> usize {
-        self.levels.get(level).map_or(0, |l| {
-            l.iter().map(|c| c.len() * size_of::<MinMax>()).sum()
-        })
+        self.levels
+            .get(level)
+            .map_or(0, |l| l.iter().map(|c| c.len() * size_of::<MinMax>()).sum())
     }
 
     pub fn heap_bytes(&self) -> usize {
-        (0..self.levels.len()).map(|k| self.heap_bytes_level(k)).sum()
+        (0..self.levels.len())
+            .map(|k| self.heap_bytes_level(k))
+            .sum()
     }
 
     /// Takes the next frames in stream order. Refuses (changing nothing) a frame that is not
