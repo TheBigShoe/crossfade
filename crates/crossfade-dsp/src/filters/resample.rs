@@ -96,7 +96,10 @@ const MAX_PERIOD: u64 = 1 << 18;
 /// one stream.
 struct Parallel {
     threads: usize,
+    /// One resampler per thread, cloned from the filter's on first use (cloning copies the
+    /// tables; designing them again would cost each thread the construction time).
     workers: Vec<Resampler>,
+    prototype: Resampler,
     up: u64,
     down: u64,
     /// Frames per segment, a multiple of `down`.
@@ -125,28 +128,19 @@ struct Segment {
 }
 
 impl Parallel {
-    fn new(
-        from: u32,
-        to: u32,
-        channels: usize,
-        quality: Quality,
-        threads: usize,
-        min_segment: u64,
-        latency: u64,
-    ) -> Result<Option<Self>, Error> {
+    fn new(prototype: &Resampler, threads: usize, min_segment: u64) -> Option<Self> {
+        let (from, to) = (prototype.input_rate(), prototype.output_rate());
+        let latency = prototype.latency();
         let g = gcd(u64::from(from), u64::from(to));
         let (up, down) = (u64::from(to) / g, u64::from(from) / g);
         let gather = down <= up.saturating_mul(crossfade_resample::MAX_GATHER_DECIMATION);
         if threads < 2 || from == to || !gather || down > MAX_PERIOD {
-            return Ok(None);
+            return None;
         }
-        let workers = (0..threads)
-            .map(|_| Resampler::new(from, to, channels, quality.preset()))
-            .collect::<Result<_, _>>()
-            .map_err(engine_error)?;
-        Ok(Some(Self {
+        Some(Self {
             threads,
-            workers,
+            workers: Vec::new(),
+            prototype: prototype.clone(),
             up,
             down,
             segment: min_segment.div_ceil(down).max(1) * down,
@@ -157,7 +151,7 @@ impl Parallel {
             next: 0,
             received: 0,
             batches: 0,
-        }))
+        })
     }
 
     /// Converts `segments` (consecutive, from `self.next`) and appends their outputs in order.
@@ -167,6 +161,9 @@ impl Parallel {
         channels: usize,
         out: &mut Vec<f64>,
     ) -> Result<(), Error> {
+        if self.workers.len() < segments.len() {
+            self.workers.resize(segments.len(), self.prototype.clone());
+        }
         let (up, down, pre, base) = (self.up, self.down, self.pre, self.base);
         let pending = &self.pending;
         let available = base + (pending.len() / channels) as u64;
@@ -320,15 +317,7 @@ impl Resample {
             plan.quality.preset(),
         )
         .map_err(engine_error)?;
-        let par = Parallel::new(
-            input.sample_rate(),
-            plan.rate,
-            channels,
-            plan.quality,
-            resolve_threads(threads),
-            min_segment,
-            resampler.latency(),
-        )?;
+        let par = Parallel::new(&resampler, resolve_threads(threads), min_segment);
         Ok(Self {
             spec: AudioSpec::new(plan.rate, input.format(), input.layout().clone())?,
             channels,
