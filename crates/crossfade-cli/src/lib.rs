@@ -39,7 +39,7 @@ enum Command {
     Convert {
         /// File to read: wav, flac, aiff/aifc or ogg (FLAC inside).
         input: String,
-        /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc.
+        /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC).
         #[arg(short, long)]
         output: String,
         /// Output sample format; defaults to the input's.
@@ -363,6 +363,22 @@ mod tests {
         assert!(reports >= 1, "the conversion never reported progress");
         assert!(matches!(outcome, Outcome::Cancelled));
         assert_eq!(outcome.exit_code(), 130);
+        assert_eq!(d.listing(), ["in.wav"]);
+    }
+
+    #[test]
+    fn cancelling_an_ogg_conversion_leaves_nothing_behind() {
+        let d = Dir::new("mid-ogg");
+        write_silence(&d, "in.wav", 2_000_000);
+        let cancel = CancelToken::new();
+        let args = ["convert", &d.path("in.wav"), "-o", &d.path("out.oga")];
+        let outcome = run_command(args, &mut FsIo::new(), &cancel, &mut |event| {
+            if matches!(event, Event::Progress { .. }) {
+                cancel.cancel();
+            }
+        })
+        .unwrap();
+        assert!(matches!(outcome, Outcome::Cancelled));
         assert_eq!(d.listing(), ["in.wav"]);
     }
 
