@@ -186,17 +186,11 @@ fn problems_are_named() {
     assert_eq!(s.problems(&nothing_exists), [Problem::OutputIsInput]);
 
     s.set_output("b.mp3".into());
-    assert_eq!(
-        s.problems(&nothing_exists),
-        [Problem::Extension]
-    );
+    assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     s.set_output("b.WAV".into());
     assert!(s.problems(&nothing_exists).is_empty());
     s.set_output("b".into());
-    assert_eq!(
-        s.problems(&nothing_exists),
-        [Problem::Extension]
-    );
+    assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     for ogg in ["b.ogg", "b.OGA"] {
         s.set_output(ogg.into());
         assert!(s.problems(&nothing_exists).is_empty(), "{ogg}");
@@ -354,7 +348,10 @@ fn ogg_flac_is_a_container_with_flac_levels_and_flac_rules() {
     assert!(line.contains("--compression-level 3"), "{line}");
     assert!(line.contains("song.oga"), "{line}");
     // Whole numbers only, like FLAC.
-    assert!(!s.format_options().contains(&FormatChoice::Format(SampleFormat::F32)));
+    assert!(
+        !s.format_options()
+            .contains(&FormatChoice::Format(SampleFormat::F32))
+    );
     s.set_format(FormatChoice::Format(SampleFormat::F32));
     assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
     assert_eq!(

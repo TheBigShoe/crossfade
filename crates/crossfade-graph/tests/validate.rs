@@ -67,7 +67,11 @@ fn table() -> Vec<Case> {
         ("hi.wav", "o.flac", settings(None, None, None)),
         ("s16.flac", "o.flac", settings(None, Some("copy"), None)),
         ("s16.flac", "o.oga", settings(None, Some("copy"), None)),
-        ("s16.wav", "o.oga", settings(Some(S24), Some("flac"), Some(8))),
+        (
+            "s16.wav",
+            "o.oga",
+            settings(Some(S24), Some("flac"), Some(8)),
+        ),
         ("s16.flac", "o.wav", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("copy"), None)),
         // Refusals.
