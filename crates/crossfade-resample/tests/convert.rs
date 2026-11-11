@@ -121,7 +121,11 @@ fn reset_and_flush_start_the_stream_afresh() {
 fn planar_and_interleaved_give_the_same_bits() {
     let left = noise(3000, 1);
     let right = noise(3000, 2);
-    let inter: Vec<f64> = left.iter().zip(&right).flat_map(|(&l, &r)| [l, r]).collect();
+    let inter: Vec<f64> = left
+        .iter()
+        .zip(&right)
+        .flat_map(|(&l, &r)| [l, r])
+        .collect();
     for (a, b) in PAIRS {
         let want = convert(a, b, 2, Quality::Balanced, &inter, 1000);
         let mut r = Resampler::new(a, b, 2, Quality::Balanced).unwrap();
