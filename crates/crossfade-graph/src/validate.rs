@@ -8,7 +8,7 @@ use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
 };
 use crossfade_core::{
-    AudioSpec, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
+    AudioSpec, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
 };
 use crossfade_dsp::chain::Chain;
 use crossfade_dsp::dither::Dither;
@@ -132,11 +132,22 @@ fn plan_output(
         };
         return Ok((plan, None));
     }
-    let in_spec = &input.audio;
     let chain = processing(input, settings)?;
+    let plan = output_plan(input, output_format, settings, chain.as_ref())?;
+    Ok((plan, chain))
+}
+
+/// The output stream of a transcode of `input` through `chain` (`None`: unprocessed).
+fn output_plan(
+    input: &StreamInfo,
+    output_format: FormatId,
+    settings: &AudioSettings,
+    chain: Option<&ChainPlan>,
+) -> Result<OutputPlan, Error> {
+    let in_spec = &input.audio;
     let out_format = settings.sample_format.unwrap_or(in_spec.format());
-    let codec = output_codec(output_format, out_format, requested)?;
-    let (out_spec, frames, depth, time_base) = match &chain {
+    let codec = output_codec(output_format, out_format, settings.codec.as_deref())?;
+    let (out_spec, frames, depth, time_base) = match chain {
         // Processed audio uses every bit of its format.
         Some(c) => {
             let (s, frames) = c.output(in_spec, input.frames)?;
@@ -162,12 +173,11 @@ fn plan_output(
         bits_per_raw_sample: depth,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
-    let plan = OutputPlan {
+    Ok(OutputPlan {
         output_format,
         output,
         copy: false,
-    };
-    Ok((plan, chain))
+    })
 }
 
 /// Copying passes packets through untouched, so it cannot honour anything that changes them.
@@ -217,14 +227,7 @@ pub(crate) fn resolve(
         bits_per_sample: out.bits_per_raw_sample,
         ..encode_options(out.codec, settings.compression_level)?
     };
-    let threaded = (is_threaded(input.codec), is_threaded(out.codec));
-    let (decoder_threads, encoder_threads) = match (threads, threaded) {
-        // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
-        (0, (true, false)) => (0, 1),
-        (0, (false, true)) => (1, 0),
-        (0, (d, e)) => share_threads(auto_thread_count(), d, e),
-        (n, (d, e)) => share_threads(n, d, e),
-    };
+    let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
     let chain = match &chain {
         Some(c) => Some(Chain::new(&input.audio, c, out.audio.format())?),
         None => None,
@@ -235,6 +238,17 @@ pub(crate) fn resolve(
         chain,
     };
     Ok((plan, Some(codecs)))
+}
+
+/// Threads for a decoder and an encoder from one budget (see `Limits::max_threads`).
+pub(crate) fn codec_threads(threads: usize, input: CodecId, output: CodecId) -> (usize, usize) {
+    match (threads, (is_threaded(input), is_threaded(output))) {
+        // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
+        (0, (true, false)) => (0, 1),
+        (0, (false, true)) => (1, 0),
+        (0, (d, e)) => share_threads(auto_thread_count(), d, e),
+        (n, (d, e)) => share_threads(n, d, e),
+    }
 }
 
 /// What a job will write, from the input stream and the settings alone, without checking
@@ -320,32 +334,137 @@ fn joined(inputs: &[StreamInfo], settings: &AudioSettings) -> Result<StreamInfo,
     })
 }
 
+/// How a join runs: each input's own conversion to the joined rate and layout (`None` when
+/// it already has them), and the main chain over the joined stream.
+pub(crate) struct Join {
+    pub plan: OutputPlan,
+    /// The joined stream as the main chain sees it.
+    pub joined: StreamInfo,
+    pub conform: Vec<Option<ChainPlan>>,
+    pub main: Option<ChainPlan>,
+}
+
+/// Plans a join. Inputs alike (rate, layout, and none losing depth in the output format) with
+/// no filters take the unprocessed path: the join is then bit-exact. Otherwise one main chain
+/// runs over the whole joined stream, so dither is one stream too.
+pub(crate) fn plan_join(
+    inputs: &[StreamInfo],
+    output_format: FormatId,
+    settings: &AudioSettings,
+) -> Result<Join, Error> {
+    let joined = joined(inputs, settings)?;
+    let conform: Vec<Option<ChainPlan>> = inputs
+        .iter()
+        .map(|i| {
+            let from = AudioSpec::new(
+                i.audio.sample_rate(),
+                SampleFormat::F64,
+                i.audio.layout().clone(),
+            )?;
+            let filters = filter::conversions(
+                &from,
+                joined.audio.sample_rate(),
+                joined.audio.layout().clone(),
+            );
+            Ok((!filters.is_empty()).then_some(ChainPlan {
+                filters,
+                dither: Dither::None,
+            }))
+        })
+        .collect::<Result<_, Error>>()?;
+    let mut main = processing(&joined, settings)?;
+    let out_format = settings.sample_format.unwrap_or(joined.audio.format());
+    let narrows =
+        settings.dither != Dither::None && inputs.iter().any(|i| loses_depth(i, out_format));
+    if main.is_none() && (narrows || conform.iter().any(Option::is_some)) {
+        main = Some(ChainPlan {
+            filters: Vec::new(),
+            dither: settings.dither,
+        });
+    }
+    let plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    Ok(Join {
+        plan,
+        joined,
+        conform,
+        main,
+    })
+}
+
+/// The built parts of a join that live for the whole job; each input's decoder and
+/// conversion are built when it is opened.
+pub(crate) struct JoinCodecs {
+    pub encoder: Box<dyn Encoder>,
+    pub main: Option<Chain>,
+    /// Per input.
+    pub decoder_threads: Vec<usize>,
+}
+
+/// [`plan_join`], then builds what the job needs and checks each input's conversion builds.
+pub(crate) fn resolve_join(
+    inputs: &[StreamInfo],
+    output_format: FormatId,
+    settings: &AudioSettings,
+    threads: usize,
+) -> Result<(Join, JoinCodecs), Error> {
+    let join = plan_join(inputs, output_format, settings)?;
+    for (input, c) in inputs.iter().zip(&join.conform) {
+        if let Some(c) = c {
+            Chain::new(&input.audio, c, SampleFormat::F64)?;
+        }
+    }
+    let out = &join.plan.output;
+    // Decoders run one at a time, so each may share the budget with the encoder alone.
+    let decoder_threads = inputs
+        .iter()
+        .map(|i| codec_threads(threads, i.codec, out.codec).0)
+        .collect();
+    let encoder_threads = codec_threads(threads, inputs[0].codec, out.codec).1;
+    let options = EncodeOptions {
+        bits_per_sample: out.bits_per_raw_sample,
+        ..encode_options(out.codec, settings.compression_level)?
+    };
+    let main = match &join.main {
+        Some(c) => Some(Chain::new(&join.joined.audio, c, out.audio.format())?),
+        None => None,
+    };
+    let encoder = encoder_for_threads(out.codec, &out.audio, &options, encoder_threads)?;
+    Ok((
+        join,
+        JoinCodecs {
+            encoder,
+            main,
+            decoder_threads,
+        },
+    ))
+}
+
 /// [`describe`] for a job that joins `inputs` in order (`crossfade concat`).
 pub fn describe_concat(
     inputs: &[StreamInfo],
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let joined = joined(inputs, settings)?;
-    describe(&joined, output_path, settings)
+    let format = output_format_for(output_path)?;
+    plan_join(inputs, format, settings).map(|j| j.plan)
 }
 
-/// [`validate`] for a job that joins `inputs` in order. The joining pipeline is not built yet,
-/// so after every other check this refuses as `Pipeline::open` does.
+/// [`validate`] for a job that joins `inputs` in order: everything `Pipeline::open` decides,
+/// with no file touched.
 pub fn validate_concat(
     inputs: &[StreamInfo],
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let joined = joined(inputs, settings)?;
-    validate(&joined, output_path, settings)?;
-    Err(concat_not_built(inputs.len()))
-}
-
-pub(crate) fn concat_not_built(inputs: usize) -> Error {
-    unsupported(format!(
-        "joining {inputs} inputs (crossfade concat) is not built yet"
-    ))
+    let format = output_format_for(output_path)?;
+    let (join, _) = resolve_join(inputs, format, settings, 1)?;
+    create_muxer(
+        format,
+        Box::new(Cursor::new(Vec::new())),
+        &join.plan.output,
+        &Tags::new(),
+    )?;
+    Ok(join.plan)
 }
 
 #[cfg(test)]

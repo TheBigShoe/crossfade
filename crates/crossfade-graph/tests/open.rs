@@ -2,7 +2,7 @@ mod common;
 
 use common::{job, sine_wav, spec};
 use crossfade_core::{ChannelLayout, CodecId, Error, Limits, SampleFormat};
-use crossfade_graph::{Job, JobInput, JobOutput, Pipeline};
+use crossfade_graph::{Job, JobOutput, Pipeline};
 use crossfade_testkit::memory::MemoryIo;
 use std::io::ErrorKind;
 
@@ -59,15 +59,11 @@ fn output_container_comes_from_the_extension_case_insensitively() {
 }
 
 #[test]
-fn exactly_one_input_and_one_output() {
+fn at_least_one_input_and_exactly_one_output() {
     let (mut io, _) = io_with_input();
     let base = job("in.wav", "out.wav", None);
     let mut none_in = base.clone();
     none_in.inputs.clear();
-    let mut two_in = base.clone();
-    two_in.inputs.push(JobInput {
-        path: "in.wav".into(),
-    });
     let mut none_out = base.clone();
     none_out.outputs.clear();
     let mut two_out = base.clone();
@@ -76,8 +72,8 @@ fn exactly_one_input_and_one_output() {
         audio: Default::default(),
     });
     for (j, word) in [
+        // Several inputs are a join (`crossfade concat`), tested in concat.rs.
         (none_in, "input"),
-        (two_in, "input"),
         (none_out, "output"),
         (two_out, "output"),
     ] {

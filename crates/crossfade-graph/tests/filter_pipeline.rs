@@ -5,9 +5,7 @@ use common::{data_chunk, spec, wav_bytes};
 use crossfade_core::{ChannelLayout, Error, JobIo, Limits, SampleFormat};
 use crossfade_dsp::level::db_to_linear;
 use crossfade_graph::filter::FilterSpec;
-use crossfade_graph::{
-    AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, Pipeline, run,
-};
+use crossfade_graph::{AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, run};
 use crossfade_testkit::memory::MemoryIo;
 
 const RATE: u32 = 44100;
@@ -302,23 +300,6 @@ fn stream_copy_refuses_anything_that_changes_the_audio() {
         let err = convert(&mut io, &job_with("in.wav", "out.wav", audio), 1).unwrap_err();
         assert!(err.to_string().contains(why), "{err}");
     }
-}
-
-#[test]
-fn several_inputs_are_for_concat_which_is_not_built_yet() {
-    let mut io = MemoryIo::new();
-    io.insert("a.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));
-    let mut job = job_with("a.wav", "out.wav", AudioSettings::default());
-    job.inputs.push(JobInput {
-        path: "a.wav".into(),
-    });
-    let err = Pipeline::open(&job, &mut io, &Limits::default())
-        .err()
-        .unwrap();
-    assert_eq!(
-        err.to_string(),
-        "unsupported: joining 2 inputs (crossfade concat) is not built yet"
-    );
 }
 
 #[test]

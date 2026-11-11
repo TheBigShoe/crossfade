@@ -12,6 +12,7 @@ mod words;
 
 pub use crossfade_dsp::chain::ChainPlan;
 pub use crossfade_dsp::filters::FilterPlan;
+pub(crate) use plan::conversions;
 pub use plan::plan;
 
 pub use crossfade_dsp::filters::fade::Curve;

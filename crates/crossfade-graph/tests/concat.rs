@@ -216,7 +216,9 @@ fn formats_that_differ_take_the_first_inputs_or_the_one_asked_for() {
     let t = data_chunk(&t);
     assert_eq!(&t[..2000], data_chunk(&io.get("a16.wav").unwrap()));
     let truncated: Vec<u8> = data_chunk(&io.get("b24.wav").unwrap())
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|s| [s[1], s[2]])
         .collect();
     assert_eq!(&t[2000..], truncated.as_slice());

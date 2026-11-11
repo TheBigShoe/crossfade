@@ -58,7 +58,7 @@ pub fn run(
             what: "exactly one output".into(),
         });
     };
-    let result = drive(&mut pipeline, cancel, on_event).and_then(|frames| {
+    let result = drive(&mut pipeline, io, cancel, on_event).and_then(|frames| {
         io.commit(&output.path)?;
         Ok(frames)
     });
@@ -81,6 +81,7 @@ pub fn run(
 /// Steps to the end; returns the frames processed.
 fn drive(
     pipeline: &mut Pipeline,
+    io: &mut dyn JobIo,
     cancel: &CancelToken,
     on_event: &mut dyn FnMut(&Event),
 ) -> Result<u64, Error> {
@@ -92,7 +93,7 @@ fn drive(
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        match pipeline.step()? {
+        match pipeline.step_with(io)? {
             Step::Progress {
                 frames_done,
                 frames_total,
