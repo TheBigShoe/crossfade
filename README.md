@@ -13,7 +13,7 @@ video are planned. It has only been run on macOS so far.
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags |
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags |
-| Ogg | FLAC only | no | Vorbis and Opus are recognised and refused by name |
+| Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
 
 Conversions between these are bit-exact. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
