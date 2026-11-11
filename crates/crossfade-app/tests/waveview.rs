@@ -42,7 +42,7 @@ fn zoom_keeps_the_frame_under_the_pointer() {
     assert!(!v.is_fit());
     v.zoom(2.0, 0.0);
     assert_eq!(v.frames_per_pixel(), 25);
-    assert_eq!(v.start(), 2_500 - 0);
+    assert_eq!(v.start(), 2_500);
 }
 
 #[test]
@@ -186,15 +186,12 @@ fn an_hour_long_range_labels_hours() {
 #[test]
 fn zoomed_in_ticks_gain_decimals_and_follow_the_range() {
     let mut v = view(10_000, 100);
-    for _ in 0..4 {
-        v.zoom(2.0, 0.0);
-    }
+    v.zoom(4.0, 0.0);
+    v.zoom(4.0, 0.0);
+    // 6 frames per pixel at 1 kHz, from 0.24 s: the half-second mark is the only one.
     v.pan_px(40.0);
-    // 6 frames per pixel at 1 kHz: 6 ms.
     assert_eq!(v.frames_per_pixel(), 6);
-    let l = labels(&v);
-    assert!(l[0].starts_with("0:00.2"), "{l:?}");
-    assert!(l[0].len() > 4);
+    assert_eq!(labels(&v), ["0:00.5"]);
 }
 
 #[test]
@@ -203,7 +200,7 @@ fn the_position_bar_shows_only_when_zoomed() {
     assert_eq!(v.position(), None);
     v.zoom(4.0, 0.0);
     assert_eq!(v.position(), Some((0.0, 0.25)));
-    v.pan_px(25.0);
+    v.pan_px(100.0);
     let (a, b) = v.position().unwrap();
     assert!((a - 0.25).abs() < 1e-6 && (b - 0.5).abs() < 1e-6);
 }
@@ -273,7 +270,12 @@ fn snap(state: State, done: u64, total: Option<u64>, l: Loudness) -> Snapshot {
 
 fn stream_with(frames: u64) -> StreamInfo {
     let spec = AudioSpec::new(48_000, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
-    let mut s = StreamInfo::new(0, CodecId::PcmS16Le, spec, TimeBase::new(1, 48_000).unwrap());
+    let mut s = StreamInfo::new(
+        0,
+        CodecId::PcmS16Le,
+        spec,
+        TimeBase::new(1, 48_000).unwrap(),
+    );
     s.frames = Some(frames);
     s
 }
@@ -293,9 +295,12 @@ fn the_readout_line_reads_lufs_range_and_true_peak() {
         State::Done,
         100,
         Some(100),
-        loud(Some(-16.24), Some(7.4), Some(0.912), 0.9),
+        loud(Some(-16.24), Some(7.4), Some(0.85), 0.8),
     ));
-    assert_eq!(r.text(), "\u{2212}16.2 LUFS \u{b7} 7.4 LU range \u{b7} \u{2212}0.8 dBTP");
+    assert_eq!(
+        r.text(),
+        "\u{2212}16.2 LUFS \u{b7} 7.4 LU range \u{b7} \u{2212}1.4 dBTP"
+    );
     assert!(!r.warns());
 }
 
@@ -322,9 +327,19 @@ fn missing_figures_are_left_out_and_silence_says_so() {
         loud(Some(-20.0), None, Some(0.5), 0.5),
     ));
     assert_eq!(r.text(), "\u{2212}20.0 LUFS \u{b7} \u{2212}6.0 dBTP");
-    let r = readout(&snap(State::Done, 100, Some(100), loud(None, None, None, 0.0)));
+    let r = readout(&snap(
+        State::Done,
+        100,
+        Some(100),
+        loud(None, None, None, 0.0),
+    ));
     assert_eq!(r.text(), "Silent");
-    let r = readout(&snap(State::Done, 100, Some(100), loud(None, None, None, 0.3)));
+    let r = readout(&snap(
+        State::Done,
+        100,
+        Some(100),
+        loud(None, None, None, 0.3),
+    ));
     assert_eq!(r.text(), "Too short to measure");
 }
 
