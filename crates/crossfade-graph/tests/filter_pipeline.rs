@@ -245,13 +245,6 @@ fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
             },
             "resample",
         ),
-        (
-            AudioSettings {
-                channels: Some(crossfade_graph::filter::parse_channels("mono").unwrap()),
-                ..AudioSettings::default()
-            },
-            "mix",
-        ),
     ] {
         let mut io = MemoryIo::new();
         io.insert("in.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));

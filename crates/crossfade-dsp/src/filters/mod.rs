@@ -33,7 +33,7 @@ pub fn build(plan: &FilterPlan, input: &AudioSpec) -> Result<Box<dyn Filter>, Er
         FilterPlan::Fade(p) => Ok(Box::new(fade::Fade::new(input, p)?)),
         FilterPlan::Normalize(_) => Err(not_built("normalize")),
         FilterPlan::Resample(_) => Err(not_built("resample")),
-        FilterPlan::Mix(_) => Err(not_built("mix")),
+        FilterPlan::Mix(p) => Ok(Box::new(mix::Mix::new(input, p)?)),
     }
 }
 
