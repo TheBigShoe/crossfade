@@ -188,13 +188,6 @@ fn a_filter_not_built_yet_says_so_by_name() {
             "normalize",
         ),
         (
-            FilterPlan::Resample(ResamplePlan {
-                rate: 44100,
-                quality: Quality::Good,
-            }),
-            "resample",
-        ),
-        (
             FilterPlan::Mix(MixPlan {
                 layout: ChannelLayout::mono(),
                 matrix: None,

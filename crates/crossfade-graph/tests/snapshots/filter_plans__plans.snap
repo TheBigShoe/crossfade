@@ -178,7 +178,7 @@ job:      {"filters":[{"filter":"resample","rate":48000,"quality":"best"}]}
 chain:    1. resample to 48000 Hz (best)
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 480000 frames flac
-validate: unsupported: the resample filter is not built yet
+validate: ok
 
 ### output rate
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -187,7 +187,7 @@ job:      {"sample_rate":48000}
 chain:    1. resample to 48000 Hz (good)
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 480000 frames flac
-validate: unsupported: the resample filter is not built yet
+validate: ok
 
 ### output rate after a gain
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -197,7 +197,7 @@ chain:    1. gain x0.8912509381337456
           2. resample to 96000 Hz (good)
 dither:   tpdf
 output:   96000 Hz stereo s16 (full width), 960000 frames flac
-validate: unsupported: the resample filter is not built yet
+validate: ok
 
 ### an explicit resample then back by the output setting
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -207,7 +207,7 @@ chain:    1. resample to 96000 Hz (good)
           2. resample to 44100 Hz (good)
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 441000 frames flac
-validate: unsupported: the resample filter is not built yet
+validate: ok
 
 ### an odd rate count is rounded up
 input:    44100 Hz stereo s16 (full width), 1 frames
@@ -216,7 +216,7 @@ job:      {"sample_rate":48000}
 chain:    1. resample to 48000 Hz (good)
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 2 frames flac
-validate: unsupported: the resample filter is not built yet
+validate: ok
 
 ### mix to mono
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -245,7 +245,7 @@ chain:    1. resample to 48000 Hz (good)
           2. mix to 5.1
 dither:   tpdf
 output:   48000 Hz 5.1 s16 (full width), 480000 frames pcm_s16le
-validate: unsupported: the resample filter is not built yet
+validate: unsupported: the mix filter is not built yet
 
 ### a count takes the default layout for it
 input:    44100 Hz stereo s16 (full width), 441000 frames

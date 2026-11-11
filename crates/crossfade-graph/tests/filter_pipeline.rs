@@ -251,13 +251,6 @@ fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
         ),
         (
             AudioSettings {
-                sample_rate: Some(48000),
-                ..AudioSettings::default()
-            },
-            "resample",
-        ),
-        (
-            AudioSettings {
                 channels: Some(crossfade_graph::filter::parse_channels("mono").unwrap()),
                 ..AudioSettings::default()
             },
