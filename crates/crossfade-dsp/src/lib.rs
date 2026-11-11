@@ -3,5 +3,6 @@
 #![forbid(unsafe_code)]
 
 pub mod convert;
+pub mod dither;
 pub mod filters;
 pub mod level;
