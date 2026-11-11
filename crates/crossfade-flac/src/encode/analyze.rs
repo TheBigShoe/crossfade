@@ -54,35 +54,52 @@ pub(super) enum Stereo {
     Exhaustive,
 }
 
-/// One analysis window for LPC: its span in twelfths of the block, and how many orders get an
+/// The ridge every fit gets: a hair of white noise keeps the recursion finite on a signal
+/// that is nearly perfectly predictable.
+const BASE_RIDGE: f64 = 1e-15;
+/// Bits per sample above its estimate that makes a fit suspect.
+const GAP_BITS: f64 = 3.5;
+const REFINE_PASSES: usize = 8;
+
+/// One analysis window for LPC: its span in sixtieths of the block, and how many orders get an
 /// exact search from it.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Apodization {
     from: usize,
     to: usize,
     tries: usize,
+    /// The taper at each end is this fraction (1 / `taper`) of the window's span.
+    taper: usize,
 }
 
 const fn apod(from: usize, to: usize, tries: usize) -> Apodization {
-    Apodization { from, to, tries }
+    Apodization {
+        from,
+        to,
+        tries,
+        taper: 4,
+    }
 }
 
 static WINDOWS: [&[Apodization]; 9] = [
     &[],
     &[],
     &[],
-    &[apod(0, 12, 1)],
-    &[apod(0, 12, 1)],
-    &[apod(0, 12, 2)],
-    &[apod(0, 12, 3)],
-    &[apod(0, 12, 4)],
-    &[apod(0, 12, 3), apod(0, 8, 1), apod(4, 12, 1)],
+    &[apod(0, 60, 1)],
+    &[apod(0, 60, 1)],
+    &[apod(0, 60, 2)],
+    &[apod(0, 60, 3)],
+    &[apod(0, 60, 4)],
+    &[apod(0, 60, 3), apod(0, 40, 1), apod(20, 60, 1)],
 ];
 
 /// What a level asks of the search.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Level {
     pub(super) block: usize,
+    /// Extra ridge amounts (relative, added to the autocorrelation at lag 0) tried when the
+    /// first fit lands far above its estimate.
+    pub(super) ridges: &'static [f64],
     pub(super) stereo: Stereo,
     /// Largest Rice partition order tried.
     pub(super) rice_order: u32,
@@ -93,8 +110,6 @@ pub(super) struct Level {
     /// The analysis windows, each with its own Levinson run; partial windows follow
     /// non-stationary audio better.
     pub(super) windows: &'static [Apodization],
-    /// Quantised coefficient precision in bits, sign included.
-    pub(super) precision: u32,
 }
 
 impl Level {
@@ -120,8 +135,12 @@ impl Level {
                 _ => 12,
             },
             windows: WINDOWS[usize::from(level.min(8))],
-            // As the reference encoder: more precision for longer blocks.
-            precision: 12,
+            ridges: match level {
+                0..=4 => &[],
+                5 | 6 => &[1e-11, 1e-8],
+                7 => &[1e-13, 1e-10, 1e-7],
+                _ => &[1e-14, 1e-12, 1e-10, 1e-8, 1e-6],
+            },
         }
     }
 }
@@ -166,9 +185,36 @@ pub(super) fn is_constant<T: Sample>(x: &[T]) -> bool {
     x.iter().all(|&v| v.into() == first)
 }
 
+/// Quantised LPC coefficient precision in bits (sign included) for a block of `block` samples
+/// of a `depth`-bit stream, as the reference encoder chooses: more bits for longer blocks and
+/// deeper samples, where the rounding error of a coefficient times the sample size would
+/// otherwise dominate the residual of a predictable signal.
+pub(super) fn precision_for(block: usize, depth: u32) -> u32 {
+    let p = if depth < 16 {
+        (2 + depth / 2).max(5)
+    } else if depth == 16 {
+        match block {
+            0..=192 => 7,
+            193..=384 => 8,
+            385..=576 => 9,
+            577..=1152 => 10,
+            1153..=2304 => 11,
+            2305..=4608 => 12,
+            _ => 13,
+        }
+    } else {
+        match block {
+            0..=384 => 12,
+            385..=1152 => 13,
+            _ => 15,
+        }
+    };
+    p.min(15)
+}
+
 pub(super) struct Analyzer {
-    #[cfg(test)]
-    pub(super) force_precision: Option<u32>,
+    /// The stream's bit depth (not a side channel's or a wasted-bits-reduced one).
+    depth: u32,
     level: Level,
     /// Candidate residual and Rice plan; swapped into the `Plan` when they win.
     cand: Vec<u32>,
@@ -179,7 +225,8 @@ pub(super) struct Analyzer {
     pool64: Vec<i64>,
     window: Vec<f64>,
     /// What `window` currently holds: block length and span.
-    window_key: (usize, usize, usize),
+    window_key: (usize, usize, usize, usize),
+    reg: f64,
     windowed: Vec<f64>,
     lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
     acc: lpc::Accumulators,
@@ -187,11 +234,10 @@ pub(super) struct Analyzer {
 
 impl Analyzer {
     /// `wide`: samples may need `i64` (a 32-bit stereo stream's side channel).
-    pub(super) fn new(level: Level, wide: bool) -> Self {
+    pub(super) fn new(level: Level, depth: u32, wide: bool) -> Self {
         let wide_cap = if wide { level.block } else { 0 };
         Self {
-            #[cfg(test)]
-            force_precision: None,
+            depth,
             level,
             cand: Vec::with_capacity(level.block),
             cand_rice: RicePlan::new(),
@@ -199,7 +245,8 @@ impl Analyzer {
             pool32: Vec::with_capacity(level.block),
             pool64: Vec::with_capacity(wide_cap),
             window: Vec::with_capacity(level.block),
-            window_key: (0, 0, 0),
+            window_key: (0, 0, 0, 0),
+            reg: 1e-15,
             windowed: Vec::with_capacity(level.block),
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
             acc: lpc::Accumulators::with_capacity(level.block, wide_cap),
@@ -277,14 +324,82 @@ impl Analyzer {
             }
         }
         if self.level.max_lpc > 0 && n >= 16 {
+            self.reg = BASE_RIDGE;
+            let mut gap = 0.0f64;
             for &apod in self.level.windows {
-                self.search_lpc(x, bps, head, apod, plan);
+                gap = gap.max(self.search_lpc(x, bps, head, apod, plan));
+            }
+            // A predictable signal can sit far above the size its own error energy promises:
+            // the quantised coefficients of a badly conditioned fit are too coarse. A little
+            // ridge on the autocorrelation shrinks them, and each amount gives a different
+            // set to cost exactly. Ordinary audio stays within a fraction of a bit of its
+            // estimate and never pays for this.
+            if gap > GAP_BITS {
+                for &ridge in self.level.ridges {
+                    self.reg = ridge;
+                    for &apod in &self.level.windows[..1] {
+                        self.search_lpc(x, bps, head, apod, plan);
+                    }
+                }
             }
         }
     }
 
+    /// Codes `x` with the quantised predictor `coefs`, keeps it in `plan` if it is the cheapest
+    /// so far, and returns its size in bits (`None` when a residual does not fit 32 bits).
+    #[allow(clippy::too_many_arguments)]
+    fn try_coefs<T: Sample>(
+        &mut self,
+        x: &[T],
+        coefs: &[i32],
+        shift: u32,
+        precision: u32,
+        bps: u32,
+        head: u64,
+        plan: &mut Plan,
+    ) -> Option<u64> {
+        let (n, order) = (x.len(), coefs.len());
+        if !lpc::residual(
+            x,
+            &lpc::Quantized {
+                coefs,
+                shift,
+                precision,
+            },
+            bps,
+            &mut self.cand,
+            &mut self.acc,
+        ) {
+            return None;
+        }
+        self.rice.plan(
+            &self.cand,
+            n,
+            order,
+            self.level.rice_order,
+            &mut self.cand_rice,
+        );
+        let bits = head
+            + order as u64 * u64::from(bps)
+            + 9
+            + order as u64 * u64::from(precision)
+            + self.cand_rice.bits;
+        if bits < plan.bits {
+            plan.bits = bits;
+            plan.kind = Kind::Lpc(order as u8);
+            plan.precision = precision;
+            plan.shift = shift;
+            plan.coefs = [0; MAX_ORDER];
+            plan.coefs[..order].copy_from_slice(coefs);
+            std::mem::swap(&mut plan.res, &mut self.cand);
+            std::mem::swap(&mut plan.rice, &mut self.cand_rice);
+        }
+        Some(bits)
+    }
+
     /// Linear prediction: one Levinson run gives every order; the orders that look best by
-    /// estimate are then coded for real and compared by exact bits.
+    /// estimate are then coded for real and compared by exact bits. Returns how far, per
+    /// sample, the best of them came out above its estimate.
     fn search_lpc<T: Sample>(
         &mut self,
         x: &[T],
@@ -292,13 +407,13 @@ impl Analyzer {
         head: u64,
         apod: Apodization,
         plan: &mut Plan,
-    ) {
+    ) -> f64 {
         let n = x.len();
         let max_order = self.level.max_lpc.min(n - 1);
-        let span = (n * apod.from / 12, n * apod.to / 12);
-        if self.window_key != (n, span.0, span.1) {
-            lpc::window(n, span.0, span.1, &mut self.window);
-            self.window_key = (n, span.0, span.1);
+        let span = (n * apod.from / 60, n * apod.to / 60);
+        if self.window_key != (n, span.0, span.1, apod.taper) {
+            lpc::window(n, span.0, span.1, apod.taper, &mut self.window);
+            self.window_key = (n, span.0, span.1, apod.taper);
         }
         // Only the span inside the window carries anything.
         let (from, to) = (span.0.min(n), span.1.min(n));
@@ -311,15 +426,13 @@ impl Analyzer {
         );
         let mut autoc = [0.0f64; MAX_ORDER + 1];
         lpc::autocorrelation(&self.windowed, &mut autoc[..=max_order]);
-        autoc[0] *= 1.0 + 1e-9;
+        autoc[0] *= 1.0 + self.reg;
         let mut err = [0.0f64; MAX_ORDER];
         let orders = lpc::levinson(&autoc, max_order, &mut self.lp, &mut err);
         if orders == 0 {
-            return;
+            return 0.0;
         }
-        let precision = self.level.precision;
-        #[cfg(test)]
-        let precision = self.force_precision.unwrap_or(precision);
+        let precision = precision_for(self.level.block, self.depth);
         // Estimated bits per order, as the reference encoder does: the error energy gives the
         // residual size, each coefficient costs its precision, each warm-up sample the depth.
         let scale = 0.5 / n as f64;
@@ -338,6 +451,7 @@ impl Analyzer {
             );
         }
         let tries = apod.tries.min(orders);
+        let mut gap = f64::MAX;
         for t in 0..tries {
             // Selection of the next best estimate; ties go to the lower order.
             let mut at = t;
@@ -354,41 +468,27 @@ impl Analyzer {
             else {
                 continue;
             };
-            if !lpc::residual(
-                x,
-                &lpc::Quantized {
-                    coefs: &q[..order],
+            let Some(bits) = self.try_coefs(x, &q[..order], shift, precision, bps, head, plan)
+            else {
+                continue;
+            };
+            let miss = (bits - head) as f64 / n as f64 - est[t].0 / n as f64;
+            gap = gap.min(miss);
+            if miss > GAP_BITS {
+                // Far above the estimate: rounding each coefficient on its own is not the best
+                // the quantiser can do, so look for a better integer point near it.
+                lpc::refine(
+                    &self.lp[order - 1][..order],
+                    &mut q[..order],
                     shift,
                     precision,
-                },
-                bps,
-                &mut self.cand,
-                &mut self.acc,
-            ) {
-                continue;
-            }
-            self.rice.plan(
-                &self.cand,
-                n,
-                order,
-                self.level.rice_order,
-                &mut self.cand_rice,
-            );
-            let bits = head
-                + order as u64 * u64::from(bps)
-                + 9
-                + order as u64 * u64::from(precision)
-                + self.cand_rice.bits;
-            if bits < plan.bits {
-                plan.bits = bits;
-                plan.kind = Kind::Lpc(order as u8);
-                plan.precision = precision;
-                plan.shift = shift;
-                plan.coefs = q;
-                std::mem::swap(&mut plan.res, &mut self.cand);
-                std::mem::swap(&mut plan.rice, &mut self.cand_rice);
+                    &autoc,
+                    REFINE_PASSES,
+                );
+                self.try_coefs(x, &q[..order], shift, precision, bps, head, plan);
             }
         }
+        if gap == f64::MAX { 0.0 } else { gap }
     }
 }
 

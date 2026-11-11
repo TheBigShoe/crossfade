@@ -202,7 +202,11 @@ impl Encoder {
                 .map(|_| Plan::new(level.block))
                 .collect(),
             level,
-            analyzer: Analyzer::new(level, channels == 2 && config.bits_per_sample == 32),
+            analyzer: Analyzer::new(
+                level,
+                u32::from(config.bits_per_sample),
+                channels == 2 && config.bits_per_sample == 32,
+            ),
             #[cfg(test)]
             force: None,
         })
@@ -559,11 +563,6 @@ impl Encoder {
         sink.finish();
         let crc = crate::crc::crc16(&out[start..]);
         out.extend_from_slice(&crc.to_be_bytes());
-    }
-
-    #[cfg(test)]
-    fn force_precision(&mut self, precision: Option<u32>) {
-        self.analyzer.force_precision = precision;
     }
 
     #[cfg(test)]

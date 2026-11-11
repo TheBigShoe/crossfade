@@ -14,12 +14,12 @@ pub(super) const MAX_ORDER: usize = 32;
 /// A Tukey-like window over `from..to` of `n` samples, zero outside: flat in the middle with
 /// a smoothstep taper over the first and last quarter of its span. Smoothstep (`3x^2 - 2x^3`)
 /// stands in for the cosine taper, which would need `cos`.
-pub(super) fn window(n: usize, from: usize, to: usize, out: &mut Vec<f64>) {
+pub(super) fn window(n: usize, from: usize, to: usize, div: usize, out: &mut Vec<f64>) {
     out.clear();
     out.resize(n, 0.0);
     let (from, to) = (from.min(n), to.min(n));
     out[from..to].fill(1.0);
-    let taper = (to - from) / 4;
+    let taper = (to - from) / div;
     for i in 0..taper {
         let x = (i as f64 + 0.5) / taper as f64;
         let w = x * x * (3.0 - 2.0 * x);
@@ -128,6 +128,91 @@ pub(super) fn quantize(coefs: &[f64], precision: u32, out: &mut [i32]) -> Option
         *o = q as i32;
     }
     Some(shift)
+}
+
+/// Improves quantised coefficients by coordinate descent on the prediction error they add: with
+/// `d` the difference between the real and the quantised coefficients (in coefficient units),
+/// the extra residual energy is `d' R d` for the autocorrelation matrix `R`. Rounding each
+/// coefficient to its nearest integer is not the minimum of that form when the signal is highly
+/// predictable and the matrix badly conditioned, where it matters: one more bit of residual per
+/// sample for every halving of the coefficients' accuracy. Steps of one unit, passes over every
+/// coefficient, at most `passes` of them.
+pub(super) fn refine(
+    coefs: &[f64],
+    q: &mut [i32],
+    shift: u32,
+    precision: u32,
+    autoc: &[f64],
+    passes: usize,
+) {
+    let order = coefs.len();
+    let scale = (1u64 << shift) as f64;
+    let (qmin, qmax) = (-(1i64 << (precision - 1)), (1i64 << (precision - 1)) - 1);
+    let mut d = [0.0f64; MAX_ORDER];
+    for i in 0..order {
+        d[i] = coefs[i] - f64::from(q[i]) / scale;
+    }
+    // g = R d, kept current as `d` changes.
+    let mut g = [0.0f64; MAX_ORDER];
+    let at = |i: usize, j: usize| autoc[i.abs_diff(j)];
+    for i in 0..order {
+        let mut sum = 0.0;
+        for j in 0..order {
+            sum += at(i, j) * d[j];
+        }
+        g[i] = sum;
+    }
+    let step = 1.0 / scale;
+    // Moves: single units, and pairs and triples of neighbouring coefficients moving together
+    // (a signal's coefficients are strongly correlated, so the cheapest corrections are).
+    for _ in 0..passes {
+        let mut changed = false;
+        for width in 1..=3usize.min(order) {
+            for i in 0..=order - width {
+                for pat in 0..1usize << width {
+                    // Direction of each coefficient in the move, from the bits of `pat`; the
+                    // all-same-sign moves cover the smooth corrections too.
+                    let mut u = [0i64; 3];
+                    for (k, v) in u.iter_mut().enumerate().take(width) {
+                        *v = if pat >> k & 1 == 1 { 1 } else { -1 };
+                    }
+                    if width == 3 && (pat == 0 || pat == 7) {
+                        continue;
+                    }
+                    let mut gain = 0.0;
+                    for a in 0..width {
+                        let ua = -(u[a] as f64) * step;
+                        gain += 2.0 * ua * g[i + a];
+                        for b in 0..width {
+                            let ub = -(u[b] as f64) * step;
+                            gain += ua * ub * at(i + a, i + b);
+                        }
+                    }
+                    let fits = (0..width).all(|a| {
+                        let m = i64::from(q[i + a]) + u[a];
+                        m >= qmin && m <= qmax
+                    });
+                    if gain < -1e-12 * autoc[0] * step * step && fits {
+                        for a in 0..width {
+                            q[i + a] += u[a] as i32;
+                            d[i + a] -= u[a] as f64 * step;
+                        }
+                        for j in 0..order {
+                            let mut sum = 0.0;
+                            for a in 0..width {
+                                sum += at(j, i + a) * (-(u[a] as f64) * step);
+                            }
+                            g[j] += sum;
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// log2 from the exponent and an `atanh` series for the mantissa; `+ - * /` only.
@@ -311,18 +396,18 @@ mod tests {
     fn window_is_symmetric_flat_in_the_middle_and_tapered() {
         let mut w = Vec::new();
         for n in [1usize, 3, 16, 17, 4096] {
-            window(n, 0, n, &mut w);
+            window(n, 0, n, 4, &mut w);
             assert_eq!(w.len(), n);
             for i in 0..n {
                 assert_eq!(w[i], w[n - 1 - i]);
                 assert!((0.0..=1.0).contains(&w[i]));
             }
         }
-        window(4096, 0, 4096, &mut w);
+        window(4096, 0, 4096, 4, &mut w);
         assert!(w[0] < 1e-5 && w[2048] == 1.0 && w[1023] < 1.0 && w[1024] == 1.0);
         assert!(w.windows(2).take(1024).all(|p| p[0] <= p[1]));
         // A partial window is zero outside its span and tapers inside it.
-        window(4096, 1024, 3072, &mut w);
+        window(4096, 1024, 3072, 4, &mut w);
         assert!(w[..1024].iter().all(|&v| v == 0.0) && w[3072..].iter().all(|&v| v == 0.0));
         assert!(w[1024] < 1e-4 && w[1536] == 1.0 && w[3071] < 1e-4);
     }

@@ -115,7 +115,7 @@ pub fn noise(bits: u8, count: usize, seed: u64) -> Vec<i32> {
     (0..count).map(|_| r.sample(bits)).collect()
 }
 
-pub const KINDS: u8 = 9;
+pub const KINDS: u8 = 10;
 
 /// `count` interleaved samples of one of several shapes that stress different tools.
 pub fn signal(kind: u8, bits: u8, count: usize, channels: usize, seed: u64) -> Vec<i32> {
@@ -167,6 +167,20 @@ pub fn signal(kind: u8, bits: u8, count: usize, channels: usize, seed: u64) -> V
                     let v = (t * step).sin() * amp * 0.7 + (t * step * 0.31).sin() * amp * 0.2;
                     (v as i64 + i64::from(r.sample(bits.min(6))))
                         .clamp(i64::from(lo), i64::from(hi)) as i32
+                })
+                .collect()
+        }
+        // Three low sines and a little noise: what high-rate recordings of band-limited audio
+        // look like, where the precision of the predictor matters.
+        8 => {
+            let f = [0.0023, 0.0067, 0.016];
+            (0..count)
+                .map(|i| {
+                    let t = (i / channels) as f64;
+                    let v =
+                        0.3 * (t * f[0]).sin() + 0.2 * (t * f[1]).sin() + 0.1 * (t * f[2]).sin();
+                    ((v * amp) as i64 + i64::from(r.sample(3))).clamp(i64::from(lo), i64::from(hi))
+                        as i32
                 })
                 .collect()
         }
