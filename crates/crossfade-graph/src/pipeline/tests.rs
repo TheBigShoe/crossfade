@@ -409,7 +409,7 @@ struct Upto {
     held: Option<AudioFrame>,
 }
 
-impl crossfade_core::Filter for Upto {
+impl Filter for Upto {
     fn output_spec(&self) -> &AudioSpec {
         &self.spec
     }
@@ -459,7 +459,7 @@ fn reading_stops_once_the_chain_ignores_further_input() {
         held: None,
     });
     t.chain = Some(
-        crossfade_dsp::chain::Chain::with_filters(
+        Chain::with_filters(
             &spec(),
             vec![stage],
             SampleFormat::S16,

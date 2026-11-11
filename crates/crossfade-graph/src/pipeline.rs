@@ -183,6 +183,12 @@ impl Pipeline {
                         &mut *self.muxer,
                         self.plan.output.audio.format(),
                     )?;
+                    if t.chain.as_ref().is_some_and(Filter::ignores_further_input) {
+                        // Nothing still to read can change the output (a trim is past its
+                        // end): skip it, count it as done, and finish now.
+                        self.frames_done = self.plan.input.frames.unwrap_or(self.frames_done);
+                        self.finish()?;
+                    }
                 }
             }
             return Ok(Step::Progress {
@@ -197,6 +203,14 @@ impl Pipeline {
                 &mut *self.muxer,
                 self.plan.output.audio.format(),
             )?;
+        }
+        self.finish()?;
+        Ok(Step::Finished)
+    }
+
+    /// Drains the chain and the encoder, hands the muxer the final codec header, finishes it.
+    fn finish(&mut self) -> Result<(), Error> {
+        if let Engine::Transcode(t) = &mut self.engine {
             if let Some(chain) = &mut t.chain {
                 chain.drain();
             }
@@ -210,7 +224,7 @@ impl Pipeline {
         }
         self.muxer.finish()?;
         self.finished = true;
-        Ok(Step::Finished)
+        Ok(())
     }
 }
 
