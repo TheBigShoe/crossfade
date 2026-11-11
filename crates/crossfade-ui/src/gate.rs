@@ -209,6 +209,9 @@ fn quitting_mid_conversion_waits_for_the_discard_and_leaves_only_the_input(
     draw(cx, rig.window);
 
     cx.dispatch_action(rig.window, crate::actions::Quit);
+    step(cx, 3);
+    draw(cx, rig.window);
+    click(cx, rig.window, "dialog-ok");
     // The quit step runs only after the worker's terminal event, which comes after the
     // engine discarded the temp file; the bound only stops a hang.
     for _ in 0..6000 {
