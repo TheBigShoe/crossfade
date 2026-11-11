@@ -45,7 +45,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
 | `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
 | `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out; `push_frame` decodes on threads), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic at any thread count), the `pool` its threads run on, its own `Error`. Other projects can use it alone |
-| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer samples, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
+| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
 | `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
@@ -58,7 +58,9 @@ and a GPUI desktop app (`crossfade-gui`).
 
 Format rules worth knowing before touching a codec or container: decoders
 emit samples left-justified in the container sample format and record the
-true depth in `StreamInfo::bits_per_raw_sample`; 8-bit signed audio is carried
+true depth in `StreamInfo::bits_per_raw_sample`, which every writer honours (the one
+rule for it is `crossfade-graph`'s `output_depth`); a speaker layout is a
+`ChannelLayout` that converts to and from the WAVE channel mask, in storage order; 8-bit signed audio is carried
 as `U8` with a +128 offset; a reader never seeks unless the source says it
 can, and never allocates a length it read from the file without checking
 `Limits`. The reference `flac` tool and macOS `afconvert`/`afinfo` are

@@ -10,12 +10,12 @@ video are planned. It has only been run on macOS so far.
 
 | Format | Read | Write | Notes |
 |---|---|---|---|
-| WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags |
-| FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz |
-| AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags |
+| WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags; true depth below the container (valid bits) and speaker layout (channel mask) |
+| FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
+| AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
 | Ogg | FLAC only | no | Vorbis and Opus are recognised and refused by name |
 
-Conversions between these are bit-exact. Tags are carried across where the
+Conversions between these are bit-exact, and a file's true bit depth (a 20-bit FLAC stays 20-bit, with the same STREAMINFO MD5) survives them unless `--sample-format` changes the format. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
 container to another without decoding it.
 
