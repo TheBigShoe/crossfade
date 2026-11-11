@@ -6,9 +6,10 @@ pub struct Limits {
     pub max_alloc_bytes: usize,
     pub max_nesting_depth: usize,
     pub max_packet_bytes: usize,
-    /// Threads a codec may use at once, the calling thread included: 1 keeps everything on the
-    /// calling thread, 0 (the default) means the machine's parallelism. It never changes the
-    /// output, so it belongs to the run, not to the job.
+    /// Threads the codecs may use at once, the calling thread included: 1 keeps everything on
+    /// the calling thread, 0 (the default) lets each codec pick for the machine. A FLAC decoder
+    /// feeding a FLAC encoder share it. It never changes the output, so it belongs to the run,
+    /// not to the job.
     pub max_threads: usize,
 }
 
