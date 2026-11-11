@@ -29,11 +29,7 @@ pub enum Verification {
 /// Decodes the frames of one stream, one after another.
 pub struct Decoder {
     info: StreamInfoBlock,
-    /// The stream is too deep for `i32` subframes (see `work`).
-    wide: bool,
-    /// Work buffers for 32-bit streams only, whose side channel needs 33 bits; every other
-    /// stream decodes straight into `planes`.
-    work: Vec<Vec<i64>>,
+    frames: FrameDecoder,
     /// The finished block, one buffer per channel, reused from frame to frame.
     planes: Vec<Vec<i32>>,
     md5: Md5,
@@ -63,8 +59,7 @@ impl Decoder {
         let channels = usize::from(info.channels);
         Ok(Self {
             info: *info,
-            wide: info.bits_per_sample > 31,
-            work: vec![Vec::new(); channels],
+            frames: FrameDecoder::new(info),
             planes: vec![Vec::new(); channels],
             md5: Md5::new(),
             md5_bytes: Vec::new(),
@@ -118,6 +113,71 @@ impl Decoder {
         Ok(Verification::Md5Matched)
     }
 
+    /// The frame CRC-16 is computed last, alongside the MD5 (see `hash`), but it still decides:
+    /// a frame whose CRC fails reports that, whatever else is wrong with it.
+    fn decode(&mut self, data: &[u8]) -> Result<()> {
+        let block = self.frames.decode(data, &mut self.planes)?;
+        if self.hash(block, data) != 0 {
+            return Err(crc_mismatch());
+        }
+        self.first = self.decoded;
+        self.decoded += block as u64;
+        self.block = block;
+        Ok(())
+    }
+
+    /// Hashes the raw samples as the format defines it: interleaved, little-endian, in the
+    /// smallest whole number of bytes the depth fits. Skipped when there is nothing to compare
+    /// the hash with. Returns the CRC-16 of `frame`, computed between the MD5's blocks: both are
+    /// serial chains, and interleaved the CRC's runs while the MD5 waits on its own.
+    fn hash(&mut self, block: usize, frame: &[u8]) -> u16 {
+        if self.info.md5 == [0; 16] {
+            return crc16(frame);
+        }
+        let width = usize::from(self.info.bits_per_sample).div_ceil(8);
+        match width {
+            1 => pack::<1>(&self.planes, block, &mut self.md5_bytes),
+            2 => pack::<2>(&self.planes, block, &mut self.md5_bytes),
+            3 => pack::<3>(&self.planes, block, &mut self.md5_bytes),
+            _ => pack::<4>(&self.planes, block, &mut self.md5_bytes),
+        }
+        let (mut crc, mut done) = (0, 0);
+        self.md5.update_interleaved(&self.md5_bytes, |blocks_left| {
+            let rest = &frame[done..];
+            // An even share of what is left, in whole steps of the CRC.
+            let step = rest
+                .len()
+                .div_ceil(blocks_left + 1)
+                .next_multiple_of(16)
+                .min(rest.len());
+            crc = crc16_update(crc, &rest[..step]);
+            done += step;
+        });
+        crc16_update(crc, &frame[done..])
+    }
+}
+
+/// What decoding one frame needs beside its bytes and its output: the stream's parameters and,
+/// for a 32-bit stream, wide work buffers. Nothing in it carries over from one frame to the
+/// next, so frames can be decoded by any number of these in any order.
+pub(crate) struct FrameDecoder {
+    info: StreamInfoBlock,
+    /// The stream is too deep for `i32` subframes (see `work`).
+    wide: bool,
+    /// Work buffers for 32-bit streams only, whose side channel needs 33 bits; every other
+    /// stream decodes straight into the planes.
+    work: Vec<Vec<i64>>,
+}
+
+impl FrameDecoder {
+    pub(crate) fn new(info: &StreamInfoBlock) -> Self {
+        Self {
+            info: *info,
+            wide: info.bits_per_sample > 31,
+            work: vec![Vec::new(); usize::from(info.channels)],
+        }
+    }
+
     fn check_parameters(&self, h: &FrameHeader) -> Result<()> {
         let unsupported = |what: &str, was: u32, now: u32| {
             Error::Unsupported(format!(
@@ -147,9 +207,11 @@ impl Decoder {
         Ok(())
     }
 
-    /// The frame CRC-16 is computed last, alongside the MD5 (see `hash`), but it still decides:
-    /// a frame whose CRC fails reports that, whatever else is wrong with it.
-    fn decode(&mut self, data: &[u8]) -> Result<()> {
+    /// Everything in a frame but the CRC-16 over the whole of it, which the caller checks
+    /// (with the MD5 when it can): the header, the stream's parameters, the subframes and the
+    /// decorrelation, into `planes`. Returns the block size. Every error but the CRC's is
+    /// reported here, and one the CRC would explain is reported as a CRC mismatch.
+    fn decode(&mut self, data: &[u8], planes: &mut [Vec<i32>]) -> Result<usize> {
         let h = frame::parse_header(data).map_err(|e| match e {
             HeaderError::NeedMoreData => malformed("frame header cut short"),
             HeaderError::Invalid(why) => malformed(why),
@@ -159,7 +221,7 @@ impl Decoder {
             return Err(crc_mismatch());
         }
         let block = h.block_size as usize;
-        let end = match self.subframes(&h, data) {
+        let end = match self.subframes(&h, data, planes) {
             Ok(end) => end,
             Err(_) if crc16(data) != 0 => return Err(crc_mismatch()),
             Err(e) => return Err(e),
@@ -178,21 +240,20 @@ impl Decoder {
         }
         if self.wide {
             self.decorrelate(h.channels);
-            self.narrow(block);
+            self.narrow(block, planes);
         } else {
-            decorrelate_i32(&mut self.planes, h.channels);
+            decorrelate_i32(planes, h.channels);
         }
-        if self.hash(block, data) != 0 {
-            return Err(crc_mismatch());
-        }
-        self.first = self.decoded;
-        self.decoded += block as u64;
-        self.block = block;
-        Ok(())
+        Ok(block)
     }
 
     /// Decodes every subframe; returns where they end in `data`.
-    fn subframes(&mut self, h: &FrameHeader, data: &[u8]) -> Result<usize> {
+    fn subframes(
+        &mut self,
+        h: &FrameHeader,
+        data: &[u8],
+        planes: &mut [Vec<i32>],
+    ) -> Result<usize> {
         let block = h.block_size as usize;
         let bps = u32::from(self.info.bits_per_sample);
         let mut r = Bits::new(&data[h.header_len..data.len() - 2]);
@@ -208,7 +269,7 @@ impl Decoder {
                 read_subframe(&mut r, out, block, side_channel(c))?;
             }
         } else {
-            for (c, out) in self.planes.iter_mut().enumerate() {
+            for (c, out) in planes.iter_mut().enumerate() {
                 read_subframe(&mut r, out, block, side_channel(c))?;
             }
         }
@@ -248,42 +309,12 @@ impl Decoder {
 
     /// Truncates the decorrelated channels to `i32`: exact for a valid stream, and the same
     /// low bits as before for a corrupt one that got past the CRC.
-    fn narrow(&mut self, block: usize) {
-        for (plane, work) in self.planes.iter_mut().zip(&self.work) {
+    fn narrow(&self, block: usize, planes: &mut [Vec<i32>]) {
+        for (plane, work) in planes.iter_mut().zip(&self.work) {
             plane.clear();
             plane.reserve(block);
             plane.extend(work.iter().map(|&v| v as i32));
         }
-    }
-
-    /// Hashes the raw samples as the format defines it: interleaved, little-endian, in the
-    /// smallest whole number of bytes the depth fits. Skipped when there is nothing to compare
-    /// the hash with. Returns the CRC-16 of `frame`, computed between the MD5's blocks: both are
-    /// serial chains, and interleaved the CRC's runs while the MD5 waits on its own.
-    fn hash(&mut self, block: usize, frame: &[u8]) -> u16 {
-        if self.info.md5 == [0; 16] {
-            return crc16(frame);
-        }
-        let width = usize::from(self.info.bits_per_sample).div_ceil(8);
-        match width {
-            1 => pack::<1>(&self.planes, block, &mut self.md5_bytes),
-            2 => pack::<2>(&self.planes, block, &mut self.md5_bytes),
-            3 => pack::<3>(&self.planes, block, &mut self.md5_bytes),
-            _ => pack::<4>(&self.planes, block, &mut self.md5_bytes),
-        }
-        let (mut crc, mut done) = (0, 0);
-        self.md5.update_interleaved(&self.md5_bytes, |blocks_left| {
-            let rest = &frame[done..];
-            // An even share of what is left, in whole steps of the CRC.
-            let step = rest
-                .len()
-                .div_ceil(blocks_left + 1)
-                .next_multiple_of(16)
-                .min(rest.len());
-            crc = crc16_update(crc, &rest[..step]);
-            done += step;
-        });
-        crc16_update(crc, &frame[done..])
     }
 }
 

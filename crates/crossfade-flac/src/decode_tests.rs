@@ -1009,7 +1009,7 @@ proptest! {
             coded.iter().map(|p| p.0 as i32).collect::<Vec<_>>(),
             coded.iter().map(|p| p.1 as i32).collect::<Vec<_>>(),
         ];
-        let mut d = Decoder::new(&stream(44_100, 2, 32)).unwrap();
+        let mut d = FrameDecoder::new(&stream(44_100, 2, 32));
         d.work = vec![
             coded.iter().map(|p| p.0).collect(),
             coded.iter().map(|p| p.1).collect(),
