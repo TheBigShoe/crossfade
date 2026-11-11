@@ -286,6 +286,78 @@ const SCENES: &[Scene] = &[
             );
         },
     },
+    Scene {
+        file: "23-convert-sheet-adjust-collapsed-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.convert();
+            stage.choose("sheet-rate", 1);
+            stage.adjust_normalize_and_fade();
+            stage.click("sheet-adjust");
+        },
+    },
+    Scene {
+        file: "24-convert-sheet-adjust-expanded-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.convert();
+            stage.choose("sheet-rate", 1);
+            stage.adjust_normalize_and_fade();
+            stage.type_into("sheet-trim-start", "0:10");
+            stage.type_into("sheet-trim-end", "1:30");
+        },
+    },
+    Scene {
+        file: "25-convert-sheet-adjust-problem-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.convert();
+            stage.click("sheet-adjust");
+            stage.type_into("sheet-trim-start", "1:30");
+            stage.type_into("sheet-trim-end", "0:10");
+        },
+    },
+    Scene {
+        file: "26-convert-sheet-adjust-narrow-light.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Light);
+            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.convert();
+            stage.choose("sheet-rate", 1);
+            stage.choose("sheet-channels", 1);
+            stage.adjust_normalize_and_fade();
+            stage.type_into("sheet-trim-start", "0:10");
+            stage.type_into("sheet-trim-end", "1:30");
+        },
+    },
+    Scene {
+        file: "27-queue-clipped-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add(&[("interview-take-1.wav", 48_000, 2)]);
+            for out in ["take-1-louder.wav", "take-1-24bit.wav", "take-1-float.wav"] {
+                stage.enqueue(&["interview-take-1.wav", out, "s16"]);
+            }
+            stage.send(0, RunnerEvent::Clipped { samples: 12_340 });
+            stage.send(0, RunnerEvent::Finished { frames: 6_000_000 });
+            stage.send(1, RunnerEvent::Finished { frames: 6_000_000 });
+            stage.send(
+                2,
+                RunnerEvent::Progress {
+                    frames_done: 21_000_000,
+                    frames_total: Some(50_000_000),
+                },
+            );
+        },
+    },
 ];
 
 /// A scratch directory for generated inputs, removed when the scene ends.
@@ -556,6 +628,29 @@ impl Stage {
         self.cx
             .update_window(self.window, |_, window, cx| window.render_frame(cx))
             .map_err(|error| format!("the window is gone: {error:#}"))
+    }
+}
+
+impl Stage {
+    /// Replace what a field of the open sheet holds: focus it, select all, type.
+    fn type_into(&mut self, id: &'static str, text: &str) {
+        self.draw().expect("draw");
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                window.click(id, cx);
+                window.press("secondary-a", cx);
+                window.input(text, cx);
+            })
+            .expect("the window is open");
+        self.cx.run_until_parked();
+    }
+
+    /// Open Adjust and set Normalize -16 LUFS and a 3 s fade out.
+    fn adjust_normalize_and_fade(&mut self) {
+        self.click("sheet-adjust");
+        self.click("sheet-level-normalize");
+        self.type_into("sheet-level-value", "-16");
+        self.type_into("sheet-fade-out", "3");
     }
 }
 
