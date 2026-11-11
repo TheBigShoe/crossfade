@@ -100,6 +100,19 @@
 //!   conversions) in an order fixed in the source: no `sin`, `cos`, `exp`, `ln`, `powf` or
 //!   fused multiply-add, whose results differ between platforms' maths libraries. The same
 //!   input and configuration give the same bytes everywhere.
+//! - **Fast in any release profile.** The hot loops rely on the compiler's auto-vectorisation
+//!   (the crate has no `unsafe`, so no hand-written SIMD): the lagged sums of the integer
+//!   autocorrelation and covariance (`lpc::four_lags`), the order-specialised LPC residual
+//!   kernels (`lpc::kernel`), and the fixed-order residuals and estimate sums
+//!   (`fixed::residual`, `fixed::abs_sums_narrow`) are each a function of its own marked
+//!   `#[inline(never)]`, looping over zipped, windowed or chunked slices with no indexing
+//!   inside, so the loop the compiler sees, and whether a bounds check survives in it, does
+//!   not depend on what it is inlined into. (The Rice search's masked sums are plain folds over
+//!   one slice, which need no such care.) One codegen unit or LTO changes inlining: the lagged
+//!   sums once compiled to a scalar loop there, and levels 5 to 8 ran up to twice as slow.
+//!   Checked by building with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` and with thin and fat
+//!   LTO, and comparing the disassembly of those functions (`smlal`/`mla.4s` present) and the
+//!   encode times.
 //! - **No panics, bounded memory.** One block of working memory, allocated in
 //!   [`Encoder::new`] and reused; steady state allocates nothing but what the caller's `out`
 //!   needs. Arithmetic on sample data is either checked against the limits or wraps where the
