@@ -117,8 +117,10 @@ mod tests {
     use SampleFormat::*;
 
     /// The budget goes whole to the one threaded codec. When both are (FLAC to FLAC) the
-    /// decoder, far the cheaper, gets a quarter and the encoder the rest; the calling thread
-    /// works for both, so together they take no more threads than the budget.
+    /// decoder, far the cheaper, gets a quarter but at least two (one thread more than the
+    /// caller, so that its MD5 leaves the calling thread: on one, the decoder alone held a
+    /// re-encode at 52 ms against 22 ms with two), and the encoder the rest; the calling
+    /// thread works for both, so together they take no more threads than the budget.
     #[test]
     fn a_budget_is_shared_between_a_threaded_decoder_and_encoder() {
         assert_eq!(share_threads(7, false, true), (1, 7));
@@ -126,7 +128,8 @@ mod tests {
         assert_eq!(share_threads(7, false, false), (1, 1));
         assert_eq!(share_threads(1, true, true), (1, 1));
         assert_eq!(share_threads(2, true, true), (1, 2));
-        assert_eq!(share_threads(7, true, true), (1, 7));
+        assert_eq!(share_threads(3, true, true), (2, 2));
+        assert_eq!(share_threads(7, true, true), (2, 6));
         assert_eq!(share_threads(8, true, true), (2, 7));
         assert_eq!(share_threads(64, true, true), (16, 49));
         for budget in 1..40 {
