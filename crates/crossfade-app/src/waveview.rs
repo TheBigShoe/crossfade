@@ -344,9 +344,17 @@ fn db_text(value: f64) -> String {
     }
 }
 
+/// The engine's error text without its leading category (`unsupported: `, `i/o error: `).
+fn specific(reason: &str) -> &str {
+    ["unsupported: ", "malformed input: ", "i/o error: "]
+        .iter()
+        .find_map(|prefix| reason.strip_prefix(prefix))
+        .unwrap_or(reason)
+}
+
 pub fn readout(snapshot: &Snapshot) -> Readout {
     match &snapshot.state {
-        State::Failed(reason) => Readout::plain(format!("Could not analyse: {reason}")),
+        State::Failed(reason) => Readout::plain(format!("Could not analyse: {}", specific(reason))),
         State::Cancelled => Readout::default(),
         State::Running => {
             let total = snapshot.stream.as_ref().and_then(|s| s.frames);
