@@ -644,6 +644,11 @@ impl Stage {
     /// Draw a few frames so layout settles, then read the window back and write it to
     /// `path` as a PNG.
     fn capture(&mut self, path: &Path) -> Result<(u32, u32), String> {
+        // A scene that shows a finished analysis must not race the worker; one that parked
+        // its worker on purpose is the picture.
+        if self.gates.is_empty() {
+            self.wait_analysis();
+        }
         for _ in 0..3 {
             self.draw()?;
             self.cx.run_until_parked();
