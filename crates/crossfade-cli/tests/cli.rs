@@ -98,6 +98,13 @@ fn convert_help_snapshot() {
 }
 
 #[test]
+fn concat_help_snapshot() {
+    let out = run(&["concat", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    insta::assert_snapshot!(text(&out.stdout));
+}
+
+#[test]
 fn convert_help_documents_the_codec_flags() {
     let help = text(&run(&["convert", "--help"]).stdout);
     for want in [
