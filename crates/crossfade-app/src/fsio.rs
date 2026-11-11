@@ -3,7 +3,7 @@
 use crossfade_core::{Error, JobIo, MediaSink, MediaSource};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::ErrorKind;
+use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -17,7 +17,7 @@ pub struct FsIo {
     temps: HashMap<String, PathBuf>,
 }
 
-fn io_error(path: &str, e: &std::io::Error) -> Error {
+fn io_error(path: &str, e: &io::Error) -> Error {
     Error::Io {
         kind: e.kind(),
         message: format!("{path}: {e}"),
@@ -47,10 +47,72 @@ impl FsIo {
     }
 }
 
+/// Readers ask for a packet at a time (16 KiB for CD audio); one system call
+/// per request costs more than the copy out of a larger buffer.
+const READ_BUFFER: usize = 256 * 1024;
+/// Writes go out in large blocks for the same reason.
+const WRITE_BUFFER: usize = 1024 * 1024;
+
+/// A buffered file whose kind is looked up once, not on every question.
+struct FileSource {
+    file: BufReader<File>,
+    byte_len: Option<u64>,
+}
+
+impl FileSource {
+    fn new(file: File) -> Self {
+        // Devices and pipes opened as `File` report no length and cannot seek.
+        let byte_len = file
+            .metadata()
+            .ok()
+            .filter(std::fs::Metadata::is_file)
+            .map(|m| m.len());
+        Self {
+            file: BufReader::with_capacity(READ_BUFFER, file),
+            byte_len,
+        }
+    }
+}
+
+impl MediaSource for FileSource {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.file.read(buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.file.seek(pos)
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        self.byte_len
+    }
+
+    fn is_seekable(&self) -> bool {
+        self.byte_len.is_some()
+    }
+}
+
+struct FileSink(BufWriter<File>);
+
+impl MediaSink for FileSink {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.0.write_all(buf)
+    }
+
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.0.seek(pos)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        self.0.flush()?;
+        self.0.get_ref().sync_all()
+    }
+}
+
 impl JobIo for FsIo {
     fn open_source(&mut self, path: &str) -> Result<Box<dyn MediaSource>, Error> {
         let file = File::open(path).map_err(|e| io_error(path, &e))?;
-        Ok(Box::new(file))
+        Ok(Box::new(FileSource::new(file)))
     }
 
     fn create_sink(&mut self, path: &str) -> Result<Box<dyn MediaSink>, Error> {
@@ -68,7 +130,7 @@ impl JobIo for FsIo {
             }
         };
         self.temps.insert(path.to_owned(), temp);
-        Ok(Box::new(file))
+        Ok(Box::new(FileSink(BufWriter::with_capacity(WRITE_BUFFER, file))))
     }
 
     fn commit(&mut self, path: &str) -> Result<(), Error> {
