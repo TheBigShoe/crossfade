@@ -123,22 +123,32 @@ fn zero_samples_and_finishing_twice_are_the_same_at_any_thread_count() {
 }
 
 /// `finish` without `flush` leaves out what was not written yet, frames in flight included, and
-/// the STREAMINFO describes exactly the frames that were.
+/// the STREAMINFO's total and frame sizes describe exactly the frames that were. The MD5 is
+/// taken as blocks go to the workers, so when frames in flight are dropped it is left unknown
+/// (zero) rather than wrong.
 #[test]
 fn finish_without_flush_describes_only_the_frames_written() {
     let samples = signal(7, 16, 4096 * 2 * 20, 2, 6);
-    let mut enc = Encoder::new(cfg(2, 16, 5, 4)).unwrap();
-    let (mut bytes, mut ends) = (Vec::new(), Vec::new());
-    enc.write_ends(&samples, &mut bytes, &mut ends).unwrap();
-    let info = enc.finish();
-    assert_eq!(info.total_samples, 4096 * ends.len() as u64);
-    let mut dec = Decoder::new(&info).unwrap();
-    let mut start = 0;
-    for &end in &ends {
-        dec.decode_frame(&bytes[start..end]).unwrap();
-        start = end;
+    for threads in [1, 4] {
+        let mut enc = Encoder::new(cfg(2, 16, 5, threads)).unwrap();
+        let (mut bytes, mut ends) = (Vec::new(), Vec::new());
+        enc.write_ends(&samples, &mut bytes, &mut ends).unwrap();
+        let dropped = enc.frames_in_flight() > 0;
+        let info = enc.finish();
+        assert_eq!(info.total_samples, 4096 * ends.len() as u64);
+        let mut dec = Decoder::new(&info).unwrap();
+        let mut start = 0;
+        for &end in &ends {
+            dec.decode_frame(&bytes[start..end]).unwrap();
+            start = end;
+        }
+        let want = if dropped {
+            Verification::NoMd5
+        } else {
+            Verification::Md5Matched
+        };
+        assert_eq!(dec.finish().unwrap(), want, "{threads} threads");
     }
-    assert_eq!(dec.finish().unwrap(), Verification::Md5Matched);
 }
 
 #[test]
