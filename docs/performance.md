@@ -191,6 +191,23 @@ passband flat within 0.00003 / 0.000004 / 0.00000005 dB, stopband at least
 139.0 / 141.0 / 141.0 dB with dithered 24-bit (one 24-bit quantisation alone
 allows 140.5 dB).
 
+## Analysis and the waveform in the app
+
+Same machine, release builds.
+
+- **Analysing a file** (decode, peak pyramid, loudness with range and true
+  peak) took 7.2 s for one hour of 48 kHz 16-bit stereo, about 500 times real
+  time, on one thread. One run.
+- **The waveform's data for one frame of drawing** (both lanes of a stereo
+  file, 1,700 columns) takes 20 to 28 microseconds on a one-hour file, whether
+  the view shows the whole hour or one sample per pixel: the cost follows the
+  width in pixels, never the length of the file. One hour of stereo holds
+  21.6 MB of peaks.
+
+Painting itself (GPUI drawing at most one shape per column) was judged from
+offscreen renders, not timed, and has not been tried on a trackpad with an
+hour-long file.
+
 ## Repeating it
 
 ```sh
