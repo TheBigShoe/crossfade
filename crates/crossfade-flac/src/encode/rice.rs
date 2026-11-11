@@ -293,17 +293,7 @@ pub(super) fn write(sink: &mut BitSink, plan: &RicePlan, u: &[u32], block: usize
         } else {
             let k = u32::from(plan.params[p]);
             sink.put(u64::from(k), pbits);
-            let mask = (1u32 << k) - 1;
-            for &v in part {
-                let q = v >> k;
-                let low = u64::from((1u32 << k) | (v & mask));
-                if q + 1 + k <= 32 {
-                    sink.put(low, q + 1 + k);
-                } else {
-                    sink.put_zeros(q);
-                    sink.put(low, k + 1);
-                }
-            }
+            sink.put_rice(part, k);
         }
     }
 }
