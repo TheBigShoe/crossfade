@@ -13,6 +13,8 @@ const NARROW_BITS: u32 = 27;
 /// Fills `out` with the folded residuals of the order-`order` predictor over `x`
 /// (`x.len() - order` of them). Returns false when a residual does not fit the format's
 /// 32-bit limit (it must not be `i32::MIN` either); `out` is then not meaningful.
+// Kept out of its callers: inlined into them under fat LTO it compiled slower.
+#[inline(never)]
 pub(super) fn residual<T: Sample>(x: &[T], order: usize, bps: u32, out: &mut Vec<u32>) -> bool {
     let n = x.len();
     out.clear();
