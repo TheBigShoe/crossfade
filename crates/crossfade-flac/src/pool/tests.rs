@@ -1,6 +1,5 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
 
 /// Work whose cost varies with the item, so workers finish out of order.
 fn churn(_: &mut (), x: u64) -> u64 {
@@ -116,7 +115,10 @@ fn every_worker_keeps_its_own_state() {
         assert_eq!(r.unwrap().0, total - 1);
     }
     assert_eq!(total, 200);
-    assert_eq!(made.load(Ordering::SeqCst), p.workers());
+    let workers = p.workers();
+    // Each worker builds its state on its own thread; joined, they all have.
+    drop(p);
+    assert_eq!(made.load(Ordering::SeqCst), workers);
 }
 
 fn picky(_: &mut (), x: u64) -> u64 {
@@ -155,8 +157,7 @@ fn a_panic_in_a_worker_comes_out_as_its_result() {
 fn dropping_a_full_unread_pool_joins_every_worker() {
     let alive = Arc::new(());
     let a = Arc::clone(&alive);
-    let mut p: Ordered<u64, u64, Arc<()>> =
-        Ordered::new(6, 3, move || Arc::clone(&a), |_, x| x);
+    let mut p: Ordered<u64, u64, Arc<()>> = Ordered::new(6, 3, move || Arc::clone(&a), |_, x| x);
     while !p.is_full() {
         p.submit(1);
     }
@@ -169,8 +170,8 @@ fn dropping_a_full_unread_pool_joins_every_worker() {
 #[test]
 fn a_closed_pool_runs_nothing_more_than_the_items_already_started() {
     struct Gate {
-        started: mpsc::Sender<()>,
-        open: Arc<Mutex<mpsc::Receiver<()>>>,
+        started: Sender<()>,
+        open: Arc<Mutex<Receiver<()>>>,
         runs: Arc<AtomicUsize>,
     }
     fn wait(g: &mut Gate, x: u64) -> u64 {
@@ -179,8 +180,8 @@ fn a_closed_pool_runs_nothing_more_than_the_items_already_started() {
         g.open.lock().unwrap().recv().unwrap();
         x
     }
-    let (started, on_start) = mpsc::channel();
-    let (opener, open) = mpsc::channel();
+    let (started, on_start) = channel();
+    let (opener, open) = channel();
     let open = Arc::new(Mutex::new(open));
     let runs = Arc::new(AtomicUsize::new(0));
     let (s, o, r) = (started.clone(), Arc::clone(&open), Arc::clone(&runs));
