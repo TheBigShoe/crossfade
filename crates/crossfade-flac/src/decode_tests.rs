@@ -1138,3 +1138,14 @@ fn a_long_stream_decodes_and_hashes_on_threads_of_its_own() {
     assert_eq!(dec.finish(), Ok(Verification::Md5Matched));
     assert_eq!(dec.workers(), 0, "finish joins every thread");
 }
+
+/// Decoding is several times cheaper than the MD5 that checks it: measured whole process on
+/// 8 performance and 2 efficiency cores, 2 or 3 threads reach the MD5 thread's pace, and more
+/// only add CPU time (and at level 0 a little wall time too).
+#[test]
+fn automatic_decoding_threads_stop_at_three() {
+    let (info, _) = encoded(1, 1152);
+    let dec = Decoder::with_threads(&info, Decoder::AUTO_THREADS).unwrap();
+    assert_eq!(dec.threads, crate::auto_thread_count().min(3));
+    assert_eq!(Decoder::MAX_AUTO_THREADS, 3);
+}
