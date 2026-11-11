@@ -453,3 +453,18 @@ fn auto_threads_leave_room_for_the_serial_stages() {
         assert_eq!(auto_threads(cores), threads, "{cores} cores");
     }
 }
+
+/// Two blocks, the second short, as a tenth of a second of 44.1 kHz audio at level 5: the
+/// flush codes the last block on the caller rather than start threads for it.
+#[test]
+fn a_stream_of_two_blocks_starts_no_thread() {
+    let mut enc = threaded(5, 8);
+    let mut out = Vec::new();
+    enc.write(&pseudo(16, (4096 + 314) * 2, 1), &mut out)
+        .unwrap();
+    enc.flush(&mut out).unwrap();
+    assert_eq!(enc.pool.as_ref().map_or(0, |p| p.workers()), 0);
+    assert!(enc.md5_stage.is_none());
+    let info = enc.finish();
+    assert_eq!(info.total_samples, 4096 + 314);
+}

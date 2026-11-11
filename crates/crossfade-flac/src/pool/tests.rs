@@ -301,3 +301,13 @@ fn a_worker_that_cannot_rebuild_its_state_still_reports_its_item() {
         }
     }
 }
+
+/// An item the caller is about to wait for (the end of a stream) is not worth a new thread.
+#[test]
+fn a_last_item_starts_no_worker() {
+    let mut p = pool(8, 2);
+    p.submit(1);
+    p.submit_last(2);
+    assert_eq!(p.workers(), 0);
+    assert_eq!(drive(&mut p, []), [3, 6]);
+}
