@@ -191,6 +191,13 @@ impl Decoder for FlacDecoder {
     fn drain(&mut self) {
         self.draining = true;
     }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        if self.failed {
+            return self.held.clone().map_or(Ok(()), Err);
+        }
+        self.collect(|inner, on_block| inner.flush(on_block))
+    }
 }
 
 #[cfg(test)]
