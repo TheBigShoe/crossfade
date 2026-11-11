@@ -293,7 +293,11 @@ impl Encoder {
         let bps = u32::from(self.config.bits_per_sample);
         if bps < 32 {
             let (lo, hi) = (-(1i32 << (bps - 1)), (1i32 << (bps - 1)) - 1);
-            if samples.iter().any(|&s| s < lo || s > hi) {
+            // A min/max fold vectorises; an early-exit `any` does not.
+            let (min, max) = samples
+                .iter()
+                .fold((i32::MAX, i32::MIN), |(a, b), &s| (a.min(s), b.max(s)));
+            if min < lo || max > hi {
                 return Err(malformed("sample outside the configured bit depth"));
             }
         }
