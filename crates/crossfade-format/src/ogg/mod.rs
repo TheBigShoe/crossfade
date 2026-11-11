@@ -115,11 +115,13 @@ pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Dem
             tags = flac::comment_tags(&held, limits)?;
         }
     };
-    let stream = crate::flac::stream_info(&header.block, &header.streaminfo)?;
+    let tags = tags.unwrap_or_default();
+    let mut stream = crate::flac::stream_info(&header.block, &header.streaminfo)?;
+    crate::flac::apply_channel_mask(&mut stream, &tags)?;
     Ok(Box::new(OggFlacDemuxer {
         packets,
         streams: [stream],
-        tags: tags.unwrap_or_default(),
+        tags,
         block_size: u32::from(header.block.min_block_size),
         held,
         has_held,
