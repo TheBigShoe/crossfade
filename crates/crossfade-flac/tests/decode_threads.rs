@@ -302,3 +302,30 @@ fn dropping_a_busy_decoder_returns() {
         drop(dec);
     }
 }
+
+/// A frame whose header is bad or changes the stream's parameters is refused by the call that
+/// pushes it, after every block before it, whatever the thread count: a container reader
+/// then stops at the same packet as with one thread.
+#[test]
+fn a_bad_header_is_refused_by_the_push_that_brings_it() {
+    let e = stream(16, 2, 0, 7, 1152 * 30, 0, 9);
+    let mono = stream(16, 1, 0, 7, 1152, 0, 10);
+    for k in [0, 5, 29] {
+        let mut frames = frames_of(&e);
+        frames[k] = frames_of(&mono)[0].clone();
+        let mut cut = frames_of(&e);
+        cut[k].truncate(3);
+        for broken in [frames, cut] {
+            for threads in [1, 2, 3, 8] {
+                let mut dec = Decoder::with_threads(&e.info, threads).unwrap();
+                let mut n = 0;
+                for f in &broken[..k] {
+                    dec.push_frame(f, &mut |_| n += 1).unwrap();
+                }
+                let r = dec.push_frame(&broken[k], &mut |_| n += 1);
+                assert!(r.is_err(), "frame {k}, {threads} threads");
+                assert_eq!(n, k, "frame {k}, {threads} threads");
+            }
+        }
+    }
+}
