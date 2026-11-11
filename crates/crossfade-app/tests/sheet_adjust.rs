@@ -234,10 +234,7 @@ fn filters_are_listed_in_the_order_the_shortcut_flags_give() {
     s.set_adjust_text(AdjustField::Level, "-3".into());
     s.set_adjust_text(AdjustField::FadeOut, "3".into());
     s.set_adjust_text(AdjustField::Start, "1".into());
-    assert_eq!(
-        filters(&s),
-        ["trim start=1s", "fade out=3s", "gain -3dB"]
-    );
+    assert_eq!(filters(&s), ["trim start=1s", "fade out=3s", "gain -3dB"]);
 }
 
 #[test]
@@ -272,7 +269,10 @@ fn a_value_the_engine_refuses_blocks_the_sheet_with_the_engines_reason() {
     s.set_adjust_text(AdjustField::Start, "30".into());
     s.set_adjust_text(AdjustField::End, "10".into());
     let message = s.adjust_problem(AdjustRow::Trim).unwrap();
-    assert!(message.to_lowercase().contains("end must be after start"), "{message}");
+    assert!(
+        message.to_lowercase().contains("end must be after start"),
+        "{message}"
+    );
     assert!(s.build(&nothing_exists).is_err());
     assert_eq!(s.adjust_problem(AdjustRow::Fade), None);
     // Mending it clears the problem.
@@ -299,7 +299,10 @@ fn the_summary_says_what_is_set_in_one_muted_line() {
     let mut s = sheet();
     s.set_level_mode(LevelMode::Normalize);
     s.set_adjust_text(AdjustField::Level, "-16 LUFS".into());
-    assert_eq!(s.adjust_summary().as_deref(), Some("Normalize \u{2212}16 LUFS"));
+    assert_eq!(
+        s.adjust_summary().as_deref(),
+        Some("Normalize \u{2212}16 LUFS")
+    );
     s.set_adjust_text(AdjustField::Start, "10".into());
     s.set_adjust_text(AdjustField::End, "1:30".into());
     s.set_adjust_text(AdjustField::FadeOut, "3".into());
@@ -313,9 +316,7 @@ fn the_summary_says_what_is_set_in_one_muted_line() {
     s.set_adjust_text(AdjustField::FadeIn, "0.5".into());
     assert_eq!(
         s.adjust_summary().as_deref(),
-        Some(
-            "Gain \u{2212}3 dB \u{b7} Trim to 1:30 \u{b7} Fade in 0.5 s, out 3 s"
-        )
+        Some("Gain \u{2212}3 dB \u{b7} Trim to 1:30 \u{b7} Fade in 0.5 s, out 3 s")
     );
     // A value that does not parse is flagged under its row, not summarised.
     s.set_adjust_text(AdjustField::FadeIn, "x".into());
@@ -386,7 +387,7 @@ fn presets_keep_what_adjust_holds_and_the_preset_row_ignores_it() {
     assert_eq!(s.sample_rate(), Some(44_100));
     assert_eq!(s.preset().unwrap().id, "cd");
     // What a preset fixed, changed: Custom, as before.
-    s.set_format(FormatChoice::SameAsSource);
+    s.set_format(FormatChoice::Format(SampleFormat::F64));
     assert!(s.preset().is_none());
     s.apply_preset("flac");
     assert_eq!(filters(&s), ["fade out=3s"]);
