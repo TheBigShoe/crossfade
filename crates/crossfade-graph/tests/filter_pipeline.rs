@@ -237,25 +237,22 @@ fn asking_for_the_rate_and_layout_the_input_has_changes_no_byte() {
 
 #[test]
 fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
-    for (audio, name) in [(
-        AudioSettings {
-            sample_rate: Some(48000),
-            ..AudioSettings::default()
-        },
-        "resample",
-    )] {
-        let mut io = MemoryIo::new();
-        io.insert("in.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));
-        let err = convert(&mut io, &job_with("in.wav", "out.flac", audio), 1).unwrap_err();
-        assert_eq!(
-            err,
-            Error::Unsupported {
-                what: format!("the {name} filter is not built yet")
-            }
-        );
-        assert_eq!(io.get("out.flac"), None);
-        assert!(!io.has_pending());
-    }
+    // Only rate conversion is still to come.
+    let audio = AudioSettings {
+        sample_rate: Some(48000),
+        ..AudioSettings::default()
+    };
+    let mut io = MemoryIo::new();
+    io.insert("in.wav", s16_wav(ChannelLayout::stereo(), &ramp(100)));
+    let err = convert(&mut io, &job_with("in.wav", "out.flac", audio), 1).unwrap_err();
+    assert_eq!(
+        err,
+        Error::Unsupported {
+            what: "the resample filter is not built yet".into()
+        }
+    );
+    assert_eq!(io.get("out.flac"), None);
+    assert!(!io.has_pending());
 }
 
 #[test]
