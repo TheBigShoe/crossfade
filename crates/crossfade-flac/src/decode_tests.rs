@@ -1065,3 +1065,70 @@ proptest! {
         prop_assert_eq!(bytes, slow);
     }
 }
+
+/// `frames` frames of `block` samples of a 16-bit stereo ramp, and its STREAMINFO.
+fn encoded(frames: usize, block: usize) -> (StreamInfoBlock, Vec<Vec<u8>>) {
+    let mut enc = crate::Encoder::new(crate::EncoderConfig::new(44_100, 2, 16)).unwrap();
+    let samples: Vec<i32> = (0..frames * block * 2)
+        .map(|i| (i as i32 * 37) % 20_000 - 10_000)
+        .collect();
+    let mut out = Vec::new();
+    for chunk in samples.chunks(block * 2) {
+        let mut f = Vec::new();
+        enc.encode_block(chunk, &mut f).unwrap();
+        out.push(f);
+    }
+    (enc.finish(), out)
+}
+
+#[test]
+fn a_panic_in_a_decoding_worker_is_an_error_from_then_on() {
+    let (info, frames) = encoded(20, 1024);
+    for threads in [2, 4] {
+        let mut dec = Decoder::with_threads(&info, threads).unwrap();
+        dec.panic_at = Some(5);
+        let mut firsts = Vec::new();
+        let mut result = Ok(());
+        for f in &frames {
+            result = dec.push_frame(f, &mut |b| firsts.push(b.first_sample()));
+            if result.is_err() {
+                break;
+            }
+        }
+        let result = result.and_then(|()| dec.flush(&mut |b| firsts.push(b.first_sample())));
+        let Err(Error::Internal(what)) = &result else {
+            panic!("{threads} threads: {result:?}")
+        };
+        assert!(what.contains("frame 5"), "{what}");
+        assert_eq!(firsts, (0..5).map(|i| i * 1024).collect::<Vec<u64>>());
+        assert_eq!(dec.flush(&mut |_| panic!("no block")), result);
+        assert_eq!(dec.finish(), Ok(Verification::Skipped));
+    }
+}
+
+#[test]
+fn one_thread_or_a_short_stream_starts_no_thread() {
+    let (info, frames) = encoded(2, 4096);
+    for threads in [1, 8] {
+        let mut dec = Decoder::with_threads(&info, threads).unwrap();
+        for f in &frames {
+            dec.push_frame(f, &mut |_| {}).unwrap();
+        }
+        dec.flush(&mut |_| {}).unwrap();
+        assert_eq!(dec.workers(), 0, "{threads} threads");
+        assert_eq!(dec.finish(), Ok(Verification::Md5Matched));
+    }
+}
+
+#[test]
+fn a_long_stream_decodes_and_hashes_on_threads_of_its_own() {
+    let (info, frames) = encoded(40, 1024);
+    let mut dec = Decoder::with_threads(&info, 4).unwrap();
+    for f in &frames {
+        dec.push_frame(f, &mut |_| {}).unwrap();
+    }
+    assert!(dec.workers() >= 2, "a decoding worker and the MD5 thread");
+    dec.flush(&mut |_| {}).unwrap();
+    assert_eq!(dec.finish(), Ok(Verification::Md5Matched));
+    assert_eq!(dec.workers(), 0, "finish joins every thread");
+}
