@@ -34,5 +34,9 @@
 
   // Ask before quitting (or closing the window) while conversions are running or
   // waiting. false cancels them and quits without asking.
-  "confirm_quit": true
+  "confirm_quit": true,
+
+  // Analyse a file (waveform and loudness) as soon as it is selected. false shows an
+  // Analyse button in the inspector instead.
+  "analyze_on_select": true
 }
