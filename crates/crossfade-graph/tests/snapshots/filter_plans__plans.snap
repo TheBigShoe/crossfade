@@ -88,7 +88,7 @@ job:      {"filters":[{"filter":"trim","start_seconds":10.0,"end_seconds":60.0}]
 chain:    1. trim frames 441000..2646000
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 2205000 frames flac
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### trim by duration in milliseconds
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -97,7 +97,7 @@ job:      {"filters":[{"filter":"trim","start_seconds":1.5,"duration_seconds":0.
 chain:    1. trim frames 66150..77175
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 11025 frames flac
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### trim past the end leaves nothing
 input:    44100 Hz stereo s16 (full width), 44100 frames
@@ -106,7 +106,7 @@ job:      {"filters":[{"filter":"trim","start_seconds":2.0}]}
 chain:    1. trim frames 88200..end
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 0 frames flac
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### trim end on an input of unknown length
 input:    48000 Hz stereo s16 (full width), length unknown
@@ -115,7 +115,7 @@ job:      {"filters":[{"filter":"trim","end_seconds":30.0}]}
 chain:    1. trim frames 0..1440000
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), length unknown flac
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### trim to a sample-accurate frame
 input:    48000 Hz stereo s16 (full width), 480000 frames
@@ -124,7 +124,7 @@ job:      {"filters":[{"filter":"trim","start_seconds":0.0000208,"end_seconds":3
 chain:    1. trim frames 1..172800000
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 479999 frames pcm_s16le
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### fade in and out
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -133,7 +133,7 @@ job:      {"filters":[{"filter":"fade","in_seconds":2.0,"out_seconds":3.0,"curve
 chain:    1. fade in 88200 frames, out 132300 frames, equal-power
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 441000 frames flac
-validate: unsupported: the fade filter is not built yet
+validate: ok
 
 ### fade after trim counts at the trimmed stream
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -143,7 +143,7 @@ chain:    1. trim frames 220500..end
           2. fade in 0 frames, out 22050 frames, s-curve
 dither:   tpdf
 output:   44100 Hz stereo s16 (full width), 220500 frames flac
-validate: unsupported: the trim filter is not built yet
+validate: ok
 
 ### normalize
 input:    44100 Hz stereo s16 (full width), 441000 frames
@@ -302,7 +302,7 @@ chain:    1. trim frames 2880000..14400000
           5. resample to 48000 Hz (good)
 dither:   tpdf
 output:   48000 Hz stereo s16 (full width), 5760000 frames flac
-validate: unsupported: the trim filter is not built yet
+validate: unsupported: the mix filter is not built yet
 
 ### copy with a filter
 input:    44100 Hz stereo s16 (full width), 1000 frames
@@ -383,7 +383,7 @@ input 2:  48000 Hz mono s24 (full width), 48000 frames
 args:     -o o.flac --filter "fade out=2s"
 job:      {"filters":[{"filter":"fade","out_seconds":2.0}]}
 output:   44100 Hz stereo s16 (full width), 485100 frames flac
-validate: unsupported: the fade filter is not built yet
+validate: unsupported: joining 2 inputs (crossfade concat) is not built yet
 
 ### concat conforms to the output settings
 input 1:  44100 Hz stereo s16 (full width), 441000 frames
