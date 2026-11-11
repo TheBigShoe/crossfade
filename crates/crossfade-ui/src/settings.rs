@@ -73,6 +73,8 @@ pub struct Settings {
     pub ui_font_family: Option<String>,
     pub ui_font_size: f32,
     pub convert: ConvertDefaults,
+    /// Ask before quitting discards running or waiting conversions.
+    pub confirm_quit: bool,
 }
 
 impl Default for Settings {
@@ -86,6 +88,7 @@ impl Default for Settings {
             ui_font_family: None,
             ui_font_size: DEFAULT_UI_FONT_SIZE,
             convert: ConvertDefaults::default(),
+            confirm_quit: true,
         }
     }
 }
