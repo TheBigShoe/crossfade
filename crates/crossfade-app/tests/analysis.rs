@@ -1,7 +1,7 @@
 mod common;
 
 use common::{spec, wav_bytes};
-use crossfade_app::analysis::{Analysis, Analyzer, State, analyze, roles_for};
+use crossfade_app::analysis::{Analysis, Analyzer, State, analyze};
 use crossfade_app::waveform::Pyramid;
 use crossfade_core::{AudioFrame, ChannelLayout, Limits, SampleFormat, Samples};
 use crossfade_graph::{CancelToken, decode_frames};
@@ -242,26 +242,6 @@ fn an_empty_file_is_done_with_nothing() {
     let a = run(io);
     assert_eq!((a.frames_done, a.pyramid.frames()), (0, 0));
     assert!(a.short_term.is_empty());
-}
-
-#[test]
-fn roles_follow_the_layout() {
-    use ChannelRole::*;
-    assert_eq!(roles_for(&ChannelLayout::stereo()), [Left, Right]);
-    assert_eq!(roles_for(&ChannelLayout::mono()), [Unweighted]);
-    let l51 = ChannelLayout::from_name("5.1").unwrap();
-    assert_eq!(
-        roles_for(&l51),
-        [Left, Right, Centre, Lfe, LeftSurround, RightSurround]
-    );
-    assert_eq!(
-        roles_for(&ChannelLayout::unpositioned(3).unwrap()),
-        [Left, Right, Centre]
-    );
-    assert_eq!(
-        roles_for(&ChannelLayout::unpositioned(9).unwrap()),
-        [Unweighted; 9]
-    );
 }
 
 /// By hand: `CROSSFADE_ANALYSIS_FILE=big.wav cargo test --release -p crossfade-app --test

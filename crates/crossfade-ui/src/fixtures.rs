@@ -143,3 +143,53 @@ pub fn ogg_vorbis() -> Vec<u8> {
     out[22..26].copy_from_slice(&crc.to_le_bytes());
     out
 }
+
+/// A 16-bit stereo WAV that looks like programme material under a waveform: phrases that
+/// swell and fade, a pause between them, a low hum under everything and a sharp transient on
+/// each beat. The right channel is a little quieter and shifted, so the lanes differ.
+pub fn programme_wav(rate: u32, seconds: u32) -> Vec<u8> {
+    let frames = rate * seconds;
+    let mut noise = 0x2545_f491_4f6c_dd1du64;
+    let mut v = Vec::new();
+    let data_len = frames * 4;
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_len).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&2u16.to_le_bytes());
+    v.extend_from_slice(&rate.to_le_bytes());
+    v.extend_from_slice(&(rate * 4).to_le_bytes());
+    v.extend_from_slice(&4u16.to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_len.to_le_bytes());
+    let tau = std::f64::consts::TAU;
+    for i in 0..frames {
+        let t = f64::from(i) / f64::from(rate);
+        // Phrases about 1.6 s long with a breath between them.
+        let phrase = (t / 1.6).fract();
+        let swell = (phrase * std::f64::consts::PI).sin().powf(1.5);
+        let wander = 0.65 + 0.35 * (tau * 0.23 * t).sin();
+        let envelope = swell * wander;
+        // Beats every 0.4 s, each a short decaying burst.
+        let since_beat = (t / 0.4).fract() * 0.4;
+        let beat = (-since_beat * 38.0).exp() * if t > 0.3 { 0.8 } else { 0.0 };
+        noise ^= noise << 13;
+        noise ^= noise >> 7;
+        noise ^= noise << 17;
+        let hiss = (noise >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+        let pitch = 150.0 + 40.0 * (tau * 0.5 * t).sin();
+        let voiced = (tau * pitch * t).sin() * 0.55
+            + (tau * pitch * 2.0 * t).sin() * 0.25
+            + (tau * pitch * 3.0 * t).sin() * 0.12;
+        let hum = (tau * 55.0 * t).sin() * 0.03;
+        let left = envelope * (voiced * 0.62 + hiss * 0.08) + beat * hiss * 0.9 + hum;
+        let right = envelope * (voiced * 0.5 + hiss * 0.1) * 0.9 + beat * hiss * 0.7 + hum;
+        for x in [left, right] {
+            let q = (x.clamp(-1.0, 1.0) * 0.62 * 32767.0) as i16;
+            v.extend_from_slice(&q.to_le_bytes());
+        }
+    }
+    v
+}

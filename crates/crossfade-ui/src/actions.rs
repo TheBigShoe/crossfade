@@ -11,7 +11,12 @@ actions!(
         OpenSettings,
         OpenKeymap,
         Quit,
-        About
+        About,
+        WaveformZoomIn,
+        WaveformZoomOut,
+        WaveformFit,
+        WaveformPanLeft,
+        WaveformPanRight
     ]
 );
 
@@ -30,3 +35,6 @@ pub enum AppAction {
 /// The key context of the main window's root view; bindings that only make sense there
 /// are scoped to it.
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
+
+/// The key context of a focused waveform strip.
+pub const WAVEFORM_CONTEXT: &str = "Waveform";

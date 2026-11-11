@@ -75,6 +75,8 @@ pub struct Settings {
     pub convert: ConvertDefaults,
     /// Ask before quitting discards running or waiting conversions.
     pub confirm_quit: bool,
+    /// Analyse a file for its waveform and loudness as soon as it is selected.
+    pub analyze_on_select: bool,
 }
 
 impl Default for Settings {
@@ -89,6 +91,7 @@ impl Default for Settings {
             ui_font_size: DEFAULT_UI_FONT_SIZE,
             convert: ConvertDefaults::default(),
             confirm_quit: true,
+            analyze_on_select: true,
         }
     }
 }

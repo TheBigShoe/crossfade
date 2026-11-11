@@ -260,8 +260,7 @@ impl Workspace {
                                         .group_hover(group, |style| style.visible())
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
-                                                this.inputs.remove(id);
-                                                cx.notify();
+                                                this.remove_input(id, cx);
                                             }),
                                         ),
                                     ),
@@ -278,10 +277,7 @@ impl Workspace {
                                     .child(SharedString::from(summary(entry))),
                             ),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.inputs.select(id);
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_input(id, cx)))
             })
             .collect::<Vec<_>>();
         v_flex()
@@ -319,6 +315,7 @@ impl Workspace {
         };
         let (dir, name) = split_path(&entry.path);
         let streams = entry.document().map_or(0, |doc| doc.streams.len());
+        let has_audio = matches!(entry.state, InputState::Probed(_, Some(_)));
         let body =
             match &entry.state {
                 InputState::Failed(error) => h_flex()
@@ -428,6 +425,7 @@ impl Workspace {
                             ),
                     ),
             )
+            .children(has_audio.then(|| self.strip().clone()))
             .child(body)
             .into_any_element()
     }

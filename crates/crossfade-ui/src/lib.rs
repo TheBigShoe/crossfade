@@ -14,6 +14,7 @@ mod quit_confirm;
 pub mod scripted;
 pub mod settings;
 pub mod theme_bridge;
+pub mod waveform_view;
 pub mod workspace;
 
 #[cfg(test)]
@@ -40,6 +41,8 @@ mod sheet_tests;
 mod test_support;
 #[cfg(test)]
 mod theme_bridge_tests;
+#[cfg(test)]
+mod waveform_tests;
 #[cfg(test)]
 mod wiring_tests;
 #[cfg(test)]
@@ -68,6 +71,9 @@ pub mod prelude {
     // which the dev-dependency turns on.
     #[cfg(test)]
     pub use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+    // Lets a test hand a raw event (a pinch, a scroll with modifiers) to a window; renamed
+    // because the input component already owns `InputEvent`.
+    pub use gpui_kit::InputEvent as RawInputEvent;
 
     // GPUI exports its `test` attribute unconditionally, and a glob import outranks the
     // language prelude, so `use crate::prelude::*` would silently turn every `#[test]`
