@@ -139,3 +139,9 @@ fn convert_requires_an_output() {
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("--output"));
 }
+
+#[test]
+fn fade_out_help_states_its_limit() {
+    let help = text(&run(&["convert", "--help"]).stdout);
+    assert!(help.contains("--fade-out <TIME>    Fade out to silence over this long, ending at the end (at most 10 minutes)"), "{help}");
+}
