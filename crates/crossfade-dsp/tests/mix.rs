@@ -335,3 +335,44 @@ fn a_frame_that_is_not_f64_is_refused() {
     };
     assert!(m.send_frame(&wrong).is_err());
 }
+
+#[test]
+fn unlabelled_channels_take_flacs_default_layout_for_a_standard_downmix() {
+    use crossfade_dsp::filters::mix::assumption;
+    let six = ChannelLayout::unpositioned(6).unwrap();
+    let input = spec(six.clone());
+    let mut m = Mix::new(&input, &plan("stereo")).unwrap();
+    let mut labelled = mix("5.1", "stereo");
+    let x: Vec<f64> = (0..6 * 7).map(|i| f64::from(i) / 64.0).collect();
+    assert_eq!(
+        f64s(&run(&mut m, &input, &[(0, x.clone())])),
+        f64s(&run(&mut labelled, &spec(layout("5.1")), &[(0, x)]))
+    );
+    assert_eq!(
+        assumption(&six, &layout("stereo")).as_deref(),
+        Some("treating 6 unlabelled channels as 5.1")
+    );
+    let three = ChannelLayout::unpositioned(3).unwrap();
+    assert!(Mix::new(&spec(three.clone()), &plan("mono")).is_ok());
+    assert_eq!(
+        assumption(&three, &layout("mono")).as_deref(),
+        Some("treating 3 unlabelled channels as 3.0")
+    );
+    // Same count: a relabel, no assumption needed.
+    assert_eq!(assumption(&six, &layout("5.1")), None);
+    // No default for nine channels: refused, with the matrix hint.
+    let nine = ChannelLayout::unpositioned(9).unwrap();
+    assert!(refusal(nine.clone(), "stereo").contains("matrix="));
+    assert_eq!(assumption(&nine, &layout("stereo")), None);
+    // Mixing up to an unpositioned count stays refused.
+    let up = MixPlan {
+        layout: ChannelLayout::unpositioned(3).unwrap(),
+        matrix: None,
+    };
+    assert!(Mix::new(&spec(layout("stereo")), &up).is_err());
+    // A refusal still names the input as it is, not the assumed layout.
+    assert_eq!(
+        refusal(ChannelLayout::unpositioned(4).unwrap(), "5.1"),
+        "unsupported: no standard mix from 4 channels to 5.1; give one with mix ... matrix=..."
+    );
+}

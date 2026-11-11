@@ -392,3 +392,38 @@ fn concat_conforms_a_second_rate_to_the_first() {
     assert!(probe.contains("\"sample_rate\": 8000"), "{probe}");
     assert!(probe.contains("\"frames\": 16000"), "{probe}");
 }
+
+#[test]
+fn unlabelled_channels_mixed_down_get_a_note() {
+    let d = Dir::new("six");
+    let data = 6 * 2 * 100u32;
+    let mut v = Vec::new();
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&6u16.to_le_bytes());
+    v.extend_from_slice(&8000u32.to_le_bytes());
+    v.extend_from_slice(&(8000u32 * 12).to_le_bytes());
+    v.extend_from_slice(&12u16.to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data.to_le_bytes());
+    v.resize(v.len() + data as usize, 1);
+    let input = d.path("six.wav");
+    std::fs::write(&input, v).unwrap();
+    let o = crossfade(&[
+        "convert",
+        &input,
+        "-o",
+        &d.path("two.wav"),
+        "--channels",
+        "stereo",
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(
+        text(&o.stderr),
+        "crossfade: note: treating 6 unlabelled channels as 5.1\n"
+    );
+}

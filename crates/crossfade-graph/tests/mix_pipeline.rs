@@ -147,3 +147,78 @@ fn the_stereo_wav_has_the_mixed_samples_and_no_dither_off_by_more_than_one_lsb()
         assert!((f64::from(got[2 * n + 1]) - rr).abs() <= 1.0, "{n}");
     }
 }
+
+/// A plain (not extensible) six-channel WAV: readers call it unpositioned.
+fn plain_six_channel_wav() -> Vec<u8> {
+    let s = common::spec(
+        RATE,
+        crossfade_core::SampleFormat::S16,
+        ChannelLayout::unpositioned(6).unwrap(),
+    );
+    let pcm: Vec<u8> = (0..6 * 500i32)
+        .flat_map(|i| (((i * 37) % 20000 - 10000) as i16).to_le_bytes())
+        .collect();
+    common::wav_bytes(&s, &pcm)
+}
+
+#[test]
+fn unlabelled_six_channels_mix_down_as_5_1_and_the_plan_says_so() {
+    let mut io = MemoryIo::new();
+    io.insert("plain.wav", plain_six_channel_wav());
+    io.insert("labelled.wav", six_channel_wav());
+    let stream = &crossfade_graph::probe("plain.wav", &mut io, &Limits::default())
+        .unwrap()
+        .streams[0];
+    assert_eq!(
+        stream.audio.layout().positions(),
+        None,
+        "readers report what they read"
+    );
+    let stereo = AudioSettings {
+        channels: Some(parse_channels("stereo").unwrap()),
+        dither: Dither::None,
+        ..AudioSettings::default()
+    };
+    let note = "treating 6 unlabelled channels as 5.1";
+    for plan in [
+        crossfade_graph::describe(stream, "o.wav", &stereo).unwrap(),
+        crossfade_graph::validate(stream, "o.wav", &stereo).unwrap(),
+    ] {
+        assert_eq!(plan.notes, [note]);
+        assert_eq!(plan.output.audio.layout(), &ChannelLayout::stereo());
+    }
+    let mut events = Vec::new();
+    for input in ["plain.wav", "labelled.wav"] {
+        let job = Job {
+            version: Job::VERSION,
+            inputs: vec![JobInput { path: input.into() }],
+            outputs: vec![JobOutput {
+                path: format!("{input}.out.wav"),
+                audio: stereo.clone(),
+            }],
+        };
+        run(
+            &job,
+            &mut io,
+            &Limits::default(),
+            &CancelToken::new(),
+            &mut |e| {
+                events.push(e.clone());
+            },
+        )
+        .unwrap();
+    }
+    // The same samples come out as from a file that says 5.1 (its mask tags the output).
+    assert_eq!(
+        data_chunk(&io.get("plain.wav.out.wav").unwrap()),
+        data_chunk(&io.get("labelled.wav.out.wav").unwrap())
+    );
+    let notes: Vec<Vec<String>> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Started { plan } => Some(plan.notes.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notes, [vec![note.to_owned()], vec![]]);
+}
