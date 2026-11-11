@@ -588,7 +588,8 @@ fn processing_controls_build_what_the_shortcut_flags_build() {
             match step {
                 Adj::Rate(r) => sheet.set_sample_rate(Some(*r)),
                 Adj::Channels(name) => {
-                    sheet.set_channels(Some(crossfade_graph::filter::parse_channels(name).unwrap()))
+                    sheet
+                        .set_channels(Some(crossfade_graph::filter::parse_channels(name).unwrap()));
                 }
                 Adj::Level(mode, text) => {
                     sheet.set_level_mode(*mode);
