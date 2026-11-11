@@ -33,8 +33,8 @@ pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
     match FormatId::from_extension(ext) {
         Some(f) if can_write(f) => Ok(f),
         _ => Err(unsupported(format!(
-            "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc; \
-                 .ogg can be read but not written yet)"
+            "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
+                 .oga/.ogg)"
         ))),
     }
 }
@@ -56,8 +56,13 @@ pub(crate) fn resolve(
             return Err(unsupported("--codec copy cannot take a compression level"));
         }
         if !can_hold(output_format, input.codec) {
+            let why = if output_format == FormatId::Ogg {
+                " (ogg holds flac only)"
+            } else {
+                ""
+            };
             return Err(unsupported(format!(
-                "cannot copy {} into {}",
+                "cannot copy {} into {}{why}",
                 input.codec.name(),
                 output_format.name()
             )));
