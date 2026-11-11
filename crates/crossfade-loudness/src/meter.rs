@@ -408,3 +408,68 @@ pub fn to_db(linear: f64) -> f64 {
         f64::NEG_INFINITY
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Closes sub-blocks directly with a made-up energy: the per-sample path keeps no state
+    /// that grows, so a stretch of programme is the same call over and over.
+    fn run(m: &mut Meter, hours: u64, energy_per_sub: f64) {
+        for _ in 0..hours * 3600 * SUB_PER_SEC {
+            m.sum_sq[0] = energy_per_sub;
+            m.frames = m.next_boundary;
+            m.close_sub_block();
+        }
+    }
+
+    fn mono() -> Meter {
+        Meter::new(48_000, &[ChannelRole::Left], Options::default()).unwrap()
+    }
+
+    /// Per 100 ms: one 8-byte power in each of the two lists; a Vec may hold twice its length.
+    fn bound(hours: u64) -> usize {
+        2 * 2 * 8 * (hours * 36_000) as usize
+    }
+
+    #[test]
+    fn memory_grows_by_16_bytes_per_100_ms_and_nothing_else() {
+        let mut m = mono();
+        let before = m.heap_bytes();
+        run(&mut m, 1, 480.0);
+        assert_eq!(m.gate_blocks.len(), 36_000 - 3);
+        assert_eq!(m.range_blocks.len(), 36_000 - 29);
+        assert!(m.heap_bytes() - before <= bound(1));
+        // So a 24-hour programme stays under 24 times that: 32 MB at worst.
+        assert!(24 * bound(1) <= 32 << 20);
+        assert!(m.integrated().unwrap().is_finite());
+        assert!(m.loudness_range().unwrap().abs() < 1e-9);
+    }
+
+    /// The same for a full day; about 12 s unoptimised, so `cargo test --release -- --ignored`.
+    #[test]
+    #[ignore = "slow in debug"]
+    fn a_24_hour_programme_fits_in_the_bound() {
+        let mut m = mono();
+        let before = m.heap_bytes();
+        run(&mut m, 24, 480.0);
+        assert_eq!(m.gate_blocks.len(), 24 * 36_000 - 3);
+        assert!(m.heap_bytes() - before <= bound(24));
+        assert!(m.heap_bytes() < 32 << 20);
+    }
+
+    #[test]
+    fn silence_costs_no_memory_and_range_off_halves_it() {
+        let mut m = mono();
+        let before = m.heap_bytes();
+        run(&mut m, 1, 0.0);
+        assert_eq!(m.heap_bytes(), before);
+        let opts = Options {
+            true_peak: false,
+            loudness_range: false,
+        };
+        let mut m = Meter::new(48_000, &[ChannelRole::Left], opts).unwrap();
+        run(&mut m, 1, 480.0);
+        assert!(m.range_blocks.is_empty());
+    }
+}
