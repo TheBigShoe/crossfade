@@ -14,7 +14,7 @@ use std::path::Path;
 
 mod adjust;
 
-use adjust::{Adjust, clock};
+use adjust::{Adjust, clock_exact};
 pub use adjust::{AdjustField, AdjustRow, LevelMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -648,12 +648,7 @@ impl ConvertSheet {
         let rate = out.audio.sample_rate();
         let mut parts = vec![Self::rate_label(Some(rate)), layout, depth];
         if let Some(frames) = out.frames {
-            let seconds = frames as f64 / f64::from(rate);
-            parts.push(format!(
-                "{}.{:03}",
-                clock(seconds.floor()),
-                (seconds.fract() * 1000.0).round() as u64
-            ));
+            parts.push(clock_exact(frames as f64 / f64::from(rate)));
         }
         Some(parts.join(" \u{b7} "))
     }

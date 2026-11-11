@@ -127,6 +127,17 @@ pub(super) fn clock(seconds: f64) -> String {
     out
 }
 
+/// `1:20.000`, `1:01:40.250`: always the milliseconds, for the line saying what is written.
+pub(super) fn clock_exact(seconds: f64) -> String {
+    let ms = (seconds * 1000.0).round() as u64;
+    let (h, m, s, frac) = (ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}.{frac:03}")
+    } else {
+        format!("{m}:{s:02}.{frac:03}")
+    }
+}
+
 fn signed(x: f64) -> String {
     let text = x.to_string();
     match text.strip_prefix('-') {
