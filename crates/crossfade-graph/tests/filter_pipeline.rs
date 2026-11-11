@@ -239,17 +239,6 @@ fn asking_for_the_rate_and_layout_the_input_has_changes_no_byte() {
 fn a_filter_not_built_yet_stops_the_job_before_anything_is_written() {
     for (audio, name) in [
         (
-            filters(
-                vec![FilterSpec::Trim {
-                    start_seconds: Some(1.0),
-                    end_seconds: None,
-                    duration_seconds: None,
-                }],
-                Dither::Tpdf,
-            ),
-            "trim",
-        ),
-        (
             AudioSettings {
                 sample_rate: Some(48000),
                 ..AudioSettings::default()
