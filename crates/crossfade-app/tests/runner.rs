@@ -335,3 +335,23 @@ fn a_job_that_does_not_clip_reports_nothing() {
             .any(|e| matches!(e, RunnerEvent::Clipped { .. }))
     );
 }
+
+#[test]
+fn a_normalising_job_reports_measuring_then_what_it_found() {
+    let d = Dir::new("normalise");
+    s16_input(&d);
+    let (mut r, rx) = runner();
+    let id = job_id();
+    let mut req = request(&d.path("in.wav"), &d.path("out.wav"), None, false);
+    req.job.outputs[0].audio.filters = vec![crossfade_graph::filter::FilterSpec::Normalize {
+        lufs: -16.0,
+        true_peak_dbtp: -1.0,
+    }];
+    r.start(id, &req, CancelToken::new());
+    let events = collect(&rx, id);
+    let at = |f: fn(&RunnerEvent) -> bool| events.iter().position(f).expect("event");
+    let measuring = at(|e| matches!(e, RunnerEvent::Measuring));
+    let found = at(|e| matches!(e, RunnerEvent::Normalized(_)));
+    assert!(measuring < found);
+    assert!(matches!(events.last(), Some(RunnerEvent::Finished { .. })));
+}
