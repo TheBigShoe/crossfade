@@ -34,6 +34,41 @@ fn tonal(rate: u32, channels: usize, bits: u32, seconds: u32) -> Vec<i32> {
     out
 }
 
+/// Sines below 4 kHz, a slow amplitude sweep and a little noise: strongly band-limited when
+/// the rate is high, so linear prediction can do much better than the noise floor suggests.
+fn band(rate: u32, bits: u32, seconds: u32, shape: u8) -> Vec<i32> {
+    let amp = f64::from((1u32 << (bits - 1)) - 1);
+    let mut rng = Lcg(7);
+    let mut out = Vec::new();
+    let r = f64::from(rate);
+    for t in 0..rate as usize * seconds as usize {
+        let x = t as f64 / r;
+        for ch in 0..2 {
+            let c = f64::from(ch) * 0.3;
+            let v = match shape {
+                0 => {
+                    0.3 * (std::f64::consts::TAU * 440.0 * x + c).sin()
+                        + 0.2 * (std::f64::consts::TAU * 1300.0 * x).sin()
+                        + 0.1 * (std::f64::consts::TAU * 3100.0 * x + c).sin()
+                }
+                // A sweep from 100 Hz to 3.9 kHz.
+                1 => {
+                    let f = 100.0 + 3800.0 * x / f64::from(seconds);
+                    0.5 * (std::f64::consts::TAU * (100.0 * x + 0.5 * (f - 100.0) * x) + c).sin()
+                }
+                _ => 0.99 * (std::f64::consts::TAU * 1000.0 * x).sin(),
+            };
+            let noise = if shape == 2 {
+                0.0
+            } else {
+                rng.noise() * 4.0 / amp
+            };
+            out.push(((v + noise) * amp) as i32);
+        }
+    }
+    out
+}
+
 fn white(bits: u32, count: usize) -> Vec<i32> {
     let mut s = 0x1234_5678_9abc_def1u64;
     (0..count)
@@ -77,6 +112,25 @@ fn main() {
             &white(bits, 44_100 * 2 * 5),
         );
     }
+    for (rate, bits) in [
+        (48_000, 16),
+        (48_000, 24),
+        (96_000, 16),
+        (96_000, 24),
+        (192_000, 16),
+        (192_000, 24),
+    ] {
+        write(
+            dir,
+            &format!("bl{rate}_{bits}"),
+            rate,
+            2,
+            bits,
+            &band(rate, bits, 6, 0),
+        );
+    }
+    write(dir, "sweep192", 192_000, 2, 24, &band(192_000, 24, 6, 1));
+    write(dir, "tone192", 192_000, 2, 24, &band(192_000, 24, 6, 2));
     write(dir, "silence", 44_100, 2, 16, &vec![0; 44_100 * 2 * 10]);
     write(dir, "sig12", 44_100, 2, 12, &tonal(44_100, 2, 12, 10));
     write(dir, "sig20", 48_000, 2, 20, &tonal(48_000, 2, 20, 10));

@@ -562,6 +562,11 @@ impl Encoder {
     }
 
     #[cfg(test)]
+    fn force_precision(&mut self, precision: Option<u32>) {
+        self.analyzer.force_precision = precision;
+    }
+
+    #[cfg(test)]
     fn force_stereo(&mut self, mode: ChannelAssignment) {
         self.force = Some(mode);
     }

@@ -167,6 +167,8 @@ pub(super) fn is_constant<T: Sample>(x: &[T]) -> bool {
 }
 
 pub(super) struct Analyzer {
+    #[cfg(test)]
+    pub(super) force_precision: Option<u32>,
     level: Level,
     /// Candidate residual and Rice plan; swapped into the `Plan` when they win.
     cand: Vec<u32>,
@@ -188,6 +190,8 @@ impl Analyzer {
     pub(super) fn new(level: Level, wide: bool) -> Self {
         let wide_cap = if wide { level.block } else { 0 };
         Self {
+            #[cfg(test)]
+            force_precision: None,
             level,
             cand: Vec::with_capacity(level.block),
             cand_rice: RicePlan::new(),
@@ -314,6 +318,8 @@ impl Analyzer {
             return;
         }
         let precision = self.level.precision;
+        #[cfg(test)]
+        let precision = self.force_precision.unwrap_or(precision);
         // Estimated bits per order, as the reference encoder does: the error energy gives the
         // residual size, each coefficient costs its precision, each warm-up sample the depth.
         let scale = 0.5 / n as f64;

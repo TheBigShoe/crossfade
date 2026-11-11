@@ -172,3 +172,63 @@ fn steady_state_does_not_grow_any_buffer() {
         );
     }
 }
+
+/// Three narrow resonances below 4 kHz (at a 192 kHz rate) and a few LSBs of noise, from
+/// integer arithmetic only, as 24-bit stereo: strongly band-limited, so linear prediction can
+/// reach far below the noise floor if its coefficients are fine enough.
+fn band_limited(frames: usize) -> Vec<i32> {
+    let mut state = [(0i64, 0i64); 3];
+    let mut rng = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng >> 33) as i64
+    };
+    let a = [32_751i64, 32_714, 32_557];
+    let mut out = Vec::with_capacity(frames * 2);
+    for _ in 0..frames {
+        let mut sum = 0i64;
+        for (s, &a) in state.iter_mut().zip(&a) {
+            let kick = next() % 401 - 200;
+            let y = ((s.0 * a) >> 14) - ((s.1 * 16_371) >> 14) + kick;
+            *s = (y, s.0);
+            sum += y;
+        }
+        for c in 0..2 {
+            let v = sum * (7 + c) / 2 + next() % 7 - 3;
+            out.push(v.clamp(-(1 << 23), (1 << 23) - 1) as i32);
+        }
+    }
+    out
+}
+
+fn band_limited_size(precision: Option<u32>) -> usize {
+    let samples = band_limited(4096 * 3);
+    let mut enc = Encoder::new(EncoderConfig {
+        sample_rate: 192_000,
+        channels: 2,
+        bits_per_sample: 24,
+        level: 5,
+    })
+    .unwrap();
+    enc.force_precision(precision);
+    let mut out = Vec::new();
+    enc.write(&samples, &mut out).unwrap();
+    out.len()
+}
+
+/// What level 5 made of the signal above with 12-bit coefficients, the precision the encoder
+/// used at every depth before it followed the reference encoder's choice.
+#[test]
+fn band_limited_high_rate_audio_needs_fine_coefficients() {
+    let fine = band_limited_size(None);
+    let coarse = band_limited_size(Some(12));
+    assert!(
+        fine * 5 <= coarse * 4,
+        "{fine} bytes against {coarse} with 12-bit coefficients"
+    );
+    // Pinned from the encoder as fixed, plus 1%: a regression in precision fails this.
+    const PINNED: usize = 1;
+    assert!(fine <= PINNED + PINNED / 100, "{fine} bytes");
+}
