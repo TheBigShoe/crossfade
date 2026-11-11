@@ -75,7 +75,7 @@ impl Channels {
         }
     }
 
-    fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         let ok = match self {
             Self::Layout(l) => l.name().is_some(),
             Self::Count(n) => (1..=MAX_CHANNELS).contains(n),

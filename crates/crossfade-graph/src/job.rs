@@ -59,6 +59,9 @@ impl AudioSettings {
         if let Some(rate) = self.sample_rate {
             check_rate(rate).map_err(|m| FilterError::at(&rate.to_string(), m))?;
         }
+        if let Some(c) = &self.channels {
+            c.check().map_err(|m| FilterError::at(&c.to_string(), m))?;
+        }
         for f in &self.filters {
             f.check()?;
         }
