@@ -99,7 +99,10 @@ fn main() {
             });
         }
     }
-    println!("{:<28}{:>10}{:>10}{:>10}", "file", "split ms", "decode ms", "read ms");
+    println!(
+        "{:<28}{:>10}{:>10}{:>10}",
+        "file", "split ms", "decode ms", "read ms"
+    );
     for f in &files {
         let bytes = load(f);
         let (info, pk) = packets(bytes.clone());
