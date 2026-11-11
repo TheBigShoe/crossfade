@@ -780,13 +780,10 @@ fn the_20_bit_flac_converts_to_24_bit_samples_shifted_left_by_four() {
         want.extend_from_slice(&(s << 4).to_le_bytes()[..3]);
     }
     assert!(data_chunk(&out) == want);
-    // The WAV has no notion of a 20-bit depth.
+    // The WAV says so in its extensible header (valid bits), and probe reads it back.
     let again: serde_json::Value =
         serde_json::from_str(&d.ok(&["probe", "out.wav", "--json"])).unwrap();
-    assert_eq!(
-        again["streams"][0]["bits_per_raw_sample"],
-        serde_json::Value::Null
-    );
+    assert_eq!(again["streams"][0]["bits_per_raw_sample"], 20);
 }
 
 // ---- stream copy ---------------------------------------------------------------------------
