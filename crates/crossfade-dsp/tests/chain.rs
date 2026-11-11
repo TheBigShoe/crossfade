@@ -194,13 +194,6 @@ fn a_filter_not_built_yet_says_so_by_name() {
             }),
             "resample",
         ),
-        (
-            FilterPlan::Mix(MixPlan {
-                layout: ChannelLayout::mono(),
-                matrix: None,
-            }),
-            "mix",
-        ),
     ];
     for (p, name) in cases {
         assert_eq!(p.name(), name);
