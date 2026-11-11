@@ -75,14 +75,16 @@ crossfade concat a.wav b.wav -o both.flac                        # several input
 | trim | `trim start=10s end=1:30`, `trim duration=500ms` | parses and plans; not built yet |
 | fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | parses and plans; not built yet |
 | normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; not built yet |
-| resample | `resample 48kHz quality=best`; also `--sample-rate` | parses and plans; not built yet |
+| resample | `resample 48kHz quality=best` (`fast`, `good`, `best`); also `--sample-rate` | built: band-limited, time-aligned; a 44.1 -> 48 -> 44.1 kHz round trip keeps 143 / 159 / 239 dB (fast / good / best) |
 | mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | parses and plans; not built yet |
-| concat | `crossfade concat a.wav b.wav -o out.flac` | parses and plans; not built yet |
+| concat | `crossfade concat a.wav b.wav -o out.flac` | built: inputs conformed to the first one's rate (layouts once `mix` is built), sample-exact seams, bit-exact when the inputs match |
 
 A filter that is not built yet is refused before any file is written. A job
-with no filters and no rate or channel change takes exactly the path it took
-before, bit for bit. When something is processed, integer output gets TPDF
-dither (`--dither none` turns it off; float output is never dithered) from a
+with no filters, no rate or channel change and no loss of depth takes exactly
+the path it took before, bit for bit. When something is processed, or an
+integer output is narrower than the input's real bit depth (24 real bits to
+`s16`, float to integer), integer output gets TPDF dither (`--dither none`
+turns it off and keeps the old bytes; float output is never dithered) from a
 fixed-seed generator, so the same input gives the same bytes on every machine
 and at every thread count. Samples pushed past full scale are clipped and
 counted, and the command line prints a warning with the count.
