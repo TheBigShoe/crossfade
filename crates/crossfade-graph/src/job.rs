@@ -1,7 +1,9 @@
 //! The job model: plain data describing what to convert, serialisable so a
 //! front end can save, show or replay it.
 
+use crate::filter::{Channels, FilterError, FilterSpec, check_rate, dither_name};
 use crossfade_core::{Error, SampleFormat};
+use crossfade_dsp::dither::Dither;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +34,36 @@ pub struct AudioSettings {
     /// FLAC only, 0 to 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compression_level: Option<u8>,
+    /// Output rate in Hz; `None` keeps the rate the filters leave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+    /// Output channels; `None` keeps the layout the filters leave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Channels>,
+    /// How processed audio becomes integer samples; only used when filters or a rate or
+    /// channel change ran.
+    #[serde(default, skip_serializing_if = "is_tpdf", with = "dither_name")]
+    pub dither: Dither,
+    /// Run in order, before the conversions `sample_rate` and `channels` ask for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<FilterSpec>,
+}
+
+fn is_tpdf(d: &Dither) -> bool {
+    *d == Dither::Tpdf
+}
+
+impl AudioSettings {
+    /// The rules on values a job file could break: rate, channels and every filter.
+    pub fn check(&self) -> Result<(), FilterError> {
+        if let Some(rate) = self.sample_rate {
+            check_rate(rate).map_err(|m| FilterError::at(&rate.to_string(), m))?;
+        }
+        for f in &self.filters {
+            f.check()?;
+        }
+        Ok(())
+    }
 }
 
 /// `SampleFormat` stays serde-free in core; the job spells it by name.
@@ -73,6 +105,11 @@ impl Job {
         let job: Job = serde_json::from_str(json).map_err(|e| Error::Malformed {
             what: format!("job: {e}"),
         })?;
+        for output in &job.outputs {
+            output.audio.check().map_err(|e| Error::Malformed {
+                what: format!("job: {}: {e}", output.path),
+            })?;
+        }
         if job.version != Self::VERSION {
             return Err(Error::Unsupported {
                 what: format!(

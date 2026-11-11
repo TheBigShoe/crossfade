@@ -574,7 +574,8 @@ fn copy_replaces_the_format_and_level_in_the_request() {
         AudioSettings {
             sample_format: None,
             codec: Some("copy".into()),
-            compression_level: None
+            compression_level: None,
+            ..AudioSettings::default()
         }
     );
     // Copying a FLAC to a FLAC next to it.

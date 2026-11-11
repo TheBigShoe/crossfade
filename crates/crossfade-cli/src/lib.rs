@@ -99,6 +99,7 @@ fn convert_job(input: String, output: String, choices: Choices<'_>) -> Job {
                 sample_format: choices.sample_format.and_then(SampleFormat::from_name),
                 codec: choices.codec.map(str::to_owned),
                 compression_level: choices.compression_level,
+                ..AudioSettings::default()
             },
         }],
     }

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4ed9436e7f3f13b8b0d056b1ac8f673ed5402751790e2b8bab8e06e31688ae4b # shrinks to spec = Normalize { lufs: -52.351838237685364, true_peak_dbtp: 0.0 }
+cc a21d2e56bcb58f8953090f7a62e197540c4d570f89b758bf412b90e9bfaad216 # shrinks to spec = Trim { start_seconds: None, end_seconds: None, duration_seconds: None }

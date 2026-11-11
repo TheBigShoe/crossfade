@@ -12,7 +12,8 @@ crossfade-format.workspace = true
 crossfade-codec.workspace = true
 crossfade-dsp.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+# Job files hold times and levels as floats; they must read back to the same bits.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
 crossfade-testkit.workspace = true
