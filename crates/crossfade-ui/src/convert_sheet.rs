@@ -427,6 +427,11 @@ impl ConvertDialog {
             .or_else(|| self.sheet.processing_hint())
     }
 
+    /// The plan's notes, one per line under the hints.
+    pub fn notes(&self) -> Vec<String> {
+        self.sheet.notes()
+    }
+
     /// The equivalent command line, shown while only the file name is in the way.
     pub fn command_text(&self) -> Option<String> {
         // The command stays up while the sheet has a problem: a file that already exists
@@ -818,6 +823,7 @@ impl Render for ConvertDialog {
         let overwrite = self.sheet.overwrite();
         let hint = self.sheet.hint();
         let note = self.processing_note();
+        let notes = self.sheet.notes();
         let enabled = self.sheet.processing_enabled();
         let (copy_available, copy) = (self.sheet.copy_available(), self.sheet.copy());
         // The footer stays in view: the rows above it scroll when the window is short.
@@ -904,6 +910,20 @@ impl Render for ConvertDialog {
                         .text_size(LABEL_SIZE + px(1.))
                         .text_color(muted)
                         .child(SharedString::from(hint)),
+                )
+            })
+            .when(!notes.is_empty(), |sheet| {
+                sheet.child(
+                    v_flex()
+                        .id("sheet-notes")
+                        .test_support()
+                        .text_size(LABEL_SIZE + px(1.))
+                        .text_color(muted)
+                        .children(
+                            notes
+                                .iter()
+                                .map(|n| div().child(SharedString::from(n.clone()))),
+                        ),
                 )
             })
             .child(self.adjust_toggle(muted, cx))

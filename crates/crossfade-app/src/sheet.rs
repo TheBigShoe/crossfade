@@ -623,8 +623,9 @@ impl ConvertSheet {
         (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
     }
 
-    /// What will be written, when processing changes it: `48 kHz · mono · 16-bit · 1:20.000`.
-    pub fn processing_hint(&self) -> Option<String> {
+    /// What the engine says the job writes, when processing changes it and its values are
+    /// good.
+    fn processed_plan(&self) -> Option<crossfade_graph::OutputPlan> {
         let stream = self.stream.as_ref()?;
         let audio = self.audio();
         let processed =
@@ -632,7 +633,17 @@ impl ConvertSheet {
         if self.copy() || !processed || !self.adjust_problems().is_empty() {
             return None;
         }
-        let plan = describe(stream, &format!("x.{}", self.container.extension()), &audio).ok()?;
+        describe(stream, &format!("x.{}", self.container.extension()), &audio).ok()
+    }
+
+    /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1".
+    pub fn notes(&self) -> Vec<String> {
+        self.processed_plan().map(|p| p.notes).unwrap_or_default()
+    }
+
+    /// What will be written, when processing changes it: `48 kHz · mono · 16-bit · 1:20.000`.
+    pub fn processing_hint(&self) -> Option<String> {
+        let plan = self.processed_plan()?;
         let out = &plan.output;
         let layout = out.audio.layout();
         let layout = layout
