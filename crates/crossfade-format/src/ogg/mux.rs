@@ -11,8 +11,8 @@
 //! holds one logical stream, so nothing needs the serial to be unique.
 
 use super::writer::{BOS, PageWriter, page_bytes};
-use crate::vorbis_comment;
-use crossfade_core::{CodecId, Error, MediaSink, Muxer, Packet, SampleFormat, StreamInfo, Tags};
+use crate::flac::mux::{block_header, checked, header_blocks};
+use crossfade_core::{CodecId, Error, MediaSink, Muxer, Packet, StreamInfo, Tags};
 use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::SeekFrom;
 
@@ -20,8 +20,6 @@ use std::io::SeekFrom;
 const SERIAL: u32 = 0x4358_4644;
 const TYPE_VORBIS_COMMENT: u8 = 4;
 const LAST_BLOCK: u8 = 0x80;
-/// Block lengths are 24 bits.
-const MAX_BLOCK_LEN: usize = (1 << 24) - 1;
 /// The comment is the only header packet after the identification one.
 const HEADER_PACKETS: u16 = 1;
 
@@ -31,53 +29,6 @@ struct OggMuxer {
     /// Samples (per channel) in the packets written so far.
     samples: u64,
     final_header: Option<[u8; StreamInfoBlock::LEN]>,
-}
-
-// `flac::mux` keeps its `synthesised` private; this repeats it until the native writer shares it.
-fn synthesised(stream: &StreamInfo) -> Result<[u8; StreamInfoBlock::LEN], Error> {
-    let audio = &stream.audio;
-    let channels = audio.layout().channels();
-    if channels > 8 {
-        return Err(Error::Unsupported {
-            what: format!("flac holds at most 8 channels, got {channels}"),
-        });
-    }
-    if audio.sample_rate() >= 1 << 20 {
-        return Err(Error::Unsupported {
-            what: format!(
-                "flac sample rates stop at 1048575 Hz, got {}",
-                audio.sample_rate()
-            ),
-        });
-    }
-    let bits = stream.bits_per_raw_sample.unwrap_or(match audio.format() {
-        SampleFormat::U8 => 8,
-        SampleFormat::S16 => 16,
-        SampleFormat::S24 => 24,
-        SampleFormat::S32 | SampleFormat::F32 | SampleFormat::F64 => 32,
-    });
-    Ok(StreamInfoBlock {
-        min_block_size: 0,
-        max_block_size: 0,
-        min_frame_size: 0,
-        max_frame_size: 0,
-        sample_rate: audio.sample_rate(),
-        channels: channels as u8,
-        bits_per_sample: bits,
-        total_samples: stream.frames.filter(|&n| n < 1 << 36).unwrap_or(0),
-        md5: [0; 16],
-    }
-    .write())
-}
-
-fn checked(extradata: &[u8]) -> Result<[u8; StreamInfoBlock::LEN], Error> {
-    StreamInfoBlock::parse(extradata).map_err(crate::flac::engine_error)?;
-    Ok(extradata.try_into().expect("parse accepted 34 bytes"))
-}
-
-fn block_header(flags_and_type: u8, len: usize) -> [u8; 4] {
-    let l = (len as u32).to_be_bytes();
-    [flags_and_type, l[1], l[2], l[3]]
 }
 
 /// The first packet: `0x7F "FLAC"`, version 1.0, header count, `fLaC`, the STREAMINFO block.
@@ -101,22 +52,7 @@ pub fn create(
             what: format!("ogg files can only hold flac, not {}", stream.codec.name()),
         });
     }
-    let info = if stream.extradata.len() == StreamInfoBlock::LEN {
-        checked(&stream.extradata)?
-    } else {
-        synthesised(stream)?
-    };
-    let mut comment = Vec::new();
-    vorbis_comment::write(
-        &format!("Crossfade {}", env!("CARGO_PKG_VERSION")),
-        tags,
-        &mut comment,
-    );
-    if comment.len() > MAX_BLOCK_LEN {
-        return Err(Error::Unsupported {
-            what: "tags are too large for one flac metadata block".into(),
-        });
-    }
+    let (info, comment) = header_blocks(stream, tags)?;
     let mut pages = PageWriter::new(SERIAL);
     pages.packet(&identification(&info), 0);
     pages.end_page();

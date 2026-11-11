@@ -64,7 +64,7 @@ fn synthesised(stream: &StreamInfo) -> Result<[u8; StreamInfoBlock::LEN], Error>
     .write())
 }
 
-fn checked(extradata: &[u8]) -> Result<[u8; StreamInfoBlock::LEN], Error> {
+pub(crate) fn checked(extradata: &[u8]) -> Result<[u8; StreamInfoBlock::LEN], Error> {
     StreamInfoBlock::parse(extradata).map_err(super::engine_error)?;
     Ok(extradata.try_into().expect("parse accepted 34 bytes"))
 }
@@ -89,21 +89,12 @@ fn with_channel_mask(tags: &Tags, layout: &ChannelLayout) -> Tags {
     out
 }
 
-fn block_header(flags_and_type: u8, len: usize) -> [u8; 4] {
-    let l = (len as u32).to_be_bytes();
-    [flags_and_type, l[1], l[2], l[3]]
-}
-
-pub fn create(
-    mut sink: Box<dyn MediaSink>,
+/// What both FLAC writers (native and Ogg) put at the head of a stream: the STREAMINFO body,
+/// provisional unless the stream brought one, and the Vorbis comment body.
+pub(crate) fn header_blocks(
     stream: &StreamInfo,
     tags: &Tags,
-) -> Result<Box<dyn Muxer>, Error> {
-    if stream.codec != CodecId::Flac {
-        return Err(Error::Unsupported {
-            what: format!("flac files cannot hold {}", stream.codec.name()),
-        });
-    }
+) -> Result<([u8; StreamInfoBlock::LEN], Vec<u8>), Error> {
     let info = if stream.extradata.len() == StreamInfoBlock::LEN {
         checked(&stream.extradata)?
     } else {
@@ -120,6 +111,25 @@ pub fn create(
             what: "tags are too large for one flac metadata block".into(),
         });
     }
+    Ok((info, comment))
+}
+
+pub(crate) fn block_header(flags_and_type: u8, len: usize) -> [u8; 4] {
+    let l = (len as u32).to_be_bytes();
+    [flags_and_type, l[1], l[2], l[3]]
+}
+
+pub fn create(
+    mut sink: Box<dyn MediaSink>,
+    stream: &StreamInfo,
+    tags: &Tags,
+) -> Result<Box<dyn Muxer>, Error> {
+    if stream.codec != CodecId::Flac {
+        return Err(Error::Unsupported {
+            what: format!("flac files cannot hold {}", stream.codec.name()),
+        });
+    }
+    let (info, comment) = header_blocks(stream, tags)?;
     let mut head = Vec::with_capacity(46 + comment.len());
     head.extend(MARKER);
     head.extend(block_header(0, StreamInfoBlock::LEN));
