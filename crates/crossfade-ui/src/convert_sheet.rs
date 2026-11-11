@@ -603,6 +603,13 @@ impl ConvertDialog {
 
 /// A short field, no wider than what goes in it.
 const FIELD_WIDTH: Pixels = px(84.);
+/// The small captions (Start, End, In, Out) share a width, so Trim and Fade form two
+/// columns of fields; the Level value sits on the second column's field.
+const CAPTION_WIDTH: Pixels = px(44.);
+const CAPTION_GAP: Pixels = px(6.);
+const COLUMN_GAP: Pixels = px(24.);
+/// Where the second column's field starts, from the left of the rows' content.
+const SECOND_FIELD: Pixels = px(44. + 6. + 84. + 24. + 44. + 6.);
 
 /// The warning box of the sheet's problems, sized for one line under a row.
 fn problem_box(
@@ -649,10 +656,12 @@ impl ConvertDialog {
     /// `Start [0:00]` in the muted caption style.
     fn captioned(caption: &'static str, field: impl IntoElement, muted: Hsla) -> Div {
         h_flex()
-            .gap_1p5()
+            .gap(CAPTION_GAP)
             .items_center()
             .child(
                 div()
+                    .flex_none()
+                    .w(CAPTION_WIDTH)
                     .text_size(LABEL_SIZE + px(1.))
                     .text_color(muted)
                     .child(caption),
@@ -694,6 +703,8 @@ impl ConvertDialog {
             .items_center()
             .child(
                 h_flex()
+                    .flex_none()
+                    .w(SECOND_FIELD - px(8.))
                     .gap_0p5()
                     .child(button("sheet-level-off", "Off", LevelMode::Off))
                     .child(button("sheet-level-gain", "Gain", LevelMode::Gain))
@@ -719,7 +730,7 @@ impl ConvertDialog {
     fn adjust_rows(&self, warning: Hsla, muted: Hsla, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = self.sheet.processing_enabled();
         let trim = h_flex()
-            .gap_3()
+            .gap(COLUMN_GAP)
             .child(Self::captioned(
                 "Start",
                 self.field("sheet-trim-start", &self.trim_start, None, enabled, muted),
@@ -731,7 +742,7 @@ impl ConvertDialog {
                 muted,
             ));
         let fade = h_flex()
-            .gap_3()
+            .gap(COLUMN_GAP)
             .child(Self::captioned(
                 "In",
                 self.field("sheet-fade-in", &self.fade_in, Some("s"), enabled, muted),

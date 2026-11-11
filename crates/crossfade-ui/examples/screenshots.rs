@@ -158,8 +158,8 @@ const SCENES: &[Scene] = &[
         drive: |stage| {
             stage.set_theme(ThemeMode::Dark);
             let tone = fixtures::flac(44_100, 2, SampleFormat::S16, 44_100 * 3);
-            let master = fixtures::flac(48_000, 2, SampleFormat::S24, 48_000 * 3);
-            let tagged = fixtures::labelled_20_bit(&fixtures::tagged(
+            let master = fixtures::programme_flac_20_bit(48_000, 8);
+            let tagged = fixtures::tagged(
                 &master,
                 &[
                     ("TITLE", "Night Ferry"),
@@ -169,7 +169,7 @@ const SCENES: &[Scene] = &[
                     ("DATE", "2025"),
                     ("TRACKNUMBER", "4"),
                 ],
-            ));
+            );
             stage.add_bytes(&[
                 ("room-tone.flac", tone),
                 ("night-ferry-master.flac", tagged),
@@ -336,7 +336,7 @@ const SCENES: &[Scene] = &[
         size: WINDOW,
         drive: |stage| {
             stage.set_theme(ThemeMode::Dark);
-            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.add_programme("interview-take-1.wav");
             stage.convert();
             stage.choose("sheet-rate", 1);
             stage.adjust_normalize_and_fade();
@@ -348,12 +348,12 @@ const SCENES: &[Scene] = &[
         size: WINDOW,
         drive: |stage| {
             stage.set_theme(ThemeMode::Dark);
-            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.add_programme("interview-take-1.wav");
             stage.convert();
             stage.choose("sheet-rate", 1);
             stage.adjust_normalize_and_fade();
-            stage.type_into("sheet-trim-start", "0:10");
-            stage.type_into("sheet-trim-end", "1:30");
+            stage.type_into("sheet-trim-start", "0:01");
+            stage.type_into("sheet-trim-end", "0:06");
         },
     },
     Scene {
@@ -361,11 +361,11 @@ const SCENES: &[Scene] = &[
         size: WINDOW,
         drive: |stage| {
             stage.set_theme(ThemeMode::Dark);
-            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.add_programme("interview-take-1.wav");
             stage.convert();
             stage.click("sheet-adjust");
-            stage.type_into("sheet-trim-start", "1:30");
-            stage.type_into("sheet-trim-end", "0:10");
+            stage.type_into("sheet-trim-start", "0:06");
+            stage.type_into("sheet-trim-end", "0:02");
         },
     },
     Scene {
@@ -373,13 +373,13 @@ const SCENES: &[Scene] = &[
         size: NARROW,
         drive: |stage| {
             stage.set_theme(ThemeMode::Light);
-            stage.add(&[("interview-take-1.wav", 44_100, 2)]);
+            stage.add_programme("interview-take-1.wav");
             stage.convert();
             stage.choose("sheet-rate", 1);
             stage.choose("sheet-channels", 1);
             stage.adjust_normalize_and_fade();
-            stage.type_into("sheet-trim-start", "0:10");
-            stage.type_into("sheet-trim-end", "1:30");
+            stage.type_into("sheet-trim-start", "0:01");
+            stage.type_into("sheet-trim-end", "0:06");
         },
     },
     Scene {
@@ -399,6 +399,37 @@ const SCENES: &[Scene] = &[
                 RunnerEvent::Progress {
                     frames_done: 21_000_000,
                     frames_total: Some(50_000_000),
+                },
+            );
+        },
+    },
+    Scene {
+        file: "28-queue-normalised-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            for out in ["take-1-loud.wav", "take-1-level.wav"] {
+                stage.enqueue(&["interview-take-1.wav", out, "s16"]);
+            }
+            stage.send(0, RunnerEvent::Measuring);
+            stage.send(
+                0,
+                RunnerEvent::Normalized(crossfade_graph::Normalization {
+                    measured_lufs: Some(-23.0),
+                    target_lufs: -16.0,
+                    gain_db: 5.7,
+                    limited_by_ceiling: true,
+                    ceiling_dbtp: -1.0,
+                }),
+            );
+            stage.send(0, RunnerEvent::Finished { frames: 384_000 });
+            stage.send(1, RunnerEvent::Measuring);
+            stage.send(
+                1,
+                RunnerEvent::Progress {
+                    frames_done: 40,
+                    frames_total: Some(200),
                 },
             );
         },
@@ -595,12 +626,18 @@ impl Stage {
         std::fs::write(self.dir.path(name), bytes).expect("write a scratch file");
     }
 
-    /// Generate `(name, rate, channels)` WAVs, one second long, and add them as the
+    /// Generate `(name, rate, channels)` WAVs, three seconds long, and add them as the
     /// workspace's inputs.
     fn add(&mut self, files: &[(&str, u32, u16)]) {
         let mut names = Vec::new();
         for (name, rate, channels) in files {
-            self.write_bytes(name, &wav_s16(*rate, *channels, rate * 3));
+            // Programme-like audio where we have it (stereo), so the strip is not a flat line.
+            let bytes = if *channels == 2 {
+                fixtures::programme_wav(*rate, 3)
+            } else {
+                wav_s16(*rate, *channels, rate * 3)
+            };
+            self.write_bytes(name, &bytes);
             names.push(*name);
         }
         self.add_raw(&names);
