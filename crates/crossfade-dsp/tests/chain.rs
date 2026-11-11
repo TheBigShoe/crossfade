@@ -1,9 +1,7 @@
 //! The chain: any input format in, the filters in order on `f64`, the output format out
 //! through the quantiser; and the one place a planned filter becomes a running one.
 
-use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, Error, Filter, SampleFormat, Samples,
-};
+use crossfade_core::{AudioFrame, AudioSpec, ChannelLayout, Error, Filter, SampleFormat, Samples};
 use crossfade_dsp::chain::{Chain, ChainPlan};
 use crossfade_dsp::dither::Dither;
 use crossfade_dsp::filters::fade::{Curve, FadePlan};
@@ -72,8 +70,12 @@ fn s16s(frames: &[AudioFrame]) -> Vec<i16> {
 #[test]
 fn a_gain_chain_on_s16_rounds_as_the_conversion_rule_does_without_dither() {
     let input = spec(8000, SampleFormat::S16, ChannelLayout::stereo());
-    let mut chain = Chain::new(&input, &plan(vec![gain(0.5)], Dither::None), SampleFormat::S16)
-        .unwrap();
+    let mut chain = Chain::new(
+        &input,
+        &plan(vec![gain(0.5)], Dither::None),
+        SampleFormat::S16,
+    )
+    .unwrap();
     assert_eq!(chain.output_spec(), &input);
     let x = vec![1000, -1000, 3, -3, 32767, -32768, 1, 0];
     let got = run(&mut chain, &input, Samples::S16(x), 3);
@@ -103,9 +105,13 @@ fn filters_run_in_order_and_the_output_takes_the_requested_format() {
 #[test]
 fn float_output_is_never_dithered() {
     let input = spec(44100, SampleFormat::F32, ChannelLayout::stereo());
-    let x: Vec<f32> = (0..999).map(|i| (i as f32 * 0.013).sin() * 0.9).collect();
-    let mut chain = Chain::new(&input, &plan(vec![gain(1.0)], Dither::Tpdf), SampleFormat::F32)
-        .unwrap();
+    let x: Vec<f32> = (0..1000).map(|i| (i as f32 * 0.013).sin() * 0.9).collect();
+    let mut chain = Chain::new(
+        &input,
+        &plan(vec![gain(1.0)], Dither::Tpdf),
+        SampleFormat::F32,
+    )
+    .unwrap();
     let got = run(&mut chain, &input, Samples::F32(x.clone()), 100);
     let all: Vec<f32> = got
         .iter()
@@ -120,8 +126,12 @@ fn float_output_is_never_dithered() {
 #[test]
 fn twenty_db_up_clips_and_is_counted() {
     let input = spec(8000, SampleFormat::S16, ChannelLayout::mono());
-    let mut chain = Chain::new(&input, &plan(vec![gain(10.0)], Dither::Tpdf), SampleFormat::S16)
-        .unwrap();
+    let mut chain = Chain::new(
+        &input,
+        &plan(vec![gain(10.0)], Dither::Tpdf),
+        SampleFormat::S16,
+    )
+    .unwrap();
     // 3276 * 10 fits, 3277 * 10 does not; so do the negatives down to -3276.8.
     let x = vec![3276, 3277, -3276, -3277, 0, 10_000, -10_000];
     let got = run(&mut chain, &input, Samples::S16(x), 7);
@@ -133,10 +143,16 @@ fn twenty_db_up_clips_and_is_counted() {
 #[test]
 fn the_bytes_do_not_depend_on_how_the_input_is_split() {
     let input = spec(48000, SampleFormat::S16, ChannelLayout::stereo());
-    let x: Vec<i16> = (0..20_000).map(|i| ((i * 7919) % 65536 - 32768) as i16).collect();
+    let x: Vec<i16> = (0..20_000)
+        .map(|i| ((i * 7919) % 65536 - 32768) as i16)
+        .collect();
     let once = |chunk| {
-        let mut chain =
-            Chain::new(&input, &plan(vec![gain(0.3)], Dither::Tpdf), SampleFormat::S16).unwrap();
+        let mut chain = Chain::new(
+            &input,
+            &plan(vec![gain(0.3)], Dither::Tpdf),
+            SampleFormat::S16,
+        )
+        .unwrap();
         s16s(&run(&mut chain, &input, Samples::S16(x.clone()), chunk))
     };
     let whole = once(10_000);
@@ -149,7 +165,13 @@ fn the_bytes_do_not_depend_on_how_the_input_is_split() {
 fn a_filter_not_built_yet_says_so_by_name() {
     let input = spec(48000, SampleFormat::F64, ChannelLayout::stereo());
     let cases = [
-        (FilterPlan::Trim(TrimPlan { start: 0, end: Some(10) }), "trim"),
+        (
+            FilterPlan::Trim(TrimPlan {
+                start: 0,
+                end: Some(10),
+            }),
+            "trim",
+        ),
         (
             FilterPlan::Fade(FadePlan {
                 fade_in: 10,
@@ -264,7 +286,9 @@ fn a_matrix_must_fit_the_input_and_the_layout() {
         })
     };
     assert!(mix(vec![vec![0.5, 0.5]]).output_spec(&stereo).is_ok());
-    let wide = mix(vec![vec![0.5, 0.5, 0.5]]).output_spec(&stereo).unwrap_err();
+    let wide = mix(vec![vec![0.5, 0.5, 0.5]])
+        .output_spec(&stereo)
+        .unwrap_err();
     assert!(
         wide.to_string()
             .contains("mix matrix rows have 3 coefficients but the input has 2 channels"),
@@ -290,5 +314,8 @@ fn names_of_curves_and_qualities_round_trip() {
         assert_eq!(Quality::from_name(q.name()), Some(q));
     }
     assert_eq!(Quality::NAMES, ["fast", "good", "best"]);
-    assert_eq!((Curve::default(), Quality::default()), (Curve::Linear, Quality::Good));
+    assert_eq!(
+        (Curve::default(), Quality::default()),
+        (Curve::Linear, Quality::Good)
+    );
 }

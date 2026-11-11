@@ -2,6 +2,7 @@
 //! filters, dither.
 #![forbid(unsafe_code)]
 
+pub mod chain;
 pub mod convert;
 pub mod dither;
 pub mod filters;
