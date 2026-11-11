@@ -52,9 +52,31 @@ pub(super) struct RiceSearch {
     sum: [u64; MAX_PARTS],
     max: [u32; MAX_PARTS],
     kstar: [u8; MAX_PARTS],
+    /// Finest partition order of the residual being planned.
+    top: u32,
     /// The partitioning being costed.
     trial_params: [u8; MAX_PARTS],
     trial_widths: [u8; MAX_PARTS],
+}
+
+/// The least Rice cost of `count` values summing to `sum` at any parameter up to 30, from the
+/// sum alone: `floor(u / 2^k) >= (u + 1) / 2^k - 1`, so the values cost at least
+/// `count * (k + 1) + floor((sum + count) / 2^k) - count`, and never less than one bit each.
+/// That is convex in `k`, so a walk downhill from near the minimum finds it.
+fn rice_floor(sum: u64, count: u64) -> u64 {
+    let at = |k: u32| count * u64::from(k + 1) + ((sum + count) >> k).saturating_sub(count);
+    let mean = (sum + count).checked_div(count).unwrap_or(0);
+    let mut k = (64 - mean.leading_zeros()).saturating_sub(1).min(30);
+    let mut best = at(k);
+    while k < 30 && at(k + 1) < best {
+        k += 1;
+        best = at(k);
+    }
+    while k > 0 && at(k - 1) < best {
+        k -= 1;
+        best = at(k);
+    }
+    best
 }
 
 /// Bits a raw value needs, 0 for zero.
@@ -77,6 +99,7 @@ impl RiceSearch {
             kstar: [0; MAX_PARTS],
             trial_params: [0; MAX_PARTS],
             trial_widths: [0; MAX_PARTS],
+            top: 0,
         }
     }
 
@@ -111,6 +134,12 @@ impl RiceSearch {
         max_order: u32,
         out: &mut RicePlan,
     ) {
+        self.prepare(u, block, pred_order, max_order);
+        self.plan_prepared(u, out);
+    }
+
+    /// The first step of [`plan`](Self::plan): partition bounds, sums and maxima.
+    pub(super) fn prepare(&mut self, u: &[u32], block: usize, pred_order: usize, max_order: u32) {
         debug_assert_eq!(u.len() + pred_order, block);
         let mut top = max_order.min(8);
         while top > 0 && (!block.is_multiple_of(1 << top) || (block >> top) <= pred_order) {
@@ -132,7 +161,40 @@ impl RiceSearch {
             self.max[j] = part.iter().copied().max().unwrap_or(0);
         }
         self.known[..parts].fill(0);
+        self.top = top;
+    }
 
+    /// A lower bound on the `bits` [`plan_prepared`](Self::plan_prepared) will find, from the
+    /// sums alone: in a partition each value `u` costs at least `k + 1 + (u - 2^k + 1) / 2^k`
+    /// bits at parameter `k`, never less than the bits of the best partitioning.
+    pub(super) fn bound(&self) -> u64 {
+        let parts = 1usize << self.top;
+        let mut best = u64::MAX;
+        for order in 0..=self.top {
+            let per = parts >> order;
+            let mut total = 6u64;
+            for g in 0..1usize << order {
+                let fine = g * per..(g + 1) * per;
+                let sum: u64 = self.sum[fine.clone()].iter().sum();
+                let max = self.max[fine.clone()].iter().copied().max().unwrap_or(0);
+                let count = (self.bounds[fine.end] - self.bounds[fine.start]) as u64;
+                let mut cost = rice_floor(sum, count);
+                let width = raw_width(max);
+                if width <= 31 {
+                    cost = cost.min(5 + count * u64::from(width));
+                }
+                // The parameter field is 4 or 5 bits.
+                total += 4 + cost;
+            }
+            best = best.min(total);
+        }
+        best
+    }
+
+    /// The rest of [`plan`](Self::plan), after [`prepare`](Self::prepare) on the same `u`.
+    pub(super) fn plan_prepared(&mut self, u: &[u32], out: &mut RicePlan) {
+        let top = self.top;
+        let parts = 1usize << top;
         self.search(u, top, false, out);
         // 5-bit parameters only pay when some partition wants a parameter above 14; by
         // convexity that shows in the finest partitions.
@@ -339,6 +401,34 @@ mod tests {
                 })
                 .collect();
             check(&res, pred, block, 6);
+        }
+    }
+
+    #[test]
+    fn the_bound_never_exceeds_the_plan() {
+        let mut rng = Lcg(7);
+        let mut search = RiceSearch::new();
+        for case in 0..600 {
+            let block = [16usize, 24, 64, 100, 1152, 4096][case % 6];
+            let pred = case % 13 % block.min(13);
+            let spread = [0u32, 1, 5, 300, 70_000, 1 << 30][(case / 6) % 6];
+            let u: Vec<u32> = (0..block - pred)
+                .map(|i| {
+                    let s = if case % 4 == 0 && i % 64 < 8 {
+                        spread.saturating_mul(50)
+                    } else {
+                        spread
+                    };
+                    (rng.next() % (u64::from(s) + 1)) as u32
+                })
+                .collect();
+            let mut plan = RicePlan::new();
+            for max_order in [0u32, 3, 6, 8] {
+                search.prepare(&u, block, pred, max_order);
+                let bound = search.bound();
+                search.plan_prepared(&u, &mut plan);
+                assert!(bound <= plan.bits, "case {case}: {bound} > {}", plan.bits);
+            }
         }
     }
 

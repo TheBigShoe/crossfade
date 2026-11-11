@@ -241,6 +241,9 @@ pub(super) struct Analyzer {
     windowed_int: Vec<i32>,
     /// Largest magnitude in the block being searched.
     peak: u64,
+    /// Search as the encoder did before bounds and reordering, for the equivalence tests.
+    #[cfg(test)]
+    pub(super) reference: bool,
     lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
     acc: lpc::Accumulators,
 }
@@ -268,6 +271,8 @@ impl Analyzer {
             windowed: Vec::with_capacity(level.block),
             windowed_int: Vec::with_capacity(level.block),
             peak: 0,
+            #[cfg(test)]
+            reference: false,
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
             acc: lpc::Accumulators::with_capacity(level.block, wide_cap),
         }
@@ -314,8 +319,42 @@ impl Analyzer {
         plan.bps = bps;
         plan.kind = Kind::Verbatim;
         plan.bits = head + n as u64 * u64::from(bps);
+        #[cfg(test)]
+        if self.reference {
+            self.search_fixed_first(x, bps, head, plan);
+        }
+        if self.level.max_lpc > 0 && n >= 16 {
+            self.peak = x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs()));
+            self.reg = BASE_RIDGE;
+            let mut gap = 0.0f64;
+            for w in 0..self.level.windows.len() {
+                gap = gap.max(self.search_lpc(x, bps, head, w, plan));
+            }
+            // A predictable signal can sit far above the size its own error energy promises:
+            // the quantised coefficients of a badly conditioned fit are too coarse. A little
+            // ridge on the autocorrelation shrinks them, and each amount gives a different
+            // set to cost exactly. Ordinary audio stays within a fraction of a bit of its
+            // estimate and never pays for this.
+            if gap > GAP_BITS {
+                for &ridge in self.level.ridges {
+                    self.reg = ridge;
+                    // The first window's autocorrelation is still in `autocs[0]`.
+                    self.fit_lpc(x, bps, head, 0, plan);
+                }
+            }
+        }
+        #[cfg(test)]
+        if self.reference {
+            return;
+        }
+        self.search_fixed(x, bps, head, plan);
+    }
+
+    /// The fixed-predictor search as it was before bounds: first, every ranked order coded.
+    #[cfg(test)]
+    fn search_fixed_first<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+        let n = x.len();
         let top = 4usize.min(n - 1);
-        // Rank the orders by a one-pass estimate; the leaders are then coded exactly.
         let mut rank = [0usize, 1, 2, 3, 4];
         if self.level.fixed_tries <= top && n >= 5 {
             let sums = fixed::abs_sums(x);
@@ -343,24 +382,63 @@ impl Analyzer {
                 std::mem::swap(&mut plan.rice, &mut self.cand_rice);
             }
         }
-        if self.level.max_lpc > 0 && n >= 16 {
-            self.peak = x.iter().fold(0u64, |m, &v| m.max(v.into().unsigned_abs()));
-            self.reg = BASE_RIDGE;
-            let mut gap = 0.0f64;
-            for w in 0..self.level.windows.len() {
-                gap = gap.max(self.search_lpc(x, bps, head, w, plan));
+    }
+
+    /// The fixed predictors. They come after linear prediction, so that a residual's lower
+    /// bound can usually skip its exact search; ties still go to them over linear prediction
+    /// and to the better-ranked order, as if they had been searched first in rank order.
+    fn search_fixed<T: Sample>(&mut self, x: &[T], bps: u32, head: u64, plan: &mut Plan) {
+        let n = x.len();
+        let top = 4usize.min(n - 1);
+        // Rank the orders by a one-pass estimate; the leaders are then coded exactly.
+        let mut rank = [0usize, 1, 2, 3, 4];
+        let mut est = [0u64; 5];
+        if n >= 5 {
+            let sums = fixed::abs_sums(x);
+            let count = (n - 4) as u64;
+            for (o, e) in est.iter_mut().enumerate() {
+                *e = fixed::rough_bits(sums[o], count) + o as u64 * u64::from(bps) * 256;
             }
-            // A predictable signal can sit far above the size its own error energy promises:
-            // the quantised coefficients of a badly conditioned fit are too coarse. A little
-            // ridge on the autocorrelation shrinks them, and each amount gives a different
-            // set to cost exactly. Ordinary audio stays within a fraction of a bit of its
-            // estimate and never pays for this.
-            if gap > GAP_BITS {
-                for &ridge in self.level.ridges {
-                    self.reg = ridge;
-                    // The first window's autocorrelation is still in `autocs[0]`.
-                    self.fit_lpc(x, bps, head, 0, plan);
-                }
+            if self.level.fixed_tries <= top {
+                rank[..=top].sort_by_key(|&o| est[o]);
+            }
+        }
+        let tries = self.level.fixed_tries.min(top + 1);
+        // Search the likely winner first, so that it bounds the others; `rank` order still
+        // settles ties.
+        let mut visit = [0usize, 1, 2, 3, 4];
+        visit[..tries].sort_by_key(|&i| est[rank[i]]);
+        // Rank of the fixed order in `plan`, if it holds one.
+        let mut held = usize::MAX;
+        for &i in &visit[..tries] {
+            let order = rank[i];
+            // Whether `bits` takes the place of what `plan` holds.
+            let wins = |bits: u64, plan: &Plan| {
+                bits < plan.bits
+                    || bits == plan.bits
+                        && match plan.kind {
+                            Kind::Lpc(_) => true,
+                            Kind::Fixed(_) => i < held,
+                            _ => false,
+                        }
+            };
+            if !fixed::residual(x, order, bps, &mut self.cand) {
+                continue;
+            }
+            let fixed_bits = head + order as u64 * u64::from(bps);
+            self.rice
+                .prepare(&self.cand, n, order, self.level.rice_order);
+            if !wins(fixed_bits + self.rice.bound(), plan) {
+                continue;
+            }
+            self.rice.plan_prepared(&self.cand, &mut self.cand_rice);
+            let bits = fixed_bits + self.cand_rice.bits;
+            if wins(bits, plan) {
+                plan.bits = bits;
+                plan.kind = Kind::Fixed(order as u8);
+                held = i;
+                std::mem::swap(&mut plan.res, &mut self.cand);
+                std::mem::swap(&mut plan.rice, &mut self.cand_rice);
             }
         }
     }
