@@ -74,7 +74,7 @@ pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossfade_core::{Channel::*, SampleFormat};
+    use crossfade_core::{Channel::*, SampleFormat, Tags};
 
     #[test]
     fn an_internal_error_keeps_its_text() {
@@ -145,17 +145,29 @@ mod tests {
 
     #[test]
     fn channel_orders_follow_rfc_9639() {
-        let positioned: [(u8, &[Channel]); 6] = [
+        let positioned: [(u8, &[Channel]); 7] = [
             (1, &[FrontCenter]),
             (3, &[FrontLeft, FrontRight, FrontCenter]),
             (4, &[FrontLeft, FrontRight, BackLeft, BackRight]),
             (
                 5,
-                &[FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
+                &[FrontLeft, FrontRight, FrontCenter, SideLeft, SideRight],
             ),
             (
                 6,
-                &[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
+                &[FrontLeft, FrontRight, FrontCenter, Lfe, SideLeft, SideRight],
+            ),
+            (
+                7,
+                &[
+                    FrontLeft,
+                    FrontRight,
+                    FrontCenter,
+                    Lfe,
+                    BackCenter,
+                    SideLeft,
+                    SideRight,
+                ],
             ),
             (
                 8,
@@ -175,12 +187,6 @@ mod tests {
             let s = info(&block(48000, n, 16, 1));
             assert_eq!(s.audio.layout().positions(), Some(want), "{n}");
         }
-        // 7 channels need a back-centre position, which `Channel` lacks.
-        let seven = info(&block(48000, 7, 16, 1));
-        assert_eq!(
-            seven.audio.layout(),
-            &ChannelLayout::unpositioned(7).unwrap()
-        );
         assert_eq!(info(&block(48000, 2, 16, 1)).audio.layout().channels(), 2);
     }
 
@@ -188,5 +194,53 @@ mod tests {
     fn the_extradata_is_passed_through_as_given() {
         let b = block(48000, 2, 16, 1);
         assert_eq!(stream_info(&b, &[1, 2, 3]).unwrap().extradata, [1, 2, 3]);
+    }
+
+    fn masked(channels: u8, value: &str) -> ChannelLayout {
+        let mut stream = info(&block(48000, channels, 16, 1));
+        let mut tags = Tags::new();
+        tags.push("waveformatextensible_channel_mask", value);
+        apply_channel_mask(&mut stream, &tags).unwrap();
+        stream.audio.layout().clone()
+    }
+
+    #[test]
+    fn a_channel_mask_tag_sets_the_layout() {
+        let side = ChannelLayout::from_mask(0x060F, 6).unwrap();
+        let back = ChannelLayout::from_mask(0x003F, 6).unwrap();
+        // With or without the prefix, in either case, with spaces around it.
+        for value in ["0x060F", "0X060f", "60F", " 0x60f "] {
+            assert_eq!(masked(6, value), side, "{value:?}");
+        }
+        assert_eq!(masked(6, "0x003F"), back);
+        assert_eq!(masked(1, "0x1").positions(), Some(&[FrontLeft][..]));
+        assert_eq!(masked(2, "0x0C").positions(), Some(&[Lfe, BackLeft][..]));
+    }
+
+    #[test]
+    fn an_invalid_channel_mask_tag_is_ignored() {
+        let default = info(&block(48000, 6, 16, 1)).audio.layout().clone();
+        for value in [
+            "",
+            "0x",
+            "zz",
+            "0x3",
+            "0x7FF",
+            "0x1FFFFFFFF",
+            "-1",
+            "0x060F0000",
+            "0x40000",
+            "6.0",
+        ] {
+            assert_eq!(masked(6, value), default, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn no_tag_leaves_the_default_layout() {
+        let mut stream = info(&block(48000, 6, 16, 1));
+        let before = stream.clone();
+        apply_channel_mask(&mut stream, &Tags::new()).unwrap();
+        assert_eq!(stream, before);
     }
 }
