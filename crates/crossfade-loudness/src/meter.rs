@@ -8,10 +8,10 @@
 //! Only `+ - * /`, `sqrt`, comparisons and `libm` are used: no `std` transcendental function
 //! and no `mul_add`, so the bits are the same on every platform.
 
+use crate::MAX_CHANNELS;
 use crate::channel::ChannelRole;
 use crate::error::{Error, Result};
 use crate::kweight::{Biquad, KWeighting};
-use crate::MAX_CHANNELS;
 
 /// Sub-blocks per second (20 ms each).
 const SUB_PER_SEC: u64 = 50;
@@ -83,6 +83,8 @@ pub struct Meter {
     short_term_max: f64,
     /// Powers of the 400 ms blocks above the absolute gate, one per 100 ms.
     gate_blocks: Vec<f64>,
+    /// Powers of the 3 s blocks at or above the absolute gate, one per 100 ms (range only).
+    range_blocks: Vec<f64>,
     sanitised: u64,
 }
 
@@ -118,6 +120,7 @@ impl Meter {
             short_term: 0.0,
             short_term_max: 0.0,
             gate_blocks: Vec::new(),
+            range_blocks: Vec::new(),
             sanitised: 0,
         })
     }
@@ -211,6 +214,11 @@ impl Meter {
             let p = self.window_power(SHORT_TERM_SUBS);
             self.short_term = p;
             self.short_term_max = self.short_term_max.max(p);
+            let since = self.sub_count - SHORT_TERM_SUBS as u64;
+            if self.options.loudness_range && since % GATE_HOP_SUBS == 0 && p >= self.abs_gate_power
+            {
+                self.range_blocks.push(p);
+            }
         }
     }
 
@@ -265,10 +273,33 @@ impl Meter {
         lufs(sum / kept as f64)
     }
 
-    /// Bytes held on the heap: 8 per 100 ms of programme above the absolute gate, plus a few
-    /// numbers per channel. Silence costs nothing.
+    /// Loudness range in LU (EBU Tech 3342): 3 s blocks every 100 ms, absolute gate -70 LUFS,
+    /// relative gate -20 LU, then the 95th minus the 10th percentile (nearest rank, as the
+    /// Tech 3342 MATLAB listing rounds). `None` when disabled in [`Options`], or when no 3 s
+    /// block is above the gate.
+    pub fn loudness_range(&self) -> Option<f64> {
+        let n = self.range_blocks.len();
+        if n == 0 {
+            return None;
+        }
+        let mean = self.range_blocks.iter().sum::<f64>() / n as f64;
+        let threshold = mean * 0.01;
+        let mut kept: Vec<f64> = self
+            .range_blocks
+            .iter()
+            .copied()
+            .filter(|&p| p >= threshold)
+            .collect();
+        kept.sort_unstable_by(f64::total_cmp);
+        let rank = |percent: usize| (((kept.len() - 1) * percent + 50) / 100).min(kept.len() - 1);
+        let (low, high) = (lufs(kept[rank(10)])?, lufs(kept[rank(95)])?);
+        Some(high - low)
+    }
+
+    /// Bytes held on the heap: 8 per 100 ms of programme above the absolute gate (twice that
+    /// with the loudness range on), plus a few numbers per channel. Silence costs nothing.
     pub fn heap_bytes(&self) -> usize {
-        self.gate_blocks.capacity() * 8
+        (self.gate_blocks.capacity() + self.range_blocks.capacity()) * 8
             + self.roles.capacity() * size_of::<ChannelRole>()
             + self.weights.capacity() * 8
             + self.stages.capacity() * size_of::<[Stage; 2]>()
