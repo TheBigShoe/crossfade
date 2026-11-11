@@ -260,3 +260,44 @@ fn dropping_a_serial_stage_joins_its_thread() {
     drop(stage);
     assert_eq!(Arc::strong_count(&alive), 1);
 }
+
+fn fails_on_workers(_: &mut (), x: u64) -> u64 {
+    assert!(
+        std::thread::current().name() != Some(THREAD_NAME),
+        "item {x} on a worker"
+    );
+    x
+}
+
+/// A worker whose item panicked and whose state then cannot be rebuilt dies, but only after
+/// its result is in: nothing waits forever for it, and the caller runs what is left. (Which
+/// items the worker gets depends on timing; whatever it gets must come back.)
+#[test]
+fn a_worker_that_cannot_rebuild_its_state_still_reports_its_item() {
+    for _ in 0..50 {
+        let made = Arc::new(AtomicUsize::new(0));
+        let m = Arc::clone(&made);
+        let mut p: Ordered<u64, u64, ()> = Ordered::new(
+            1,
+            8,
+            move || assert!(m.fetch_add(1, Ordering::SeqCst) == 0, "no second state"),
+            fails_on_workers,
+        );
+        for x in 0..8 {
+            p.submit(x);
+        }
+        let mut got = Vec::new();
+        while let Some(r) = p.next(&mut ()) {
+            got.push(r);
+        }
+        assert_eq!(got.len(), 8);
+        // The worker dies at its first item, so at most one result is its panic.
+        assert!(got.iter().filter(|r| r.is_err()).count() <= 1);
+        for (x, r) in got.iter().enumerate() {
+            match r {
+                Err(Panicked(what)) => assert_eq!(what, &format!("item {x} on a worker")),
+                Ok(v) => assert_eq!(*v, x as u64),
+            }
+        }
+    }
+}
