@@ -3,6 +3,7 @@
 
 mod channel;
 mod error;
+mod gain;
 mod kweight;
 mod meter;
 mod peak;
@@ -12,5 +13,6 @@ pub const MAX_CHANNELS: usize = 64;
 
 pub use channel::ChannelRole;
 pub use error::{Error, Result};
+pub use gain::{Gain, normalisation_gain};
 pub use kweight::{Biquad, KWeighting, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE};
-pub use meter::{Meter, Options, to_db};
+pub use meter::{Measurements, Meter, Options, to_db};

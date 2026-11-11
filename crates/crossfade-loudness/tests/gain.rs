@@ -37,9 +37,18 @@ fn nothing_to_measure_means_unity() {
             limited_by_true_peak: false
         }
     );
-    assert_eq!(normalisation_gain(Some(f64::NAN), -16.0, 0.5, -1.0).linear, 1.0);
-    assert_eq!(normalisation_gain(Some(-23.0), f64::NAN, 0.5, -1.0).linear, 1.0);
-    assert_eq!(normalisation_gain(Some(f64::NEG_INFINITY), -16.0, 0.5, -1.0).linear, 1.0);
+    assert_eq!(
+        normalisation_gain(Some(f64::NAN), -16.0, 0.5, -1.0).linear,
+        1.0
+    );
+    assert_eq!(
+        normalisation_gain(Some(-23.0), f64::NAN, 0.5, -1.0).linear,
+        1.0
+    );
+    assert_eq!(
+        normalisation_gain(Some(f64::NEG_INFINITY), -16.0, 0.5, -1.0).linear,
+        1.0
+    );
 }
 
 #[test]

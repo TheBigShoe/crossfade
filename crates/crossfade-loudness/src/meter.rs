@@ -59,6 +59,24 @@ impl Stage {
     }
 }
 
+/// Every reading at once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measurements {
+    /// LUFS, `None` where there is no loudness to report (see [`Meter::integrated`]).
+    pub integrated: Option<f64>,
+    pub momentary: Option<f64>,
+    pub momentary_max: Option<f64>,
+    pub short_term: Option<f64>,
+    pub short_term_max: Option<f64>,
+    /// LU.
+    pub loudness_range: Option<f64>,
+    /// Linear, over all channels.
+    pub sample_peak: f64,
+    /// Linear, over all channels; `None` with true peak off.
+    pub true_peak: Option<f64>,
+    pub frames: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Meter {
     rate: u32,
@@ -313,6 +331,26 @@ impl Meter {
         let rank = |percent: usize| (((kept.len() - 1) * percent + 50) / 100).min(kept.len() - 1);
         let (low, high) = (lufs(kept[rank(10)])?, lufs(kept[rank(95)])?);
         Some(high - low)
+    }
+
+    /// All readings, as the signal stands now.
+    pub fn measurements(&self) -> Measurements {
+        Measurements {
+            integrated: self.integrated(),
+            momentary: self.momentary(),
+            momentary_max: self.momentary_max(),
+            short_term: self.short_term(),
+            short_term_max: self.short_term_max(),
+            loudness_range: self.loudness_range(),
+            sample_peak: self.sample_peak(),
+            true_peak: self.true_peak(),
+            frames: self.frames,
+        }
+    }
+
+    /// The final readings, ending the meter.
+    pub fn finish(self) -> Measurements {
+        self.measurements()
     }
 
     /// Largest sample magnitude per channel (linear, 1.0 is full scale); 0 for excluded channels.
