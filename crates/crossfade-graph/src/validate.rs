@@ -86,13 +86,14 @@ pub(crate) fn resolve(
             .filter(|_| out_format == in_spec.format()),
         ..StreamInfo::new(0, codec, out_spec.clone(), input.time_base)
     };
-    let budget = if threads == 0 {
-        auto_thread_count()
-    } else {
-        threads
+    let threaded = (is_threaded(input.codec), is_threaded(codec));
+    let (decoder_threads, encoder_threads) = match (threads, threaded) {
+        // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
+        (0, (true, false)) => (0, 1),
+        (0, (false, true)) => (1, 0),
+        (0, (d, e)) => share_threads(auto_thread_count(), d, e),
+        (n, (d, e)) => share_threads(n, d, e),
     };
-    let (decoder_threads, encoder_threads) =
-        share_threads(budget, is_threaded(input.codec), is_threaded(codec));
     let codecs = Codecs {
         decoder: decoder_for_threads(input, decoder_threads)?,
         encoder: encoder_for_threads(codec, &out_spec, &options, encoder_threads)?,
