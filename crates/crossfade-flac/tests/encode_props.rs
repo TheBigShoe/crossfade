@@ -16,6 +16,7 @@ fn config(rate: usize, channels: u8, bits: u8, level: u8) -> EncoderConfig {
         channels,
         bits_per_sample: bits,
         level,
+        threads: 1,
     }
 }
 

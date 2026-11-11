@@ -69,7 +69,9 @@ impl Drop for EndGuard<'_> {
     }
 }
 
-/// `notify` is called on the worker thread; a UI forwards it to its own.
+/// `notify` is called on the worker thread; a UI forwards it to its own. The queue starts one
+/// job at a time, so each job may have the whole machine: `limits.max_threads` is passed on
+/// as given (the default, 0, lets the encoder choose).
 pub struct ThreadRunner {
     limits: Limits,
     notify: Notify,

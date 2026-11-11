@@ -49,6 +49,7 @@ pub mod encode;
 pub mod error;
 pub mod frame;
 pub mod md5;
+mod pool;
 pub mod streaminfo;
 mod subframe;
 

@@ -260,6 +260,7 @@ fn oversized_declared_lengths_on_tiny_inputs_allocate_nothing() {
         max_alloc_bytes: 64,
         max_nesting_depth: 4,
         max_packet_bytes: 64,
+        ..Limits::default()
     };
     for kind in [1u8, 3, 4, 5, 6, 99] {
         let mut bytes = b"fLaC".to_vec();

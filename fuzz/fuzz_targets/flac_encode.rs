@@ -1,8 +1,8 @@
 #![no_main]
 //! The standalone encoder's property: whatever format and samples the bytes describe, the
 //! output decodes to exactly the input, the MD5 in the final STREAMINFO matches, no frame is
-//! larger than one made of verbatim subframes, and chunked writes give the same bytes as
-//! exact blocks. Panics by design when any of that fails.
+//! larger than one made of verbatim subframes, and chunked writes, on one to three threads,
+//! give the same bytes and STREAMINFO as exact blocks. Panics by design when any of that fails.
 
 use crossfade_flac::{Decoder, Encoder, EncoderConfig, Verification, frame};
 use libfuzzer_sys::fuzz_target;
@@ -22,6 +22,7 @@ fuzz_target!(|data: &[u8]| {
         channels,
         bits_per_sample: bits,
         level: level % 9,
+        threads: 1,
     };
     let ch = usize::from(channels);
     let width = usize::from(bits).div_ceil(8);
@@ -86,8 +87,12 @@ fuzz_target!(|data: &[u8]| {
     assert!(back == samples, "decoded samples differ from the input");
     assert_eq!(dec.finish().unwrap(), Verification::Md5Matched);
 
-    // Arbitrary chunking gives the same stream.
-    let mut chunked = Encoder::new(config).unwrap();
+    // Arbitrary chunking gives the same stream, whatever the thread count.
+    let mut chunked = Encoder::new(EncoderConfig {
+        threads: 1 + usize::from(*seed % 3),
+        ..config
+    })
+    .unwrap();
     let mut out = Vec::new();
     let step = (usize::from(*seed) + 1) * ch;
     for chunk in samples.chunks(step) {

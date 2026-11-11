@@ -1,12 +1,15 @@
 //! Development tool: PCM (raw or WAV) in, a native `.flac` out, with the encoder's own timing.
 //!
 //! ```text
-//! flac_encode [--level N] [--rate HZ --channels N --bits N] [--time N] IN OUT
+//! flac_encode [--level N] [--threads N] [--rate HZ --channels N --bits N] [--time N] IN OUT
 //! ```
 //!
 //! Raw input is signed little-endian, `ceil(bits / 8)` bytes per sample; a WAV (PCM, any
 //! width) supplies its own format. `--time N` encodes N times and prints the best
-//! encode-only time (input already in memory) to stderr.
+//! encode-only time (input already in memory) to stderr. `--threads N` is
+//! `EncoderConfig::threads` (default 1; 0 means the machine's parallelism); with one thread the
+//! input goes in block by block through `encode_block`, otherwise through `write` in chunks
+//! of 4096 sample frames, as a streaming caller would.
 use crossfade_flac::{Encoder, EncoderConfig};
 use std::time::Instant;
 
@@ -49,8 +52,8 @@ fn decode(bytes: &[u8], bits: u8, unsigned8: bool) -> Vec<i32> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let (mut level, mut rate, mut channels, mut bits, mut times) =
-        (5u8, 44_100u32, 2u8, 16u8, 0usize);
+    let (mut level, mut rate, mut channels, mut bits, mut times, mut threads) =
+        (5u8, 44_100u32, 2u8, 16u8, 0usize, 1usize);
     let mut files = Vec::new();
     while let Some(a) = args.next() {
         let mut num = |name: &str| -> u32 {
@@ -64,6 +67,7 @@ fn main() {
             "--channels" => channels = num("--channels") as u8,
             "--bits" => bits = num("--bits") as u8,
             "--time" => times = num("--time") as usize,
+            "--threads" => threads = num("--threads") as usize,
             _ => files.push(a),
         }
     }
@@ -78,13 +82,21 @@ fn main() {
         )
     });
     config.level = level;
+    config.threads = threads;
 
     let encode = || {
         let mut enc = Encoder::new(config).expect("config");
         let per = enc.block_size() * usize::from(config.channels);
         let mut frames = Vec::with_capacity(samples.len() * 2);
-        for chunk in samples.chunks(per) {
-            enc.encode_block(chunk, &mut frames).expect("encode");
+        if threads == 1 {
+            for chunk in samples.chunks(per) {
+                enc.encode_block(chunk, &mut frames).expect("encode");
+            }
+        } else {
+            for chunk in samples.chunks(4096 * usize::from(config.channels)) {
+                enc.write(chunk, &mut frames).expect("encode");
+            }
+            enc.flush(&mut frames).expect("encode");
         }
         (enc.finish(), frames)
     };

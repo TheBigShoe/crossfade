@@ -1,4 +1,4 @@
-use crossfade_codec::{EncodeOptions, decoder_for, encoder_for};
+use crossfade_codec::{EncodeOptions, decoder_for, encoder_for, encoder_for_threads};
 use crossfade_core::{
     AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Packet, SampleFormat, StreamInfo,
     TimeBase,
@@ -52,6 +52,12 @@ fn flac_is_routed_to_the_real_codecs() {
         compression_level: Some(5),
     };
     assert!(encoder_for(CodecId::Flac, &audio, &opts).is_ok());
+    // A thread count is accepted by every encoder, and PCM ignores it.
+    for threads in [0, 1, 4] {
+        assert!(encoder_for_threads(CodecId::Flac, &audio, &opts, threads).is_ok());
+        let pcm = CodecId::pcm_for(SampleFormat::S16);
+        assert!(encoder_for_threads(pcm, &audio, &EncodeOptions::default(), threads).is_ok());
+    }
 }
 #[test]
 fn the_factories_build_big_endian_and_signed_8_bit_pcm() {

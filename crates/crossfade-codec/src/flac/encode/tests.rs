@@ -532,3 +532,60 @@ fn hostile_24_bit_samples_never_code_larger_than_raw_samples() {
         }
     }
 }
+
+/// As `encode`, with the standalone encoder on `threads` threads.
+fn encode_threads(
+    spec: &AudioSpec,
+    level: Option<u8>,
+    samples: &[i32],
+    chunk: usize,
+    threads: usize,
+) -> Output {
+    let mut e = encoder_threads(spec, &opts(level), threads).unwrap();
+    let per = chunk * usize::from(spec.layout().channels());
+    let mut packets = Vec::new();
+    let mut pump = |e: &mut Box<dyn Encoder>| loop {
+        let mut p = Packet::default();
+        if !e.receive_packet(&mut p).unwrap() {
+            break;
+        }
+        packets.push(p);
+    };
+    for piece in samples.chunks(per.max(1)) {
+        e.send_frame(&audio_frame(spec, piece)).unwrap();
+        pump(&mut e);
+    }
+    e.drain();
+    pump(&mut e);
+    let extradata = e.extradata().to_vec();
+    Output { packets, extradata }
+}
+
+/// Contents, order, timestamps and durations of every packet, and the final STREAMINFO, do
+/// not depend on the thread count (packets may only come out later).
+#[test]
+fn the_packet_sequence_is_the_same_at_any_thread_count() {
+    for (format, channels, level, frames, chunk) in [
+        (SampleFormat::S16, 2u16, Some(0), 1152 * 30 + 17, 1000),
+        (SampleFormat::S16, 2, None, 4096 * 12 + 1, 4096),
+        (SampleFormat::S24, 6, Some(8), 4096 * 5 + 300, 7000),
+        (SampleFormat::U8, 1, Some(3), 4096 * 9, 333),
+        (SampleFormat::S32, 2, Some(5), 4096 * 3 + 5, 50_000),
+        (SampleFormat::S16, 1, Some(5), 10, 10),
+        (SampleFormat::S16, 2, Some(5), 0, 10),
+    ] {
+        let spec = spec(48000, format, channels);
+        let samples = signal(usize::from(channels), frames, bits(format), 21);
+        let want = encode(&spec, level, &samples, chunk);
+        let block = if level.unwrap_or(5) <= 2 { 1152 } else { 4096 };
+        check_stream(&spec, &samples, &want, block);
+        for threads in [1, 2, 4, 0] {
+            let got = encode_threads(&spec, level, &samples, chunk, threads);
+            assert_eq!(
+                flat(&got),
+                flat(&want),
+                "{format:?} x{channels} level {level:?}, {threads} threads"
+            );
+        }
+    }
+}

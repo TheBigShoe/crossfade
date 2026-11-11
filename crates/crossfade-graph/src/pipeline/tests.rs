@@ -148,7 +148,7 @@ fn build(
     seen_tags: &Rc<RefCell<Option<Tags>>>,
 ) -> Result<Pipeline, Error> {
     let (log, seen) = (log.clone(), seen_tags.clone());
-    Pipeline::build(FormatId::Wav, format, d, s, move |_, tags| {
+    Pipeline::build(FormatId::Wav, format, d, s, 0, move |_, tags| {
         *seen.borrow_mut() = Some(tags.clone());
         Ok(Box::new(RecordingMuxer { log }))
     })
