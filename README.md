@@ -93,7 +93,9 @@ counted, and the command line prints a warning with the count.
 just run
 ```
 
-Open or drop files to inspect them, convert with the same options the command
+Open or drop files to inspect them (a zoomable waveform and a loudness readout
+appear under the file name; scroll to pan, pinch or Cmd/Ctrl-scroll to zoom,
+double-click to fit), convert with the same options the command
 line has, and watch a queue with progress, cancel and retry. Every queued job
 can show the equivalent `crossfade` command. Settings, themes and key bindings
 are plain files in the config folder (`~/.config/crossfade` on macOS and
