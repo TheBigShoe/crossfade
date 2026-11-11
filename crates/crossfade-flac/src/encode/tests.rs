@@ -339,3 +339,26 @@ fn exact_lpc_codings_per_level() {
         assert_eq!(Level::new(level).ridges.len(), ridges[l], "level {level}");
     }
 }
+
+/// The side channel of a 32-bit stream is analysed as i64. When its values are small enough
+/// for an exact covariance (wasted bits removed, or quiet audio), its LPC orders are scored and
+/// coded by the same table as any other channel's.
+#[test]
+fn a_wide_side_channel_that_fits_is_scored_like_any_other() {
+    let music: Vec<i64> = (0..4096)
+        .map(|t| {
+            let t = f64::from(t);
+            let tone =
+                (t * 0.06).sin() * 0.4 + (t * 0.0007).sin() * 0.25 + (t * 0.0213).sin() * 0.1;
+            (tone * 20_000.0) as i64
+        })
+        .zip(pseudo(10, 4096, 5))
+        .map(|(a, b)| a + i64::from(b))
+        .collect();
+    for (level, coded) in [(5u8, 2usize), (7, 2), (8, 3)] {
+        let mut plan = Plan::new(4096);
+        let mut a = Analyzer::new(Level::new(level), 32, true);
+        a.analyze(&music, 33, &mut plan);
+        assert_eq!(a.window_codings, coded, "level {level}");
+    }
+}

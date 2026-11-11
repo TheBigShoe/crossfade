@@ -115,20 +115,29 @@ fn lagged_sums(v: &mut Vec<i32>, out: &mut [i64]) {
     let n = v.len();
     // Zeros past the end let every lag run over the same range.
     v.resize(n + out.len() + 4, 0);
-    // Four lags per pass: four independent sums, and each sample loaded once for them.
     for (group, o) in out.chunks_mut(4).enumerate() {
         let lag = group * 4;
-        let (a, b) = (&v[..n], &v[lag..lag + n + 3]);
-        let mut acc = [0i64; 4];
-        for (i, &p) in a.iter().enumerate() {
-            let q: &[i32; 4] = b[i..i + 4].try_into().unwrap_or(&[0; 4]);
-            for k in 0..4 {
-                acc[k] += i64::from(p) * i64::from(q[k]);
-            }
-        }
+        let acc = four_lags(&v[..n], &v[lag..lag + n + 3]);
         o.copy_from_slice(&acc[..o.len()]);
     }
     v.truncate(n);
+}
+
+/// Four lagged sums in one pass: `a[i]` times `b[i..i + 4]` for every `i`, four independent
+/// sums with each sample loaded once for them. Its own function, with the four lags taken as
+/// `windows(4)` (a slice the compiler knows has four elements) rather than by indexing,
+/// because whether the loop vectorises must not depend on the caller: with an index inside,
+/// a whole-crate build (one codegen unit, or LTO) kept a bounds check and a scalar loop,
+/// several times slower.
+#[inline(never)]
+fn four_lags(a: &[i32], b: &[i32]) -> [i64; 4] {
+    let mut acc = [0i64; 4];
+    for (&p, q) in a.iter().zip(b.windows(4)) {
+        for k in 0..4 {
+            acc[k] += i64::from(p) * i64::from(q[k]);
+        }
+    }
+    acc
 }
 
 /// The covariance of a block for predictors up to order `p`: `phi[a][b]` is the sum over
@@ -150,8 +159,8 @@ impl Covariance {
         }
     }
 
-    /// Fills the matrix for `x` and order `p`; false when `x` is not `i32` samples whose
-    /// sums are sure to fit an `i64`. `scratch` is reused.
+    /// Fills the matrix for `x` and order `p`; false when its sums are not sure to fit an
+    /// `i64`. `scratch` is reused.
     pub(super) fn compute<T: Sample>(
         &mut self,
         x: &[T],
@@ -160,17 +169,16 @@ impl Covariance {
         scratch: &mut Vec<i32>,
     ) -> bool {
         let n = x.len();
-        let Some(x) = T::as_i32(x) else {
-            return false;
-        };
         if p >= n || int_scale(n, peak).is_none() {
             return false;
         }
         (self.p, self.n) = (p, n);
+        // Within that bound every sample fits an i32, whatever type it came in.
         scratch.clear();
-        scratch.extend_from_slice(x);
+        scratch.extend(x.iter().map(|&v| v.low32()));
         let mut full = [0i64; MAX_ORDER + 1];
         lagged_sums(scratch, &mut full[..=p]);
+        let x = &scratch[..];
         // The whole-block sums with the ends trimmed: for entry (a, b), t = i - b runs over
         // p - b..n - b, where the lagged sum covers 0..n - d.
         let v = |t: usize| i64::from(x[t]);
@@ -612,6 +620,8 @@ impl Acc for i64 {
 
 /// One order, sample by sample, with the coefficients unrolled: the shape the compiler turns
 /// into one vector multiply-add per coefficient for several samples at once.
+// A function of its own, so its shape (and its vectorisation) never depends on the caller.
+#[inline(never)]
 fn kernel<A: Acc, const N: usize>(x: &[i32], c: &[i32; N], shift: u32, out: &mut Vec<u32>) -> bool {
     let m = x.len() - N;
     out.clear();
@@ -1027,10 +1037,18 @@ mod tests {
                 }
             }
         }
-        // Too wide for exact sums, or not i32 samples: no screening.
+        // Too wide for exact sums: no screening.
         let wide = vec![i32::MIN, i32::MAX, 5, 7];
         assert!(!Covariance::new().compute(&wide, 2, 1 << 31, &mut scratch));
-        assert!(!Covariance::new().compute(&[1i64, 2, 3, 4], 2, 4, &mut scratch));
+        // The 33-bit side channel of a 32-bit stream comes as i64; small enough, it gets the
+        // same exact covariance as the same values in i32.
+        let x32: Vec<i32> = (0..500).map(|t| ((t * 7919) % 2001) - 1000).collect();
+        let x64: Vec<i64> = x32.iter().map(|&v| i64::from(v)).collect();
+        let (mut a, mut b) = (Covariance::new(), Covariance::new());
+        assert!(a.compute(&x32, 8, 1000, &mut scratch));
+        assert!(b.compute(&x64, 8, 1000, &mut scratch));
+        let q = [3000, -1200, 400, 7, -9, 11, 0, 2];
+        assert_eq!(a.scaled_energy(&q, 12), b.scaled_energy(&q, 12));
     }
 
     #[test]

@@ -13,6 +13,8 @@ const NARROW_BITS: u32 = 27;
 /// Fills `out` with the folded residuals of the order-`order` predictor over `x`
 /// (`x.len() - order` of them). Returns false when a residual does not fit the format's
 /// 32-bit limit (it must not be `i32::MIN` either); `out` is then not meaningful.
+// Kept out of its callers: inlined into them under fat LTO it compiled slower.
+#[inline(never)]
 pub(super) fn residual<T: Sample>(x: &[T], order: usize, bps: u32, out: &mut Vec<u32>) -> bool {
     let n = x.len();
     out.clear();
@@ -104,6 +106,7 @@ pub(super) fn abs_sums<T: Sample>(x: &[T]) -> [u64; 5] {
 
 /// [`abs_sums`] in 32-bit lanes: sums of `2^31 / (16 peak)` differences at a time cannot
 /// overflow, and then go into the 64-bit totals.
+#[inline(never)]
 fn abs_sums_narrow(x: &[i32], peak: u32) -> [u64; 5] {
     let biggest = 16 * u64::from(peak.max(1));
     let run = ((1u64 << 31) / biggest).clamp(1, 4096) as usize;

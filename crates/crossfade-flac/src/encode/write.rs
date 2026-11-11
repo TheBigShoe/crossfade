@@ -4,6 +4,8 @@ use super::analyze::{Kind, Plan, Sample};
 use super::bitsink::BitSink;
 use super::rice;
 
+// Kept out of its callers: inlined into them under fat LTO it compiled slower.
+#[inline(never)]
 pub(super) fn write_subframe<T: Sample>(sink: &mut BitSink, plan: &Plan, x: &[T]) {
     let kind = match plan.kind {
         Kind::Constant => 0,
