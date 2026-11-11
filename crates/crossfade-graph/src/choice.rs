@@ -179,8 +179,17 @@ mod tests {
     }
 
     #[test]
-    fn ogg_cannot_be_written_yet() {
-        assert!(what(output_codec(FormatId::Ogg, S16, None)).contains("ogg"));
+    fn ogg_writes_flac_only() {
+        assert_eq!(output_codec(FormatId::Ogg, S24, None), Ok(CodecId::Flac));
+        assert_eq!(
+            output_codec(FormatId::Ogg, S16, Some("flac")),
+            Ok(CodecId::Flac)
+        );
+        assert_eq!(
+            what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
+            "codec pcm cannot be written into ogg (ogg holds flac only)"
+        );
+        assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
     }
 
     #[test]
@@ -228,9 +237,10 @@ mod tests {
         assert!(can_hold(FormatId::Flac, Flac));
         assert!(!can_hold(FormatId::Wav, Flac));
         assert!(!can_hold(FormatId::Aiff, Flac));
-        for c in le.into_iter().chain(be).chain([Flac]) {
+        for c in le.into_iter().chain(be) {
             assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
         }
+        assert!(can_hold(FormatId::Ogg, Flac));
     }
 
     #[test]
