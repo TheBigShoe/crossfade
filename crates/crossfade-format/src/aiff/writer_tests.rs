@@ -467,3 +467,15 @@ fn a_true_depth_reads_back_from_what_was_written() {
     let (_, d) = crate::open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default()).unwrap();
     assert_eq!(d.streams()[0].bits_per_raw_sample, Some(20));
 }
+
+#[test]
+fn aiff_has_no_channel_mask_so_a_multichannel_layout_reads_back_unpositioned() {
+    let layout = ChannelLayout::from_mask(0x060F, 6).unwrap();
+    let s = stream(CodecId::PcmS16Be, 8000, layout);
+    let bytes = write(&s, &Tags::new(), &[&[0; 12]]).unwrap();
+    let (_, d) = crate::open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default()).unwrap();
+    assert_eq!(
+        d.streams()[0].audio.layout(),
+        &ChannelLayout::unpositioned(6).unwrap()
+    );
+}
