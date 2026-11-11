@@ -556,7 +556,7 @@ impl ConvertDialog {
             _ => "-3",
         };
         self.level_value.update(cx, |input, cx| {
-            input.set_placeholder(placeholder, window, cx)
+            input.set_placeholder(placeholder, window, cx);
         });
     }
 
