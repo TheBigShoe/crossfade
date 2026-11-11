@@ -288,3 +288,24 @@ fn bounded_search_chooses_what_the_exhaustive_order_chose() {
         }
     }
 }
+
+/// The ridge search scores every coefficient set by the error energy the block's covariance
+/// predicts and codes only the best `ridge_exact` of them: two at each level that has one.
+#[test]
+fn the_ridge_search_codes_only_its_best_predicted_candidates() {
+    // A 1 kHz sine at 192 kHz, 24 bits: about as predictable as audio gets.
+    let x: Vec<i32> = (0..4096)
+        .map(|t| {
+            let phase = f64::from(t) * std::f64::consts::TAU * 1000.0 / 192_000.0;
+            (phase.sin() * 0.99 * 8_388_607.0) as i32
+        })
+        .collect();
+    for level in 0..=8u8 {
+        let mut analyzer = Analyzer::new(Level::new(level), 24, false);
+        let mut plan = Plan::new(4096);
+        analyzer.analyze(&x, 24, &mut plan);
+        let want = if level >= 5 { 2 } else { 0 };
+        assert_eq!(analyzer.ridge_codings, want, "level {level}");
+        assert_eq!(Level::new(level).ridge_exact, 2);
+    }
+}

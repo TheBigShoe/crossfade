@@ -871,6 +871,73 @@ mod tests {
     }
 
     #[test]
+    fn covariance_energy_is_the_residual_energy_exactly() {
+        let mut state = 99u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut scratch = Vec::new();
+        for (n, depth, p) in [
+            (4096usize, 16u32, 12usize),
+            (4096, 24, 8),
+            (1000, 25, 12),
+            (40, 8, 3),
+        ] {
+            let lo = -(1i64 << (depth - 1));
+            let signals: [Vec<i32>; 2] = [
+                (0..n)
+                    .map(|_| (lo + (next() % (1u64 << depth)) as i64) as i32)
+                    .collect(),
+                // At the extreme, where the sums are largest.
+                (0..n)
+                    .map(|i| {
+                        if i % 3 == 0 {
+                            lo as i32
+                        } else {
+                            (-lo - 1) as i32
+                        }
+                    })
+                    .collect(),
+            ];
+            for x in &signals {
+                let peak = x
+                    .iter()
+                    .map(|&v| u64::from(v.unsigned_abs()))
+                    .max()
+                    .unwrap();
+                let mut cov = Covariance::new();
+                assert!(cov.compute(x, p, peak, &mut scratch));
+                for m in [1, p / 2 + 1, p] {
+                    for shift in [0u32, 9, 15] {
+                        let q: Vec<i32> = (0..m).map(|_| (next() % 32768) as i32 - 16384).collect();
+                        let want: i128 = (p..n)
+                            .map(|i| {
+                                let pred: i128 = (0..m)
+                                    .map(|j| i128::from(q[j]) * i128::from(x[i - 1 - j]))
+                                    .sum();
+                                let e = (i128::from(x[i]) << shift) - pred;
+                                e * e
+                            })
+                            .sum();
+                        assert_eq!(
+                            cov.scaled_energy(&q, shift),
+                            want,
+                            "n {n} depth {depth} m {m}"
+                        );
+                    }
+                }
+            }
+        }
+        // Too wide for exact sums, or not i32 samples: no screening.
+        let wide = vec![i32::MIN, i32::MAX, 5, 7];
+        assert!(!Covariance::new().compute(&wide, 2, 1 << 31, &mut scratch));
+        assert!(!Covariance::new().compute(&[1i64, 2, 3, 4], 2, 4, &mut scratch));
+    }
+
+    #[test]
     fn levinson_recovers_a_first_order_process() {
         let rho = 0.5;
         let autoc: Vec<f64> = (0..6).map(|k| 4.0 * f64::powi(rho, k)).collect();
