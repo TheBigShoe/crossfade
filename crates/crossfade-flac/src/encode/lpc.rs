@@ -115,20 +115,29 @@ fn lagged_sums(v: &mut Vec<i32>, out: &mut [i64]) {
     let n = v.len();
     // Zeros past the end let every lag run over the same range.
     v.resize(n + out.len() + 4, 0);
-    // Four lags per pass: four independent sums, and each sample loaded once for them.
     for (group, o) in out.chunks_mut(4).enumerate() {
         let lag = group * 4;
-        let (a, b) = (&v[..n], &v[lag..lag + n + 3]);
-        let mut acc = [0i64; 4];
-        for (i, &p) in a.iter().enumerate() {
-            let q: &[i32; 4] = b[i..i + 4].try_into().unwrap_or(&[0; 4]);
-            for k in 0..4 {
-                acc[k] += i64::from(p) * i64::from(q[k]);
-            }
-        }
+        let acc = four_lags(&v[..n], &v[lag..lag + n + 3]);
         o.copy_from_slice(&acc[..o.len()]);
     }
     v.truncate(n);
+}
+
+/// Four lagged sums in one pass: `a[i]` times `b[i..i + 4]` for every `i`, four independent
+/// sums with each sample loaded once for them. Its own function, with the four lags taken as
+/// `windows(4)` (a slice the compiler knows has four elements) rather than by indexing,
+/// because whether the loop vectorises must not depend on the caller: with an index inside,
+/// a whole-crate build (one codegen unit, or LTO) kept a bounds check and a scalar loop,
+/// several times slower.
+#[inline(never)]
+fn four_lags(a: &[i32], b: &[i32]) -> [i64; 4] {
+    let mut acc = [0i64; 4];
+    for (&p, q) in a.iter().zip(b.windows(4)) {
+        for k in 0..4 {
+            acc[k] += i64::from(p) * i64::from(q[k]);
+        }
+    }
+    acc
 }
 
 /// The covariance of a block for predictors up to order `p`: `phi[a][b]` is the sum over
@@ -612,6 +621,8 @@ impl Acc for i64 {
 
 /// One order, sample by sample, with the coefficients unrolled: the shape the compiler turns
 /// into one vector multiply-add per coefficient for several samples at once.
+// A function of its own, so its shape (and its vectorisation) never depends on the caller.
+#[inline(never)]
 fn kernel<A: Acc, const N: usize>(x: &[i32], c: &[i32; N], shift: u32, out: &mut Vec<u32>) -> bool {
     let m = x.len() - N;
     out.clear();
