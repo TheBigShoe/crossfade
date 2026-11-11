@@ -121,8 +121,10 @@ pub fn labelled_20_bit(flac: &[u8]) -> Vec<u8> {
 pub fn programme_flac_20_bit(rate: u32, seconds: u32) -> Vec<u8> {
     let wav = programme_wav(rate, seconds);
     let samples: Vec<i32> = wav[44..]
-        .chunks_exact(2)
-        .map(|b| i32::from(i16::from_le_bytes([b[0], b[1]])) << 4)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| i32::from(i16::from_le_bytes(*b)) << 4)
         .collect();
     let mut encoder = crossfade_flac::Encoder::new(crossfade_flac::EncoderConfig::new(rate, 2, 20))
         .expect("an encoder");
