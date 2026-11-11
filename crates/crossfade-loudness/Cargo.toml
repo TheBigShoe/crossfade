@@ -1,0 +1,23 @@
+[package]
+name = "crossfade-loudness"
+description = "Programme loudness and peak measurement to ITU-R BS.1770-4 and EBU R 128: integrated, momentary, short-term, loudness range, true peak. Bit-identical on every platform."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# libm only: std's transcendental functions are not guaranteed to give the same bits on every
+# platform, and a loudness figure feeds a normalising gain.
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "loudness"
+harness = false
