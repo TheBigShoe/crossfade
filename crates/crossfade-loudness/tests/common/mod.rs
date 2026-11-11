@@ -53,10 +53,15 @@ pub fn silence(rate: u32, channels: usize, ms: u32) -> Vec<f64> {
 
 /// A 1 kHz stereo sequence of (milliseconds, dBFS) steps.
 pub fn steps(rate: u32, seq: &[(u32, f64)]) -> Vec<f64> {
-    seq.iter().flat_map(|&(ms, db)| tone_db(rate, 2, db, ms)).collect()
+    seq.iter()
+        .flat_map(|&(ms, db)| tone_db(rate, 2, db, ms))
+        .collect()
 }
 
 pub fn near(got: Option<f64>, want: f64, tol: f64, what: &str) {
     let got = got.unwrap_or_else(|| panic!("{what}: no value"));
-    assert!((got - want).abs() <= tol, "{what}: {got} vs {want} (+-{tol})");
+    assert!(
+        (got - want).abs() <= tol,
+        "{what}: {got} vs {want} (+-{tol})"
+    );
 }

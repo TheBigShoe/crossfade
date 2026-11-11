@@ -9,7 +9,7 @@ mod meter;
 /// Most channels a meter accepts.
 pub const MAX_CHANNELS: usize = 64;
 
+pub use channel::ChannelRole;
 pub use error::{Error, Result};
 pub use kweight::{Biquad, KWeighting, MAX_SAMPLE_RATE, MIN_SAMPLE_RATE};
-pub use channel::ChannelRole;
 pub use meter::{Meter, Options};

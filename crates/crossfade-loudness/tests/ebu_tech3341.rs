@@ -33,7 +33,10 @@ fn case_02_stereo_sine_minus_33_reads_minus_33_lufs() {
 #[test]
 fn case_03_relative_gate_ignores_the_quiet_ends() {
     let mut m = meter(FS, &STEREO);
-    feed_all(&mut m, &steps(FS, &[(10_000, -36.0), (60_000, -23.0), (10_000, -36.0)]));
+    feed_all(
+        &mut m,
+        &steps(FS, &[(10_000, -36.0), (60_000, -23.0), (10_000, -36.0)]),
+    );
     near(m.integrated(), -23.0, TOL, "I");
 }
 
@@ -54,7 +57,10 @@ fn case_04_absolute_and_relative_gates_together() {
 #[test]
 fn case_05_a_loud_part_that_stays_above_the_relative_gate() {
     let mut m = meter(FS, &STEREO);
-    feed_all(&mut m, &steps(FS, &[(20_000, -26.0), (20_100, -20.0), (20_000, -26.0)]));
+    feed_all(
+        &mut m,
+        &steps(FS, &[(20_000, -26.0), (20_100, -20.0), (20_000, -26.0)]),
+    );
     near(m.integrated(), -23.0, TOL, "I");
 }
 
@@ -67,7 +73,10 @@ fn case_06_five_channel_weights() {
         ChannelRole::LeftSurround,
         ChannelRole::RightSurround,
     ];
-    let amps: Vec<f64> = [-28.0, -28.0, -24.0, -30.0, -30.0].iter().map(|&d| lin(d)).collect();
+    let amps: Vec<f64> = [-28.0, -28.0, -24.0, -30.0, -30.0]
+        .iter()
+        .map(|&d| lin(d))
+        .collect();
     let mut m = meter(FS, &roles);
     feed_all(&mut m, &tone(FS, &amps, 1000.0, 20_000));
     near(m.integrated(), -23.0, TOL, "I");
@@ -105,7 +114,12 @@ fn case_11_short_term_max_successive_values() {
         m.push(&silence(FS, 2, i * 150));
         m.push(&tone_db(FS, 2, -38.0 + f64::from(i), 3000));
         m.push(&silence(FS, 2, 3000 - i * 150));
-        near(m.short_term_max(), -38.0 + f64::from(i), TOL, &format!("segment {i}"));
+        near(
+            m.short_term_max(),
+            -38.0 + f64::from(i),
+            TOL,
+            &format!("segment {i}"),
+        );
     }
 }
 
@@ -141,6 +155,11 @@ fn case_14_momentary_max_successive_values() {
         m.push(&silence(FS, 2, i * 20));
         m.push(&tone_db(FS, 2, -38.0 + f64::from(i), 400));
         m.push(&silence(FS, 2, 400 - i * 20));
-        near(m.momentary_max(), -38.0 + f64::from(i), TOL, &format!("segment {i}"));
+        near(
+            m.momentary_max(),
+            -38.0 + f64::from(i),
+            TOL,
+            &format!("segment {i}"),
+        );
     }
 }

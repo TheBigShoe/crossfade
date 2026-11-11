@@ -27,7 +27,11 @@ impl fmt::Display for Error {
             ),
             Self::NoChannels => f.write_str("no channels"),
             Self::TooManyChannels { count } => {
-                write!(f, "{count} channels; at most {} are supported", crate::MAX_CHANNELS)
+                write!(
+                    f,
+                    "{count} channels; at most {} are supported",
+                    crate::MAX_CHANNELS
+                )
             }
         }
     }

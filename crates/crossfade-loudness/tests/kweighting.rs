@@ -38,7 +38,9 @@ fn coefficients_at_48k_equal_the_published_ones() {
 #[test]
 fn response_at_48k_matches_the_published_filter() {
     let k = KWeighting::new(48_000).unwrap();
-    for hz in [10.0, 38.0, 100.0, 1000.0, 1681.0, 4000.0, 10_000.0, 20_000.0] {
+    for hz in [
+        10.0, 38.0, 100.0, 1000.0, 1681.0, 4000.0, 10_000.0, 20_000.0,
+    ] {
         let want = db(&SHELF_B, &SHELF_A, 48e3, hz) + db(&HP_B, &HP_A, 48e3, hz);
         assert!((k.gain_db(hz) - want).abs() < 1e-6, "{hz} Hz");
     }
@@ -70,7 +72,18 @@ fn other_rates_keep_the_analogue_response() {
 
 #[test]
 fn every_supported_rate_gives_stable_filters() {
-    for rate in [MIN_SAMPLE_RATE, 11_025, 22_050, 32_000, 44_100, 48_000, 96_000, 192_000, 384_000, MAX_SAMPLE_RATE] {
+    for rate in [
+        MIN_SAMPLE_RATE,
+        11_025,
+        22_050,
+        32_000,
+        44_100,
+        48_000,
+        96_000,
+        192_000,
+        384_000,
+        MAX_SAMPLE_RATE,
+    ] {
         let k = KWeighting::new(rate).unwrap();
         for f in [k.shelf, k.highpass] {
             assert!(f.a[2].abs() < 1.0, "{rate}");
@@ -85,7 +98,10 @@ fn rates_outside_the_range_are_errors() {
         KWeighting::new(MIN_SAMPLE_RATE - 1).unwrap_err(),
         Error::SampleRate { rate: 7_999 }
     );
-    assert_eq!(KWeighting::new(0).unwrap_err(), Error::SampleRate { rate: 0 });
+    assert_eq!(
+        KWeighting::new(0).unwrap_err(),
+        Error::SampleRate { rate: 0 }
+    );
     assert_eq!(
         KWeighting::new(MAX_SAMPLE_RATE + 1).unwrap_err(),
         Error::SampleRate { rate: 1_048_576 }

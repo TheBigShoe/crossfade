@@ -79,5 +79,10 @@ fn the_relative_gate_drops_blocks_20_lu_under() {
     // range is far below the 30 dB it would be ungated); 15 dB under counts.
     let gated = lra(&[(30_000, -20.0), (30_000, -50.0)]).unwrap();
     assert!(gated < 15.0, "{gated}");
-    near(lra(&[(30_000, -20.0), (30_000, -35.0)]), 15.0, 1.0, "not gated");
+    near(
+        lra(&[(30_000, -20.0), (30_000, -35.0)]),
+        15.0,
+        1.0,
+        "not gated",
+    );
 }
