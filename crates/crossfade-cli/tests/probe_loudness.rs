@@ -34,7 +34,14 @@ fn tone_wav(dbfs: f64, seconds: u32) -> Vec<u8> {
 fn probe(wav: Vec<u8>, args: &[&str]) -> String {
     let mut io = MemoryIo::new();
     io.insert("a.wav", wav);
-    match run_command(args.iter().copied(), &mut io, &CancelToken::new(), &mut |_| {}).unwrap() {
+    match run_command(
+        args.iter().copied(),
+        &mut io,
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap()
+    {
         Outcome::Done(s) => s,
         other => panic!("{other:?}"),
     }
@@ -52,15 +59,29 @@ fn text_adds_one_loudness_line_after_the_streams() {
 
 #[test]
 fn json_carries_a_loudness_object() {
-    let out = probe(tone_wav(-23.0, 20), &["probe", "a.wav", "--loudness", "--json"]);
+    let out = probe(
+        tone_wav(-23.0, 20),
+        &["probe", "a.wav", "--loudness", "--json"],
+    );
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["schema"], 1);
     let l = &v["loudness"];
-    assert!((l["integrated_lufs"].as_f64().unwrap() + 23.0).abs() < 0.1, "{out}");
+    assert!(
+        (l["integrated_lufs"].as_f64().unwrap() + 23.0).abs() < 0.1,
+        "{out}"
+    );
     assert!(l["range_lu"].is_number() && l["true_peak_dbtp"].is_number());
     assert!((l["sample_peak_dbfs"].as_f64().unwrap() + 23.0).abs() < 0.01);
     let keys: Vec<_> = l.as_object().unwrap().keys().map(String::as_str).collect();
-    assert_eq!(keys, ["integrated_lufs", "range_lu", "true_peak_dbtp", "sample_peak_dbfs"]);
+    assert_eq!(
+        keys,
+        [
+            "integrated_lufs",
+            "range_lu",
+            "true_peak_dbtp",
+            "sample_peak_dbfs"
+        ]
+    );
 }
 
 #[test]
@@ -91,6 +112,12 @@ fn a_cancelled_loudness_pass_is_a_cancelled_outcome() {
     io.insert("a.wav", tone_wav(-23.0, 2));
     let cancel = CancelToken::new();
     cancel.cancel();
-    let out = run_command(["probe", "a.wav", "--loudness"], &mut io, &cancel, &mut |_| {}).unwrap();
+    let out = run_command(
+        ["probe", "a.wav", "--loudness"],
+        &mut io,
+        &cancel,
+        &mut |_| {},
+    )
+    .unwrap();
     assert!(matches!(out, Outcome::Cancelled), "{out:?}");
 }
