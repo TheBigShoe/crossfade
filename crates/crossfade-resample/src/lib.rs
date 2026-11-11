@@ -1,4 +1,60 @@
-//! Sample-rate conversion in pure Rust.
+//! Sample-rate conversion in pure Rust: band-limited (windowed-sinc, linear-phase)
+//! polyphase interpolation between any two rates from 1 Hz to [`MAX_RATE`], streaming, for
+//! up to [`MAX_CHANNELS`] channels of `f64`. Depends only on `libm`; no unsafe code.
+//!
+//! ```
+//! use crossfade_resample::{Quality, Resampler, output_len};
+//!
+//! let mut r = Resampler::new(44_100, 48_000, 2, Quality::Balanced)?;
+//! let input = vec![0.25; 2 * 44_100]; // one second of interleaved stereo
+//! let mut output = Vec::new();
+//! for chunk in input.chunks(2 * 1000) {
+//!     r.process(chunk, &mut output)?; // any whole-frame chunk, empty included
+//! }
+//! r.flush(&mut output); // the tail; the resampler is then ready for a new stream
+//! assert_eq!(output.len() as u64, 2 * output_len(44_100, 44_100, 48_000));
+//! assert_eq!(output.len(), 2 * 48_000);
+//! # Ok::<(), crossfade_resample::Error>(())
+//! ```
+//!
+//! # Contract
+//!
+//! - **Time-aligned**: the filter's delay is compensated, so output frame `n` is the input
+//!   signal at time `n / output_rate`; output 0 is input 0. Before the stream and after it
+//!   the input counts as silence.
+//! - **Length**: `N` input frames become exactly [`output_len`]`(N) = ceil(N * out / in)`
+//!   frames: every output instant inside `[0, N / in_rate)`.
+//! - **Latency**: [`Resampler::latency`] input frames of lookahead; `process` appends only
+//!   outputs whose whole kernel has arrived, `flush` the rest.
+//! - **Chunking never changes the output**: the bits are the same however the input is split
+//!   into `process` calls, interleaved or planar.
+//! - **Same bits on every platform**: the filter is designed with `+ - * /`, `sqrt` and
+//!   `libm` only (never `std`'s `sin`, `exp` and friends, whose results may differ between
+//!   platforms), and no fused multiply-add is used anywhere. Every sum has an order fixed by
+//!   the source: the dot product keeps 16 independent lanes and combines them in a written-out
+//!   tree, so vectorisation cannot reorder it. A test pins the hash of fixed conversions.
+//! - **Equal rates** pass samples through bit for bit, with no latency.
+//! - **Bounded**: tables, history and accumulators are allocated at construction (see
+//!   [`Resampler::memory_bytes`]); `process` allocates nothing but growth of the caller's
+//!   output vector. Construction evaluates the kernel at most 2^18 times (under 45 ms for any
+//!   pair on an Apple M1 Max, 2.6 ms for 44.1 kHz -> 48 kHz at the default).
+//! - **Non-finite input** (NaN, infinities) is not an error: it spoils the outputs whose
+//!   kernel reaches it (about `latency()` input frames either side), then the stream
+//!   recovers exactly. Nothing panics. Finite input within +-1e300 gives finite output.
+//!
+//! # Design
+//!
+//! The ratio is reduced by its GCD to `up / down`. Up to [`MAX_GATHER_DECIMATION`]:1
+//! decimation, each output is a dot product of one table row with the input around it (the
+//! direct form). Beyond that, each input is spread over the outputs it reaches (the transposed
+//! form), so memory follows the kernel's width in output samples, not input samples. The
+//! table holds every phase exactly while phases x taps fits in 2^18 coefficients; past that
+//! (44.1 kHz -> 44.101 kHz, 1 Hz -> 1,048,575 Hz) it holds a fixed number of rows per sample
+//! and interpolates between them with a 4-point Lagrange cubic. The kernel is a sinc under a
+//! Kaiser window with its pedestal removed (so it reaches zero continuously), cut off midway
+//! through the transition band, which ends at the lower rate's Nyquist frequency. Rows are
+//! normalised so DC passes with a gain of 1 to within 1e-12. The crate's README has the
+//! measured specification of each [`Quality`].
 #![forbid(unsafe_code)]
 
 mod design;
@@ -44,6 +100,9 @@ pub fn output_len(frames: u64, input_rate: u32, output_rate: u32) -> u64 {
 }
 
 /// A streaming sample-rate converter for one stream of `channels` channels.
+///
+/// Generic over the sample type so that an `f32` path can be added; today only `f64`
+/// implements [`Sample`].
 #[derive(Debug, Clone)]
 pub struct Resampler<S: Sample = f64> {
     input_rate: u32,

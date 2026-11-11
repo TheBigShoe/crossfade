@@ -107,7 +107,7 @@ fn stop_edge(q: Quality) -> f64 {
 fn l1_bound(a: u32, b: u32, q: Quality) -> f64 {
     let g = (1..=a.min(b))
         .rev()
-        .find(|d| a % d == 0 && b % d == 0)
+        .find(|&d| a.is_multiple_of(d) && b.is_multiple_of(d))
         .unwrap();
     let (up, down) = ((b / g) as usize, (a / g) as usize);
     let k = 3000;
