@@ -3,7 +3,7 @@
 mod common;
 
 use common::{job, sine_wav, spec};
-use crossfade_core::{ChannelLayout, Error, Limits, SampleFormat};
+use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{
     AudioSettings, CancelToken, Pipeline, probe, run, validate, writable_extensions,
 };
@@ -30,6 +30,12 @@ fn io() -> MemoryIo {
     ] {
         io.insert(name, sine_wav(&spec(rate, format, stereo.clone()), 3000).1);
     }
+    // The engine reads nine channels; FLAC cannot hold them.
+    let nine = ChannelLayout::unpositioned(9).unwrap();
+    io.insert(
+        "wide.wav",
+        sine_wav(&spec(8000, SampleFormat::S16, nine), 3000).1,
+    );
     run(
         &job("s16.wav", "s16.flac", None),
         &mut io,
@@ -56,14 +62,16 @@ fn table() -> Vec<Case> {
         ),
         ("s16.wav", "o.aiff", settings(Some(F32), Some("pcm"), None)),
         ("s16.wav", "o.aifc", settings(None, None, None)),
+        // Everything FLAC can hold: 32-bit integers and rates far above 96 kHz.
+        ("s32.wav", "o.flac", settings(None, None, None)),
+        ("hi.wav", "o.flac", settings(None, None, None)),
         ("s16.flac", "o.flac", settings(None, Some("copy"), None)),
         ("s16.flac", "o.wav", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("copy"), None)),
         // Refusals.
         ("f32.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.flac", settings(Some(F64), None, None)),
-        ("s32.wav", "o.flac", settings(None, None, None)),
-        ("hi.wav", "o.flac", settings(None, None, None)),
+        ("wide.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.aiff", settings(None, Some("copy"), None)),
         ("s16.flac", "o.wav", settings(None, Some("copy"), None)),
         ("s16.wav", "o.wav", settings(None, Some("flac"), None)),
@@ -109,7 +117,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 17, "the table keeps its refusals");
+    assert_eq!(refused, 16, "the table keeps its refusals");
 }
 
 #[test]
@@ -147,11 +155,15 @@ fn validate_names_the_cause() {
 fn codec_limits_surface_without_a_file() {
     let mut io = io();
     let limits = Limits::default();
-    for (input, word) in [("hi.wav", "192000"), ("s32.wav", "32")] {
+    let stream = probe("wide.wav", &mut io, &limits).unwrap().streams[0].clone();
+    let e = validate(&stream, "o.flac", &AudioSettings::default()).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "unsupported: flac holds at most 8 channels, got 9"
+    );
+    for input in ["hi.wav", "s32.wav"] {
         let stream = probe(input, &mut io, &limits).unwrap().streams[0].clone();
-        let e = validate(&stream, "o.flac", &AudioSettings::default()).unwrap_err();
-        assert!(matches!(e, Error::Unsupported { .. }), "{e:?}");
-        assert!(e.to_string().contains(word), "{input}: {e}");
+        validate(&stream, "o.flac", &AudioSettings::default()).unwrap();
     }
 }
 

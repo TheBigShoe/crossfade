@@ -39,8 +39,8 @@ and a GPUI desktop app (`crossfade-gui`).
 |---|---|
 | `crossfade-core` | Time types, audio description, `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
 | `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
-| `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out), its own `Error`. Other projects can use it alone |
-| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), a thin adapter from `crossfade-flac`'s decoder to `crossfade_core::Decoder`, a FLAC encoder wrapping `flacenc`; `decoder_for` / `encoder_for` |
+| `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic), its own `Error`. Other projects can use it alone |
+| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer samples, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule) |
 | `crossfade-graph` | `Job` (plain serialisable data), `validate` (the I/O-free check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe` |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |

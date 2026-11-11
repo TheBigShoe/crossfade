@@ -808,12 +808,6 @@ dependencies = [
 
 [[package]]
 name = "built"
-version = "0.7.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56ed6191a7e78c36abdb16ab65341eefd73d64d303fffccdbb00d51e4205967b"
-
-[[package]]
-name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c0e531d93d39c34eef561e929e8a7f86d77a5af08aac4f6d6e39976c51858e9"
@@ -1336,21 +1330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
-dependencies = [
- "crc-catalog",
-]
-
-[[package]]
-name = "crc-catalog"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
-
-[[package]]
 name = "crc32fast"
 version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1515,7 +1494,6 @@ dependencies = [
  "crossfade-core",
  "crossfade-flac",
  "crossfade-testkit",
- "flacenc",
  "proptest",
 ]
 
@@ -1550,8 +1528,6 @@ name = "crossfade-flac"
 version = "0.0.0"
 dependencies = [
  "criterion 0.5.1",
- "crossfade-codec",
- "crossfade-core",
  "proptest",
 ]
 
@@ -1603,6 +1579,7 @@ dependencies = [
  "crossfade-cli",
  "crossfade-codec",
  "crossfade-core",
+ "crossfade-flac",
  "crossfade-format",
  "crossfade-graph",
  "crossfade-testkit",
@@ -2089,21 +2066,6 @@ name = "fixedbitset"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5905ec755cc8386d7928353e4d356d2be3e89e81e5ca01fe630a1ca4d08dc175"
-
-[[package]]
-name = "flacenc"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74c892c2b5fa08f967e8b5ad29121570b4762202f2402033ce08479ec65eccd0"
-dependencies = [
- "built 0.7.7",
- "crc",
- "heapless 0.8.0",
- "md-5",
- "num-traits",
- "rustversion",
- "seq-macro",
-]
 
 [[package]]
 name = "flate2"
@@ -2671,7 +2633,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
- "heapless 0.9.3",
+ "heapless",
  "icu_segmenter",
  "image",
  "inventory",
@@ -3017,7 +2979,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
- "heapless 0.9.3",
+ "heapless",
  "icu_segmenter",
  "image",
  "inventory",
@@ -3385,7 +3347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6085e61458366decd21491396b0b90b3adf928f2ec27e170c4d3c9fba455d536"
 dependencies = [
  "gpui-pre-ztracing",
- "heapless 0.9.3",
+ "heapless",
  "rayon",
  "tracing",
 ]
@@ -3592,16 +3554,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash",
-]
-
-[[package]]
-name = "heapless"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
-dependencies = [
- "hash32",
- "stable_deref_trait",
 ]
 
 [[package]]
@@ -6177,7 +6129,7 @@ dependencies = [
  "av-scenechange",
  "av1-grain",
  "bitstream-io",
- "built 0.8.1",
+ "built",
  "cfg-if",
  "interpolate_name",
  "itertools 0.14.0",
@@ -6786,12 +6738,6 @@ dependencies = [
  "serde",
  "serde_core",
 ]
-
-[[package]]
-name = "seq-macro"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
 
 [[package]]
 name = "serde"

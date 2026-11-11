@@ -98,7 +98,7 @@ pub(crate) fn resolve(
 
 /// Checks a job's output against its input stream without touching any file: the container from
 /// the extension, the copy rules, the codec and its options, and that the encoder and the
-/// container's muxer accept the result (FLAC's rate and depth limits show up here).
+/// container's muxer accept the result (FLAC's channel limit shows up here).
 pub fn validate(
     input: &StreamInfo,
     output_path: &str,

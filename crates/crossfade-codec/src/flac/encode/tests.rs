@@ -21,14 +21,15 @@ fn unsupported(r: Result<Box<dyn Encoder>, Error>) -> String {
 }
 
 #[test]
-fn only_integer_formats_up_to_24_bits_are_accepted() {
-    for f in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24] {
+fn integer_formats_up_to_32_bits_are_accepted_and_float_is_not() {
+    for f in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
         assert!(encoder(&spec(44100, f, 2), &opts(None)).is_ok(), "{f:?}");
     }
-    assert_eq!(
-        unsupported(encoder(&spec(44100, SampleFormat::S32, 2), &opts(None))),
-        "flac encoding of 32-bit samples is not supported yet; choose --sample-format s24"
-    );
     for f in [SampleFormat::F32, SampleFormat::F64] {
         let what = unsupported(encoder(&spec(44100, f, 2), &opts(None)));
         assert!(what.contains("float"), "{what}");
@@ -42,9 +43,10 @@ fn channel_count_rate_and_level_limits_are_named() {
     assert!(what.contains("8 channels"), "{what}");
 
     assert!(encoder(&spec(1, SampleFormat::S16, 1), &opts(None)).is_ok());
-    assert!(encoder(&spec(96_000, SampleFormat::S16, 1), &opts(None)).is_ok());
-    let what = unsupported(encoder(&spec(96_001, SampleFormat::S16, 1), &opts(None)));
-    assert!(what.contains("96000"), "{what}");
+    assert!(encoder(&spec(384_000, SampleFormat::S16, 1), &opts(None)).is_ok());
+    assert!(encoder(&spec(1_048_575, SampleFormat::S16, 1), &opts(None)).is_ok());
+    let what = unsupported(encoder(&spec(1_048_576, SampleFormat::S16, 1), &opts(None)));
+    assert!(what.contains("1048575"), "{what}");
 
     assert!(encoder(&spec(44100, SampleFormat::S16, 2), &opts(Some(8))).is_ok());
     let what = unsupported(encoder(&spec(44100, SampleFormat::S16, 2), &opts(Some(9))));
@@ -118,6 +120,7 @@ fn audio_frame(spec: &AudioSpec, samples: &[i32]) -> AudioFrame {
         SampleFormat::U8 => Samples::U8(samples.iter().map(|&v| (v + 128) as u8).collect()),
         SampleFormat::S16 => Samples::S16(samples.iter().map(|&v| v as i16).collect()),
         SampleFormat::S24 => Samples::S24(samples.to_vec()),
+        SampleFormat::S32 => Samples::S32(samples.to_vec()),
         other => panic!("{other:?}"),
     };
     f
@@ -155,6 +158,7 @@ fn bits(format: SampleFormat) -> u32 {
         SampleFormat::U8 => 8,
         SampleFormat::S16 => 16,
         SampleFormat::S24 => 24,
+        SampleFormat::S32 => 32,
         other => panic!("{other:?}"),
     }
 }
@@ -216,7 +220,12 @@ fn check_stream(spec: &AudioSpec, samples: &[i32], out: &Output, block: usize) {
 
 #[test]
 fn every_packet_is_a_valid_frame_and_the_final_streaminfo_matches() {
-    for format in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24] {
+    for format in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
         for channels in [1u16, 2, 6] {
             let spec = spec(44100, format, channels);
             // Two full blocks and a short tail.
@@ -259,7 +268,7 @@ proptest! {
 
     #[test]
     fn chunking_the_input_changes_no_byte(
-        format in prop::sample::select(vec![SampleFormat::U8, SampleFormat::S16, SampleFormat::S24]),
+        format in prop::sample::select(vec![SampleFormat::U8, SampleFormat::S16, SampleFormat::S24, SampleFormat::S32]),
         channels in 1u16..=3,
         frames in 0usize..9000,
         chunk in 1usize..5000,
@@ -283,37 +292,79 @@ fn two_encoders_give_identical_bytes() {
     );
 }
 
-#[test]
-fn our_bytes_equal_flacenc_s_own_stream_for_the_same_settings() {
-    use flacenc::component::BitRepr;
-    use flacenc::source::MemSource;
-    for (channels, format) in [
-        (1u16, SampleFormat::S16),
-        (2, SampleFormat::S16),
-        (2, SampleFormat::S24),
-    ] {
-        let spec = spec(44100, format, channels);
-        let depth = bits(format) as usize;
-        let samples = signal(usize::from(channels), 4096 * 2 + 777, depth as u32, 3);
-        let ours = encode(&spec, Some(5), &samples, 5000);
-
-        let config = LEVELS[5].config().unwrap();
-        let source = MemSource::from_samples(&samples, usize::from(channels), depth, 44100);
-        let mut stream = flacenc::encode_with_fixed_block_size(&config, source, 4096).unwrap();
-        // The short tail lowers flacenc's minimum block size; the encoder pins both to 4096.
-        stream
-            .stream_info_mut()
-            .set_block_sizes(4096, 4096)
-            .unwrap();
-        let mut sink = MemSink::<u8>::new();
-        stream.write(&mut sink).unwrap();
-        let theirs = sink.into_inner();
-
-        assert_eq!(&theirs[..4], b"fLaC");
-        assert_eq!(&theirs[8..42], &ours.extradata[..], "{channels} {format:?}");
-        let frames: Vec<u8> = ours.packets.iter().flat_map(|p| p.data.clone()).collect();
-        assert_eq!(&theirs[42..], &frames[..], "{channels} {format:?}");
+/// Decodes every packet with the standalone decoder: bit-exact samples and a matching MD5.
+fn decode_back(spec: &AudioSpec, out: &Output) -> Vec<i32> {
+    let info = StreamInfoBlock::parse(&out.extradata).unwrap();
+    let mut dec = crossfade_flac::Decoder::new(&info).unwrap();
+    let (mut all, mut tmp) = (Vec::new(), Vec::new());
+    for p in &out.packets {
+        dec.decode_frame(&p.data)
+            .unwrap()
+            .interleave_i32(0, &mut tmp);
+        all.extend_from_slice(&tmp);
     }
+    assert_eq!(
+        dec.finish().unwrap(),
+        crossfade_flac::Verification::Md5Matched
+    );
+    assert_eq!(u16::from(info.channels), spec.layout().channels());
+    all
+}
+
+#[test]
+fn every_format_rate_and_channel_count_decodes_bit_exactly() {
+    let cases = [
+        (44100, SampleFormat::U8, 2u16),
+        (44100, SampleFormat::S16, 2),
+        (48000, SampleFormat::S24, 6),
+        (44100, SampleFormat::S32, 2),
+        (192_000, SampleFormat::S24, 2),
+        (384_000, SampleFormat::S32, 2),
+        (352_800, SampleFormat::S16, 1),
+        (44100, SampleFormat::S32, 8),
+    ];
+    for (rate, format, channels) in cases {
+        let spec = spec(rate, format, channels);
+        let samples = signal(usize::from(channels), 4096 + 301, bits(format), 3);
+        for level in [0, 5, 8] {
+            let out = encode(&spec, Some(level), &samples, 5000);
+            assert_eq!(
+                decode_back(&spec, &out),
+                samples,
+                "{rate} {format:?} {channels}"
+            );
+        }
+    }
+}
+
+#[test]
+fn full_scale_32_bit_samples_round_trip() {
+    let spec = spec(44100, SampleFormat::S32, 2);
+    let samples: Vec<i32> =
+        [i32::MIN, i32::MAX, i32::MAX, i32::MIN, 0, -1, 1, i32::MIN].repeat(700);
+    let out = encode(&spec, None, &samples, 4096);
+    assert_eq!(decode_back(&spec, &out), samples);
+    // And the all-32-bit MD5 is the RFC's four bytes per sample.
+    let b = StreamInfoBlock::parse(&out.extradata).unwrap();
+    assert_eq!(b.md5, rfc_md5(32, &samples));
+}
+
+#[test]
+fn a_source_with_zero_low_bits_keeps_the_container_depth_in_streaminfo() {
+    // A 20-bit signal left-justified in 24 bits: the encoder drops the zero bits from the
+    // frames but STREAMINFO still says 24, the container depth.
+    let spec = spec(44100, SampleFormat::S24, 2);
+    let samples: Vec<i32> = signal(2, 4096, 20, 5).iter().map(|&v| v << 4).collect();
+    let out = encode(&spec, None, &samples, 4096);
+    assert_eq!(decode_back(&spec, &out), samples);
+    assert_eq!(
+        StreamInfoBlock::parse(&out.extradata)
+            .unwrap()
+            .bits_per_sample,
+        24
+    );
+    let packed: usize = out.packets.iter().map(|p| p.data.len()).sum();
+    assert!(packed < 4096 * 2 * 20 / 8, "{packed}");
 }
 
 #[test]
@@ -394,8 +445,8 @@ fn silence_is_a_tiny_constant_stream() {
     assert!(total < 11 * 16, "{total}");
 }
 
-/// flacenc's approximate order selection picks Rice parameters far too small for full-scale
-/// 24-bit white noise: frames came out hundreds of times the raw size, past the 24-bit
+/// The previous encoder's approximate order selection picked Rice parameters far too small for
+/// full-scale 24-bit white noise: frames came out hundreds of times the raw size, past the 24-bit
 /// frame-size fields of STREAMINFO.
 #[test]
 fn full_scale_noise_never_codes_larger_than_its_raw_samples() {
@@ -429,8 +480,8 @@ fn full_scale_noise_never_codes_larger_than_its_raw_samples() {
     }
 }
 
-/// Found by the `flac_roundtrip` fuzz target. flacenc picks a subframe by an estimated size and
-/// can write a Rice parameter above 14 as if it fitted, so these mono 24-bit samples (raw
+/// Found by the `flac_roundtrip` fuzz target. The previous encoder picked a subframe by an
+/// estimated size and could write a Rice parameter above 14 as if it fitted, so these mono 24-bit samples (raw
 /// little-endian PCM) came out as a frame far larger than the samples themselves: 33 MB for the
 /// first file at levels 7 and 8, 2.8 kB for 64 samples in the second at level 1. STREAMINFO's
 /// 24-bit frame sizes cannot describe the first, and no frame should ever beat raw by that much.

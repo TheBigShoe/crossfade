@@ -550,9 +550,14 @@ fn probe_json_of_the_tagged_ogg_flac() {
 // ---- WAV <-> FLAC --------------------------------------------------------------------------
 
 #[test]
-fn wav_to_flac_and_back_is_bit_exact_for_u8_s16_s24_in_mono_stereo_and_5_1() {
+fn wav_to_flac_and_back_is_bit_exact_for_u8_s16_s24_s32_in_mono_stereo_and_5_1() {
     let d = Dir::new("wav-flac-wav");
-    for format in [SampleFormat::U8, SampleFormat::S16, SampleFormat::S24] {
+    for format in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
         for channels in [1u16, 2, 6] {
             let data = tonal(48_000, channels, format, 6000);
             d.write("in.wav", &wav(48_000, channels, format, &data));
@@ -570,6 +575,40 @@ fn wav_to_flac_and_back_is_bit_exact_for_u8_s16_s24_in_mono_stereo_and_5_1() {
             assert_eq!(((packed >> 41) & 7) + 1, u64::from(channels), "{case}");
             assert_eq!(((packed >> 36) & 31) + 1, u64::from(bits(format)), "{case}");
             assert_eq!(packed & 0xF_FFFF_FFFF, 6000, "{case}");
+        }
+    }
+}
+
+#[test]
+fn high_sample_rates_and_32_bit_samples_round_trip_through_flac_at_every_level() {
+    let d = Dir::new("flac-high");
+    for (rate, channels, format) in [
+        (192_000, 2u16, SampleFormat::S24),
+        (384_000, 1, SampleFormat::S16),
+        (44_100, 2, SampleFormat::S32),
+        (96_000, 8, SampleFormat::S32),
+    ] {
+        let data = tonal(rate, channels, format, 9000);
+        d.write("in.wav", &wav(rate, channels, format, &data));
+        for level in ["0", "5", "8"] {
+            let case = format!("{rate} Hz {format:?} x {channels}, level {level}");
+            d.ok(&[
+                "convert",
+                "in.wav",
+                "-o",
+                "mid.flac",
+                "--compression-level",
+                level,
+                "--force",
+            ]);
+            d.ok(&["convert", "mid.flac", "-o", "out.wav", "--force"]);
+            let out = d.read("out.wav");
+            assert_eq!(wav_format(&out), (channels, rate, bits(format)), "{case}");
+            assert!(data_chunk(&out) == data, "{case}: samples differ");
+            let info = parse_flac(&d.read("mid.flac")).streaminfo;
+            let packed = u64::from_be_bytes(info[10..18].try_into().unwrap());
+            assert_eq!(packed >> 44, u64::from(rate), "{case}");
+            assert_eq!(((packed >> 36) & 31) + 1, u64::from(bits(format)), "{case}");
         }
     }
 }
@@ -988,22 +1027,17 @@ fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
     let d = Dir::new("refusals");
     d.write("s16.wav", &tonal_wav(48_000, 2, SampleFormat::S16));
     d.write("f32.wav", &tonal_wav(48_000, 2, SampleFormat::F32));
-    d.write("s32.wav", &tonal_wav(48_000, 2, SampleFormat::S32));
-    d.write("hi.wav", &tonal_wav(192_000, 2, SampleFormat::S16));
+    d.write("wide.wav", &tonal_wav(8_000, 9, SampleFormat::S16));
     d.write("in.flac", &fixture("flac/stereo-16bit.flac"));
 
-    let cases: [(&[&str], &str); 11] = [
+    let cases: [(&[&str], &str); 10] = [
         (
             &["convert", "f32.wav", "-o", "o.flac"],
             "flac cannot store floating-point samples",
         ),
         (
-            &["convert", "s32.wav", "-o", "o.flac"],
-            "flac encoding of 32-bit samples is not supported yet",
-        ),
-        (
-            &["convert", "hi.wav", "-o", "o.flac"],
-            "flac encoding supports sample rates up to 96000 Hz, got 192000",
+            &["convert", "wide.wav", "-o", "o.flac"],
+            "flac holds at most 8 channels, got 9",
         ),
         (
             &["convert", "s16.wav", "-o", "o.aiff", "--codec", "copy"],

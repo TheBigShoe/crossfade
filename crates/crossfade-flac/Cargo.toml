@@ -14,11 +14,11 @@ workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-# Benches only: the encoder that builds their input lives in crossfade-codec, which depends on
-# this crate (a dev-dependency cycle cargo allows).
 criterion.workspace = true
-crossfade-codec.workspace = true
-crossfade-core.workspace = true
+
+[[bench]]
+name = "encode"
+harness = false
 
 [[bench]]
 name = "decode"

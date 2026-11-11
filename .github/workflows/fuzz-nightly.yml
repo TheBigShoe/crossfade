@@ -23,6 +23,7 @@ jobs:
             wav_demux,
             flac_demux,
             flac_decode,
+            flac_encode,
             aiff_demux,
             ogg_demux,
             vorbis_comment,

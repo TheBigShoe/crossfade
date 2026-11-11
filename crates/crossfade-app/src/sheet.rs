@@ -175,14 +175,6 @@ pub fn plain(what: &str) -> String {
     out
 }
 
-fn kilohertz(rate: u32) -> String {
-    if rate.is_multiple_of(1000) {
-        format!("{} kHz", rate / 1000)
-    } else {
-        format!("{} kHz", (f64::from(rate) / 100.0).round() / 10.0)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ConvertSheet {
     input: String,
@@ -306,9 +298,9 @@ impl ConvertSheet {
         };
         let bits = f.bits();
         Some(match self.container {
-            Container::Flac => format!(
-                "FLAC stores whole-number samples up to 24-bit, so this will be saved as {bits}-bit."
-            ),
+            Container::Flac => {
+                format!("FLAC stores whole-number samples, so this will be saved as {bits}-bit.")
+            }
             _ => format!(
                 "This file type cannot store that format, so this will be saved as {bits}-bit."
             ),
@@ -459,14 +451,8 @@ impl ConvertSheet {
             other => other.to_string(),
         };
         let stream = self.stream.as_ref()?;
-        let rate = stream.audio.sample_rate();
         let channels = stream.audio.layout().channels();
-        let text = if what.contains("sample rates up to") {
-            format!(
-                "FLAC output is limited to 96 kHz for now; this file is {}.",
-                kilohertz(rate)
-            )
-        } else if what.contains("at most 8 channels") {
+        let text = if what.contains("at most 8 channels") {
             format!("FLAC can store up to 8 channels; this file has {channels}.")
         } else {
             plain(&what)
