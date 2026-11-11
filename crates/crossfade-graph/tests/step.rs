@@ -3,12 +3,15 @@ mod common;
 use common::{data_chunk, job, sine_wav, spec};
 use crossfade_core::{AudioSpec, ChannelLayout, JobIo, Limits, SampleFormat};
 use crossfade_format::wav::FRAMES_PER_PACKET;
-use crossfade_graph::{Pipeline, Step};
+use crossfade_graph::{Dither, Pipeline, Step};
 use crossfade_testkit::{memory::MemoryIo, pcm};
 
-/// Drives `step` by hand to the end and returns every step taken.
+/// Drives `step` by hand to the end and returns every step taken. No dither: these tests
+/// hold the engine to the conversion rule (the oracle), which narrowing would otherwise dither.
 fn drive(io: &mut MemoryIo, input: &str, output: &str, fmt: Option<SampleFormat>) -> Vec<Step> {
-    let mut p = Pipeline::open(&job(input, output, fmt), io, &Limits::default()).unwrap();
+    let mut job = job(input, output, fmt);
+    job.outputs[0].audio.dither = Dither::None;
+    let mut p = Pipeline::open(&job, io, &Limits::default()).unwrap();
     let mut steps = Vec::new();
     loop {
         let s = p.step().unwrap();

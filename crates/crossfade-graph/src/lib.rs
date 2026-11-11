@@ -19,4 +19,4 @@ pub use job::{AudioSettings, Job, JobInput, JobOutput};
 pub use pipeline::{Pipeline, Plan, Step};
 pub use probe::{ProbeDocument, ProbeReport, ProbeStream, ProbeTag, probe};
 pub use run::{CancelToken, Event, run};
-pub use validate::{OutputPlan, describe, describe_concat, validate, validate_concat};
+pub use validate::{OutputPlan, describe, describe_concat, processing, validate, validate_concat};

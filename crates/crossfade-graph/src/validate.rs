@@ -11,6 +11,7 @@ use crossfade_core::{
     AudioSpec, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
 };
 use crossfade_dsp::chain::Chain;
+use crossfade_dsp::dither::Dither;
 use crossfade_dsp::filters::resample::{Quality, ResamplePlan};
 use crossfade_format::{FormatId, create_muxer};
 use std::io::Cursor;
@@ -42,6 +43,42 @@ pub(crate) fn output_depth(input: &StreamInfo, out_format: SampleFormat) -> Opti
     input
         .bits_per_raw_sample
         .filter(|_| out_format == input.audio.format())
+}
+
+/// Whether writing `input` as `out_format` without any processing loses real bits: an integer
+/// format narrower than the input's true depth (`bits_per_raw_sample`, else its format's
+/// width), or float to integer. Such a conversion is dithered (unless the job says `none`).
+/// Widening, the same depth and anything to float lose nothing and stay as they are.
+pub(crate) fn loses_depth(input: &StreamInfo, out_format: SampleFormat) -> bool {
+    let in_format = input.audio.format();
+    if out_format.is_float() {
+        return false;
+    }
+    if in_format.is_float() {
+        return true;
+    }
+    let depth = input
+        .bits_per_raw_sample
+        .map_or(in_format.bits(), usize::from);
+    out_format.bits() < depth
+}
+
+/// The chain a job runs on `input`, or `None` for the unprocessed path: the filters and the
+/// output's rate and channel conversions (`filter::plan`), or else, when the output format
+/// loses real depth and the job dithers, an empty chain that only quantises.
+pub fn processing(
+    input: &StreamInfo,
+    settings: &AudioSettings,
+) -> Result<Option<ChainPlan>, Error> {
+    let chain = filter::plan(&input.audio, settings)?;
+    if chain.is_some() || settings.dither == Dither::None {
+        return Ok(chain);
+    }
+    let out_format = settings.sample_format.unwrap_or(input.audio.format());
+    Ok(loses_depth(input, out_format).then(|| ChainPlan {
+        filters: Vec::new(),
+        dither: settings.dither,
+    }))
 }
 
 /// The container named by `path`'s extension, if we can write it.
@@ -96,7 +133,7 @@ fn plan_output(
         return Ok((plan, None));
     }
     let in_spec = &input.audio;
-    let chain = filter::plan(in_spec, settings)?;
+    let chain = processing(input, settings)?;
     let out_format = settings.sample_format.unwrap_or(in_spec.format());
     let codec = output_codec(output_format, out_format, requested)?;
     let (out_spec, frames, depth, time_base) = match &chain {

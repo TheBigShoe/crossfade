@@ -165,17 +165,28 @@ fn convert_round_trip_s24_and_back_is_bit_exact() {
     let (pcm, wav) = sine();
     d.write("sine.wav", &wav);
     for args in [
-        [
+        &[
             "convert",
             "sine.wav",
             "-o",
             "a.wav",
             "--sample-format",
             "s24",
+        ][..],
+        // a.wav says its 24 bits are all real, so narrowing it would be dithered; the round trip
+        // is about the conversion rule, so it asks for none.
+        &[
+            "convert",
+            "a.wav",
+            "-o",
+            "b.wav",
+            "--sample-format",
+            "s16",
+            "--dither",
+            "none",
         ],
-        ["convert", "a.wav", "-o", "b.wav", "--sample-format", "s16"],
     ] {
-        let out = d.run(&args);
+        let out = d.run(args);
         assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
         assert!(out.stdout.is_empty());
     }
