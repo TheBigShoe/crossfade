@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 crossfade-core.workspace = true
 libm.workspace = true
+crossfade-resample.workspace = true
 
 [lints]
 workspace = true
