@@ -123,3 +123,13 @@ fn quitting_asks_first_unless_the_setting_says_not_to() {
     assert!(!loaded.value.confirm_quit);
     assert!(DEFAULT_SETTINGS.contains("\"confirm_quit\": true"));
 }
+
+#[test]
+fn selecting_a_file_analyses_it_unless_the_setting_says_not_to() {
+    assert!(Settings::default().analyze_on_select);
+    let layer = SettingsLayer::new("settings.json", r#"{ "analyze_on_select": false }"#);
+    let loaded = load_layers::<Settings>(DEFAULT_SETTINGS, &[layer]).expect("parses");
+    assert!(!loaded.value.analyze_on_select);
+    assert!(DEFAULT_SETTINGS.contains("\"analyze_on_select\": true"));
+    assert!(SETTINGS_TEMPLATE.contains("// \"analyze_on_select\": true"));
+}
