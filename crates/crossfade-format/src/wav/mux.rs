@@ -124,7 +124,13 @@ impl WavMuxer {
             .map_err(|_| unsupported("byte rate does not fit 32 bits"))?;
         let bits = u16::try_from(format.bits()).map_err(|_| Error::Overflow)?;
         let float = format.is_float();
-        let plain = !float && bits <= 16 && channels <= 2 && rate <= 48000;
+        // Left-justified in the container, as WAV requires; the header says how many bits count.
+        let valid = stream
+            .bits_per_raw_sample
+            .map(u16::from)
+            .filter(|&v| v > 0 && v < bits && !float)
+            .unwrap_or(bits);
+        let plain = !float && bits <= 16 && channels <= 2 && rate <= 48000 && valid == bits;
         // The tag-3 header has no channel mask; Microsoft requires the extensible form for more
         // than two channels, and positions other than the mono/stereo defaults need the mask.
         let layout = audio.layout();
@@ -154,7 +160,7 @@ impl WavMuxer {
             h.extend_from_slice(&0u16.to_le_bytes());
         } else if extensible {
             h.extend_from_slice(&22u16.to_le_bytes());
-            h.extend_from_slice(&bits.to_le_bytes());
+            h.extend_from_slice(&valid.to_le_bytes());
             h.extend_from_slice(&mask_for(audio.layout().positions()).to_le_bytes());
             h.extend_from_slice(&tag.to_le_bytes());
             h.extend_from_slice(&GUID_TAIL);

@@ -95,7 +95,9 @@ fn tag_name(what: &str, tag: u16) -> Error {
     unsupported(format!("{what} {tag} ({tag:#x})"))
 }
 
-fn parse_fmt(f: &[u8]) -> Result<AudioSpec, Error> {
+/// The stream's format and, for an extensible header with fewer valid bits than its container
+/// holds, the true depth (samples are left-justified in the container).
+fn parse_fmt(f: &[u8]) -> Result<(AudioSpec, Option<u8>), Error> {
     let mut tag = u16_at(f, 0);
     let channels = u16_at(f, 2);
     let rate = u32_at(f, 4);
@@ -108,16 +110,18 @@ fn parse_fmt(f: &[u8]) -> Result<AudioSpec, Error> {
         return Err(malformed("zero sample rate"));
     }
     let mut mask = None;
+    let mut raw = None;
     if tag == FORMAT_EXTENSIBLE {
         if f.len() < 40 || u16_at(f, 16) < 22 {
             return Err(malformed("truncated WAVE_FORMAT_EXTENSIBLE header"));
         }
         let valid = u16_at(f, 18);
-        if valid != bits {
+        if valid == 0 || valid > bits {
             return Err(unsupported(format!(
                 "{valid} valid bits in a {bits}-bit container"
             )));
         }
+        raw = (valid < bits).then_some(valid);
         mask = Some(u32_at(f, 20));
         tag = u16_at(f, 24);
         if !matches!(tag, FORMAT_PCM | FORMAT_FLOAT) {
@@ -135,6 +139,12 @@ fn parse_fmt(f: &[u8]) -> Result<AudioSpec, Error> {
         (FORMAT_FLOAT, _) => return Err(unsupported(format!("{bits}-bit float"))),
         _ => return Err(tag_name("format tag", tag)),
     };
+    if raw.is_some() && format.is_float() {
+        return Err(unsupported(format!(
+            "{} valid bits in a {bits}-bit float container",
+            raw.unwrap_or_default()
+        )));
+    }
     if usize::from(block_align) != usize::from(channels) * format.bytes_per_sample() {
         return Err(malformed("block align does not match channels and depth"));
     }
@@ -148,7 +158,9 @@ fn parse_fmt(f: &[u8]) -> Result<AudioSpec, Error> {
         (None, 2) => ChannelLayout::stereo(),
         (None, _) => unpositioned()?,
     };
-    AudioSpec::new(rate, format, layout)
+    // Valid bits never exceed 32 here: the container is at most 32 bits for integers.
+    let raw = raw.and_then(|v| u8::try_from(v).ok());
+    Ok((AudioSpec::new(rate, format, layout)?, raw))
 }
 
 /// Bit order of the WAVE channel mask; `None` unless every set bit is known
@@ -295,12 +307,12 @@ impl WavDemuxer {
             let padded = u64::from(size) + u64::from(size % 2);
             if ch[..4] == *b"data" {
                 let (f, len) = fmt.ok_or_else(|| malformed("data chunk before fmt chunk"))?;
-                let audio = parse_fmt(&f[..len])?;
+                let (audio, raw) = parse_fmt(&f[..len])?;
                 if seekable && size != STREAMING {
                     let (src, p) = (source.as_mut(), &mut pos);
                     tags_after_data(src, p, size, limits, &mut tags, &mut tag_bytes)?;
                 }
-                return Self::start(source, pos, size, &audio, limits, tags);
+                return Self::start(source, pos, size, (&audio, raw), limits, tags);
             }
             if ch[..4] == *b"LIST" {
                 let (src, p) = (source.as_mut(), &mut pos);
@@ -328,7 +340,7 @@ impl WavDemuxer {
         source: Box<dyn MediaSource>,
         pos: u64,
         data_size: u32,
-        audio: &AudioSpec,
+        (audio, raw): (&AudioSpec, Option<u8>),
         limits: &Limits,
         tags: Tags,
     ) -> Result<Self, Error> {
@@ -347,6 +359,7 @@ impl WavDemuxer {
         let format = audio.format();
         let stream = StreamInfo {
             frames,
+            bits_per_raw_sample: raw,
             ..StreamInfo::new(
                 0,
                 CodecId::pcm_for(format),
