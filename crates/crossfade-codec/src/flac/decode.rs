@@ -15,6 +15,10 @@ pub(crate) fn engine_error(e: crossfade_flac::Error) -> Error {
         crossfade_flac::Error::UnexpectedEof { offset } => Error::UnexpectedEof {
             offset: offset as u64,
         },
+        // The engine has no variant for a bug; the text says what it was.
+        other => Error::Unsupported {
+            what: other.to_string(),
+        },
     }
 }
 

@@ -121,9 +121,9 @@
 //!   [`Encoder::new`] and reused; steady state allocates nothing but what the caller's `out`
 //!   needs. With threads, each worker has its own block of working memory and at most
 //!   `2 * threads` blocks are in flight (plus a few waiting for the MD5 thread), their buffers
-//!   reused. A panic on a worker (a bug) is `Error::Unsupported` ("a worker thread
-//!   panicked") from then on, never a hang. Arithmetic on sample data is either checked against the limits or wraps where the
-//!   result is known to fit.
+//!   reused. A panic on a worker (a bug) is [`Error::Internal`](crate::Error::Internal) from
+//!   then on, never a hang. Arithmetic on sample data is either checked against the limits or
+//!   wraps where the result is known to fit.
 
 mod analyze;
 mod bitsink;
@@ -303,11 +303,9 @@ fn hash_bytes(md5: &mut Md5, bytes: &Vec<u8>) {
     md5.update(bytes);
 }
 
-/// A worker's panic is a bug, not the input. `Unsupported` carries it, not a variant of its own,
-/// so that adding threads did not break code that matches on `Error`.
 fn panicked(p: Panicked) -> Error {
-    unsupported(&format!(
-        "a worker thread panicked ({}); the stream cannot continue",
+    Error::Internal(format!(
+        "flac encoder: a worker thread panicked ({}); the stream cannot continue",
         p.0
     ))
 }

@@ -2,8 +2,10 @@
 
 use std::fmt;
 
-/// What parsing or decoding FLAC can fail with.
+/// What parsing, decoding or encoding FLAC can fail with. Non-exhaustive so that a later
+/// version can add a case without breaking code that matches on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// The data breaks the format.
     Malformed(String),
@@ -11,6 +13,8 @@ pub enum Error {
     Unsupported(String),
     /// The input ended early; `offset` is the length of what was available, in bytes.
     UnexpectedEof { offset: usize },
+    /// A bug, not the input: a worker thread panicked. The stream cannot go on.
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -21,6 +25,7 @@ impl fmt::Display for Error {
             Self::Malformed(what) => write!(f, "malformed input: {what}"),
             Self::Unsupported(what) => write!(f, "unsupported: {what}"),
             Self::UnexpectedEof { offset } => write!(f, "unexpected end of input at byte {offset}"),
+            Self::Internal(what) => write!(f, "internal error: {what}"),
         }
     }
 }
