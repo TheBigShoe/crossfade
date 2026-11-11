@@ -13,6 +13,8 @@ pub fn limits() -> Limits {
         max_alloc_bytes: 1 << 20,
         max_nesting_depth: 8,
         max_packet_bytes: 1 << 16,
+        // One thread, so a crash reproduces the same way every time.
+        max_threads: 1,
     }
 }
 

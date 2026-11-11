@@ -3,7 +3,7 @@
 
 use crate::choice::{can_hold, can_write, encode_options, output_codec};
 use crate::job::AudioSettings;
-use crossfade_codec::{decoder_for, encoder_for};
+use crossfade_codec::{decoder_for, encoder_for_threads};
 use crossfade_core::{AudioSpec, Decoder, Encoder, Error, StreamInfo, Tags};
 use crossfade_format::{FormatId, create_muxer};
 use std::io::Cursor;
@@ -39,11 +39,13 @@ pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
     }
 }
 
-/// Copy or transcode: the output stream, and the codecs when there is a transcode.
+/// Copy or transcode: the output stream, and the codecs when there is a transcode, the encoder
+/// using up to `threads` threads (see `Limits::max_threads`).
 pub(crate) fn resolve(
     input: &StreamInfo,
     output_format: FormatId,
     settings: &AudioSettings,
+    threads: usize,
 ) -> Result<(OutputPlan, Option<Codecs>), Error> {
     let requested = settings.codec.as_deref();
     if requested == Some("copy") {
@@ -86,7 +88,7 @@ pub(crate) fn resolve(
     };
     let codecs = Codecs {
         decoder: decoder_for(input)?,
-        encoder: encoder_for(codec, &out_spec, &options)?,
+        encoder: encoder_for_threads(codec, &out_spec, &options, threads)?,
     };
     let plan = OutputPlan {
         output_format,
@@ -105,7 +107,8 @@ pub fn validate(
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
     let format = output_format_for(output_path)?;
-    let (plan, _) = resolve(input, format, settings)?;
+    // The encoder is only looked at, never fed, so it stays on this thread.
+    let (plan, _) = resolve(input, format, settings, 1)?;
     // A muxer writes its header on creation, so a scratch buffer shows whether it would refuse.
     create_muxer(
         format,

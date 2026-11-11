@@ -565,6 +565,7 @@ fn hostile_sizes_are_checked_before_any_allocation() {
         max_alloc_bytes: 64,
         max_nesting_depth: 4,
         max_packet_bytes: 64,
+        ..Limits::default()
     };
     // Huge unknown and text chunks are skipped without being read.
     for id in [b"JUNK", b"NAME", b"COMT"] {

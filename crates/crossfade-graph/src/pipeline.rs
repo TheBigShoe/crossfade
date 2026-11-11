@@ -87,6 +87,7 @@ impl Pipeline {
             output_format,
             demuxer,
             &output.audio,
+            limits.max_threads,
             |out_stream, tags| {
                 let sink = io.create_sink(&output.path)?;
                 create_muxer(output_format, sink, out_stream, tags).inspect_err(|_| {
@@ -103,12 +104,13 @@ impl Pipeline {
         output_format: FormatId,
         demuxer: Box<dyn Demuxer>,
         settings: &AudioSettings,
+        threads: usize,
         make_muxer: impl FnOnce(&StreamInfo, &Tags) -> Result<Box<dyn Muxer>, Error>,
     ) -> Result<Self, Error> {
         let [stream] = demuxer.streams() else {
             return Err(unsupported("exactly one stream is supported"));
         };
-        let (output, codecs) = resolve(stream, output_format, settings)?;
+        let (output, codecs) = resolve(stream, output_format, settings, threads)?;
         let engine = match codecs {
             None => Engine::Copy,
             Some(c) => Engine::Transcode(Box::new(Transcoder {

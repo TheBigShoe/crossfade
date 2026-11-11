@@ -1,11 +1,15 @@
 use crate::Error;
 
-/// Caps that untrusted input must not be able to push past.
+/// Caps that untrusted input must not be able to push past, and the run's thread budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_alloc_bytes: usize,
     pub max_nesting_depth: usize,
     pub max_packet_bytes: usize,
+    /// Threads a codec may use at once, the calling thread included: 1 keeps everything on the
+    /// calling thread, 0 (the default) means the machine's parallelism. It never changes the
+    /// output, so it belongs to the run, not to the job.
+    pub max_threads: usize,
 }
 
 impl Default for Limits {
@@ -14,6 +18,7 @@ impl Default for Limits {
             max_alloc_bytes: 256 << 20,
             max_nesting_depth: 32,
             max_packet_bytes: 16 << 20,
+            max_threads: 0,
         }
     }
 }
