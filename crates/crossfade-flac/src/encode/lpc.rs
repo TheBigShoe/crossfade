@@ -277,12 +277,107 @@ pub(super) fn residual<T: Sample>(
     acc: &mut Accumulators,
 ) -> bool {
     let (coefs, shift, precision) = (q.coefs, q.shift, q.precision);
+    let order = coefs.len();
+    // Largest possible sum: order * 2^(precision-1) * 2^(bps-1) stays below 2^31.
+    let narrow = bps + precision + (usize::BITS - (order - 1).leading_zeros()) <= 32;
+    if let Some(x) = T::as_i32(x) {
+        macro_rules! by_order {
+            ($($n:literal)*) => {
+                match order {
+                    $($n => {
+                        let c: &[i32; $n] = coefs.try_into().unwrap_or(&[0; $n]);
+                        return if narrow {
+                            kernel::<i32, $n>(x, c, shift, out)
+                        } else {
+                            kernel::<i64, $n>(x, c, shift, out)
+                        };
+                    })*
+                    _ => {}
+                }
+            };
+        }
+        by_order!(1 2 3 4 5 6 7 8 9 10 11 12);
+    }
+    residual_generic(x, q, narrow, out, acc)
+}
+
+/// The accumulator of a residual kernel: `i32` when the bound proves the sum fits, else `i64`.
+trait Acc: Copy {
+    const ZERO: Self;
+    /// The residual can be illegal (outside 32 bits, or `i32::MIN`), so it must be checked.
+    const CHECK: bool;
+    fn mac(self, c: i32, x: i32) -> Self;
+    /// `target - (self >> shift)`, wide enough to check.
+    fn residual(self, target: i32, shift: u32) -> i64;
+}
+
+impl Acc for i32 {
+    const ZERO: Self = 0;
+    // The caller proved the sum fits, and then the difference is legal too.
+    const CHECK: bool = false;
+    #[inline(always)]
+    fn mac(self, c: i32, x: i32) -> Self {
+        self.wrapping_add(c.wrapping_mul(x))
+    }
+    #[inline(always)]
+    fn residual(self, target: i32, shift: u32) -> i64 {
+        i64::from(target.wrapping_sub(self >> shift))
+    }
+}
+
+impl Acc for i64 {
+    const ZERO: Self = 0;
+    const CHECK: bool = true;
+    #[inline(always)]
+    fn mac(self, c: i32, x: i32) -> Self {
+        self + i64::from(c) * i64::from(x)
+    }
+    #[inline(always)]
+    fn residual(self, target: i32, shift: u32) -> i64 {
+        i64::from(target) - (self >> shift)
+    }
+}
+
+/// One order, sample by sample, with the coefficients unrolled: the shape the compiler turns
+/// into one vector multiply-add per coefficient for several samples at once.
+fn kernel<A: Acc, const N: usize>(x: &[i32], c: &[i32; N], shift: u32, out: &mut Vec<u32>) -> bool {
+    let m = x.len() - N;
+    out.clear();
+    out.resize(m, 0);
+    // rc[k] multiplies the sample k places after the start of the window.
+    let mut rc = [0i32; N];
+    for (j, &v) in c.iter().enumerate() {
+        rc[N - 1 - j] = v;
+    }
+    let (mut lo, mut hi) = (0i64, 0i64);
+    for (w, o) in x.windows(N + 1).zip(out.iter_mut()) {
+        let mut sum = A::ZERO;
+        for k in 0..N {
+            sum = sum.mac(rc[k], w[k]);
+        }
+        let e = sum.residual(w[N], shift);
+        if A::CHECK {
+            lo = lo.min(e);
+            hi = hi.max(e);
+        }
+        *o = fold(e as i32);
+    }
+    lo > i64::from(i32::MIN) && hi <= i64::from(i32::MAX)
+}
+
+/// Any order and sample type: coefficients outer, samples inner.
+fn residual_generic<T: Sample>(
+    x: &[T],
+    q: &Quantized,
+    narrow: bool,
+    out: &mut Vec<u32>,
+    acc: &mut Accumulators,
+) -> bool {
+    let (coefs, shift) = (q.coefs, q.shift);
     let (acc32, acc64) = (&mut acc.narrow, &mut acc.wide);
     let order = coefs.len();
     let m = x.len() - order;
     out.clear();
-    // Largest possible sum: order * 2^(precision-1) * 2^(bps-1) stays below 2^31.
-    let narrow = bps + precision + (usize::BITS - (order - 1).leading_zeros()) <= 32;
     if narrow {
         acc32.clear();
         let first = &x[order - 1..order - 1 + m];
@@ -389,6 +484,54 @@ mod tests {
                         assert_eq!(got, want, "bits {bits} order {order} shift {shift}");
                     }
                 }
+            }
+        }
+    }
+
+    proptest::proptest! {
+        /// The order-specialised kernels equal the general loop, on both sides of the bound
+        /// that picks 32-bit sums, at the extremes of every range.
+        #[test]
+        fn kernels_equal_the_general_loop(
+            order in 1usize..=12,
+            bps in 4u32..=32,
+            precision in 5u32..=15,
+            shift in 0u32..=15,
+            seed in proptest::prelude::any::<u64>(),
+            extreme in 0u8..4,
+        ) {
+            let mut state = seed | 1;
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let (lo, hi) = (-(1i64 << (bps - 1)), (1i64 << (bps - 1)) - 1);
+            let x: Vec<i32> = (0..order + 40)
+                .map(|_| match extreme {
+                    0 => lo + (next() % (hi - lo + 1) as u64) as i64,
+                    1 => if next() & 1 == 0 { lo } else { hi },
+                    _ => (next() % 7) as i64 - 3,
+                } as i32)
+                .collect();
+            let (cmin, cmax) = (-(1i32 << (precision - 1)), (1i32 << (precision - 1)) - 1);
+            let coefs: Vec<i32> = (0..order)
+                .map(|_| if extreme == 1 {
+                    if next() & 1 == 0 { cmin } else { cmax }
+                } else {
+                    cmin + (next() % (i64::from(cmax) - i64::from(cmin) + 1) as u64) as i32
+                })
+                .collect();
+            let q = Quantized { coefs: &coefs, shift, precision };
+            let narrow = bps + precision + (usize::BITS - (order - 1).leading_zeros()) <= 32;
+            let mut acc = Accumulators::default();
+            let (mut fast, mut slow) = (Vec::new(), Vec::new());
+            let ok_fast = residual(&x, &q, bps, &mut fast, &mut acc);
+            let ok_slow = residual_generic(&x, &q, narrow, &mut slow, &mut acc);
+            proptest::prop_assert_eq!(ok_fast, ok_slow);
+            if ok_slow {
+                proptest::prop_assert_eq!(fast, slow);
             }
         }
     }

@@ -11,6 +11,8 @@ pub(super) trait Sample: Copy + Into<i64> {
     fn low32(self) -> i32;
     fn shr(self, by: u32) -> Self;
     fn pool(analyzer: &mut Analyzer) -> &mut Vec<Self>;
+    /// The samples as `i32`, when that is what they are: the fast kernels take only these.
+    fn as_i32(x: &[Self]) -> Option<&[i32]>;
 }
 
 impl Sample for i32 {
@@ -23,6 +25,9 @@ impl Sample for i32 {
     fn pool(analyzer: &mut Analyzer) -> &mut Vec<Self> {
         &mut analyzer.pool32
     }
+    fn as_i32(x: &[Self]) -> Option<&[i32]> {
+        Some(x)
+    }
 }
 
 impl Sample for i64 {
@@ -34,6 +39,9 @@ impl Sample for i64 {
     }
     fn pool(analyzer: &mut Analyzer) -> &mut Vec<Self> {
         &mut analyzer.pool64
+    }
+    fn as_i32(_: &[Self]) -> Option<&[i32]> {
+        None
     }
 }
 
