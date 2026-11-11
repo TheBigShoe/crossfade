@@ -14,6 +14,7 @@ crossfade-core = { path = "../crates/crossfade-core" }
 crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
 crossfade-flac = { path = "../crates/crossfade-flac" }
+crossfade-loudness = { path = "../crates/crossfade-loudness" }
 
 # Not a member of the engine workspace: libFuzzer is C++.
 [workspace]
@@ -87,6 +88,13 @@ bench = false
 [[bin]]
 name = "flac_encode"
 path = "fuzz_targets/flac_encode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loudness"
+path = "fuzz_targets/loudness.rs"
 test = false
 doc = false
 bench = false

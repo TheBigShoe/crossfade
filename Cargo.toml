@@ -15,6 +15,7 @@ crossfade-core = { path = "crates/crossfade-core", version = "0.0.0" }
 crossfade-format = { path = "crates/crossfade-format", version = "0.0.0" }
 crossfade-codec = { path = "crates/crossfade-codec", version = "0.0.0" }
 crossfade-flac = { path = "crates/crossfade-flac", version = "0.0.0" }
+crossfade-loudness = { path = "crates/crossfade-loudness", version = "0.0.0" }
 crossfade-dsp = { path = "crates/crossfade-dsp", version = "0.0.0" }
 crossfade-graph = { path = "crates/crossfade-graph", version = "0.0.0" }
 crossfade-app = { path = "crates/crossfade-app", version = "0.0.0" }
