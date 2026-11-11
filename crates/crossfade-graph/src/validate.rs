@@ -278,12 +278,7 @@ pub(crate) fn resolve(
         out.audio.format()
     };
     let chain = match &chain {
-        Some(c) => Some(Chain::with_threads(
-            &input.audio,
-            c,
-            chain_format,
-            threads,
-        )?),
+        Some(c) => Some(Chain::with_threads(&input.audio, c, chain_format, threads)?),
         None => None,
     };
     let (encoder, measuring) = match measuring {
