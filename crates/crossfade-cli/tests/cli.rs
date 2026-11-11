@@ -89,7 +89,7 @@ fn convert_to_an_unknown_container_names_the_extension() {
         ".wav",
         ".flac",
         ".aiff/.aif/.aifc",
-        ".ogg can be read but not written yet",
+        ".oga/.ogg",
     ] {
         assert!(err.contains(listed), "{listed} missing from {err}");
     }

@@ -980,6 +980,103 @@ fn ogg_flac_tags_reach_the_flac_output() {
     }
 }
 
+// ---- writing Ogg FLAC ----------------------------------------------------------------------
+
+#[test]
+fn wav_to_ogg_flac_and_back_is_bit_exact_for_every_depth_and_up_to_8_channels() {
+    let d = Dir::new("wav-oga-wav");
+    for format in [
+        SampleFormat::U8,
+        SampleFormat::S16,
+        SampleFormat::S24,
+        SampleFormat::S32,
+    ] {
+        for channels in [1u16, 2, 6, 8] {
+            let data = tonal(48_000, channels, format, 6000);
+            d.write("in.wav", &wav(48_000, channels, format, &data));
+            d.ok(&["convert", "in.wav", "-o", "mid.oga", "--force"]);
+            d.ok(&["convert", "mid.oga", "-o", "out.wav", "--force"]);
+            let out = d.read("out.wav");
+            let case = format!("{format:?} x {channels}");
+            assert_eq!(wav_format(&out), (channels, 48_000, bits(format)), "{case}");
+            assert!(data_chunk(&out) == data, "{case}: samples differ");
+        }
+    }
+}
+
+#[test]
+fn an_ogg_flac_file_is_an_identification_page_a_comment_page_then_audio() {
+    let d = Dir::new("oga-shape");
+    d.write("in.wav", &tonal_wav(44_100, 2, SampleFormat::S16));
+    for out in ["a.oga", "a.ogg"] {
+        d.ok(&["convert", "in.wav", "-o", out]);
+    }
+    assert!(
+        d.read("a.oga") == d.read("a.ogg"),
+        "both extensions write Ogg FLAC"
+    );
+    let file = d.read("a.oga");
+    assert_eq!(&file[..4], b"OggS");
+    // BOS flag; one segment of 51 bytes: the whole first page is 27 + 1 + 51 bytes.
+    assert_eq!((file[5], file[26], file[27]), (0x02, 1, 51));
+    assert_eq!(&file[28..33], b"\x7fFLAC");
+    assert_eq!(&file[79..83], b"OggS");
+    let probe = d.ok(&["probe", "a.oga"]);
+    assert!(probe.contains("flac"), "{probe}");
+}
+
+#[test]
+fn flac_to_ogg_flac_copy_and_back_gives_the_same_file() {
+    let d = Dir::new("flac-oga-flac");
+    d.write("in.wav", &tonal_wav(44_100, 2, SampleFormat::S24));
+    d.ok(&["convert", "in.wav", "-o", "native.flac"]);
+    d.ok(&["convert", "native.flac", "-o", "a.oga", "--codec", "copy"]);
+    d.ok(&["convert", "a.oga", "-o", "back.flac", "--codec", "copy"]);
+    let (native, back) = (d.read("native.flac"), d.read("back.flac"));
+    assert!(native == back, "frames, STREAMINFO and tags all survive");
+    // Ogg to Ogg is a copy as well, and writing is deterministic.
+    d.ok(&["convert", "a.oga", "-o", "b.oga", "--codec", "copy"]);
+    assert!(d.read("a.oga") == d.read("b.oga"));
+    d.ok(&["convert", "native.flac", "-o", "c.oga"]);
+    assert!(
+        d.read("a.oga") == d.read("c.oga"),
+        "re-encoding gives the same bytes"
+    );
+}
+
+#[test]
+fn ogg_flac_output_is_the_same_at_every_thread_count() {
+    let d = Dir::new("oga-threads");
+    d.write("in.wav", &tonal_wav(48_000, 2, SampleFormat::S16));
+    d.ok(&["convert", "in.wav", "-o", "t1.oga", "--threads", "1"]);
+    d.ok(&["convert", "in.wav", "-o", "ta.oga"]);
+    d.ok(&["convert", "in.wav", "-o", "t4.oga", "--threads", "4"]);
+    assert!(d.read("t1.oga") == d.read("ta.oga"));
+    assert!(d.read("t1.oga") == d.read("t4.oga"));
+}
+
+#[test]
+fn every_tag_reaches_the_ogg_flac_file_and_comes_back() {
+    let d = Dir::new("tags-to-oga");
+    d.write(
+        "in.flac",
+        &flac_with_tags(&fixture("flac/stereo-16bit.flac"), &RICH),
+    );
+    for extra in [&[][..], &["--codec", "copy"]] {
+        let mut args = vec!["convert", "in.flac", "-o", "mid.oga", "--force"];
+        args.extend_from_slice(extra);
+        d.ok(&args);
+        d.ok(&[
+            "convert", "mid.oga", "-o", "out.flac", "--force", "--codec", "copy",
+        ]);
+        assert_eq!(
+            parse_flac(&d.read("out.flac")).tags,
+            pairs(&RICH),
+            "{extra:?}"
+        );
+    }
+}
+
 // ---- refusals ------------------------------------------------------------------------------
 
 /// CRC-32 of an Ogg page: polynomial 0x04C11DB7, initial value 0, no reflection.
@@ -1030,7 +1127,7 @@ fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
     d.write("wide.wav", &tonal_wav(8_000, 9, SampleFormat::S16));
     d.write("in.flac", &fixture("flac/stereo-16bit.flac"));
 
-    let cases: [(&[&str], &str); 10] = [
+    let cases: [(&[&str], &str); 12] = [
         (
             &["convert", "f32.wav", "-o", "o.flac"],
             "flac cannot store floating-point samples",
@@ -1072,16 +1169,24 @@ fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
             "--codec copy cannot change the sample format",
         ),
         (
-            &["convert", "s16.wav", "-o", "o.ogg"],
-            ".ogg can be read but not written yet",
+            &["convert", "s16.wav", "-o", "o.ogg", "--codec", "pcm"],
+            "codec pcm cannot be written into ogg (ogg holds flac only)",
         ),
         (
-            &["convert", "in.flac", "-o", "o.oga"],
-            ".ogg can be read but not written yet",
+            &["convert", "s16.wav", "-o", "o.oga", "--codec", "copy"],
+            "cannot copy pcm_s16le into ogg (ogg holds flac only)",
+        ),
+        (
+            &["convert", "f32.wav", "-o", "o.oga"],
+            "flac cannot store floating-point samples",
+        ),
+        (
+            &["convert", "wide.wav", "-o", "o.oga"],
+            "flac holds at most 8 channels, got 9",
         ),
         (
             &["convert", "s16.wav", "-o", "o.mp3"],
-            ".wav, .flac, .aiff/.aif/.aifc",
+            ".wav, .flac, .aiff/.aif/.aifc, .oga/.ogg",
         ),
         (
             &[
