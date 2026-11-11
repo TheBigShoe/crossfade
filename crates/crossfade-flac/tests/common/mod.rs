@@ -213,3 +213,41 @@ pub fn assert_frames_within_bound(e: &Encoded, total_frames: usize) {
         );
     }
 }
+
+/// What the streaming interface produced: the bytes, where each frame ends, the STREAMINFO.
+#[derive(Debug, PartialEq)]
+pub struct Written {
+    pub bytes: Vec<u8>,
+    pub ends: Vec<usize>,
+    pub info: StreamInfoBlock,
+}
+
+/// Feeds `samples` through `write_ends` in chunks of random size (0 to a little over two
+/// blocks of whole sample frames, from `seed`; 0 means one call with everything), then
+/// `flush_ends` and `finish`.
+pub fn written(config: EncoderConfig, samples: &[i32], seed: u64) -> Written {
+    let mut enc = Encoder::new(config).unwrap();
+    let ch = usize::from(config.channels);
+    let span = enc.block_size() as u64 * 2 + 7;
+    let mut rng = Rng(seed | 1);
+    let (mut bytes, mut ends) = (Vec::new(), Vec::new());
+    let mut at = 0;
+    while at < samples.len() {
+        let n = if seed == 0 {
+            samples.len()
+        } else {
+            (rng.next() % span) as usize * ch
+        };
+        let end = (at + n).min(samples.len());
+        enc.write_ends(&samples[at..end], &mut bytes, &mut ends)
+            .unwrap();
+        at = end;
+    }
+    enc.flush_ends(&mut bytes, &mut ends).unwrap();
+    assert_eq!(enc.frames_in_flight(), 0, "flush leaves nothing in flight");
+    Written {
+        bytes,
+        ends,
+        info: enc.finish(),
+    }
+}

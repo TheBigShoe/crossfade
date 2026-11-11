@@ -6,11 +6,16 @@ use crossfade_flac::EncoderConfig;
 use crossfade_flac::md5::Md5;
 
 fn cfg(rate: u32, channels: u8, bits: u8, level: u8) -> EncoderConfig {
+    cfg_threads(rate, channels, bits, level, 1)
+}
+
+fn cfg_threads(rate: u32, channels: u8, bits: u8, level: u8, threads: usize) -> EncoderConfig {
     EncoderConfig {
         sample_rate: rate,
         channels,
         bits_per_sample: bits,
         level,
+        threads,
     }
 }
 
@@ -104,8 +109,8 @@ fn hex(bytes: &[u8]) -> String {
 /// A change in the output must be deliberate: these are the MD5 of the whole encoded stream
 /// (frames only) for fixed signals. Integer-only input; the encoder's floating point uses
 /// only exactly-defined operations, so every platform must reproduce them.
-#[test]
-fn output_bytes_are_pinned() {
+/// The streams the pinned hashes cover, made by `make` (config, samples).
+fn pinned_table(make: impl Fn(u32, u8, u8, u8, &[i32]) -> (Vec<u8>, [u8; 34])) -> Vec<String> {
     let stereo16 = resonator(4096 * 3 + 333, 2, 16, 2000, 7);
     let mono24 = resonator(4096 + 500, 1, 24, 2000, 8);
     let wide32 = resonator(4096 + 71, 2, 32, 2000, 9);
@@ -114,34 +119,54 @@ fn output_bytes_are_pinned() {
     for level in 0..=8 {
         got.push((
             format!("stereo16 L{level}"),
-            encode(cfg(44_100, 2, 16, level), &stereo16, 0),
+            make(44_100, 2, 16, level, &stereo16),
         ));
     }
     for level in [0, 5, 8] {
         got.push((
             format!("mono24 L{level}"),
-            encode(cfg(96_000, 1, 24, level), &mono24, 0),
+            make(96_000, 1, 24, level, &mono24),
         ));
         got.push((
             format!("wide32 L{level}"),
-            encode(cfg(44_100, 2, 32, level), &wide32, 0),
+            make(44_100, 2, 32, level, &wide32),
         ));
         got.push((
             format!("multi6 L{level}"),
-            encode(cfg(48_000, 6, 16, level), &multi, 0),
+            make(48_000, 6, 16, level, &multi),
         ));
     }
-    let table: Vec<(String, String)> = got
-        .iter()
-        .map(|(name, e)| {
-            let mut all = e.bytes.clone();
-            all.extend_from_slice(&e.info.write());
-            (name.clone(), hex(&all))
+    got.iter()
+        .map(|(name, (bytes, info))| {
+            let mut all = bytes.clone();
+            all.extend_from_slice(info);
+            format!("{name} {}", hex(&all))
         })
-        .collect();
-    let want = GOLDEN;
-    let actual: Vec<String> = table.iter().map(|(n, h)| format!("{n} {h}")).collect();
-    assert_eq!(actual, want, "\nactual:\n{}", actual.join("\n"));
+        .collect()
+}
+
+/// A change in the output must be deliberate: these are the MD5 of the whole encoded stream
+/// (frames only) for fixed signals. Integer-only input; the encoder's floating point uses
+/// only exactly-defined operations, so every platform must reproduce them.
+#[test]
+fn output_bytes_are_pinned() {
+    let actual = pinned_table(|rate, ch, bits, level, samples| {
+        let e = encode(cfg(rate, ch, bits, level), samples, 0);
+        (e.bytes, e.info.write())
+    });
+    assert_eq!(actual, GOLDEN, "\nactual:\n{}", actual.join("\n"));
+}
+
+/// The same hashes from the streaming interface at any thread count, in uneven chunks.
+#[test]
+fn output_bytes_are_pinned_at_every_thread_count() {
+    for threads in [1, 2, 3, 8] {
+        let actual = pinned_table(|rate, ch, bits, level, samples| {
+            let w = written(cfg_threads(rate, ch, bits, level, threads), samples, 77);
+            (w.bytes, w.info.write())
+        });
+        assert_eq!(actual, GOLDEN, "{threads} threads");
+    }
 }
 
 const GOLDEN: [&str; 18] = [

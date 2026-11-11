@@ -23,6 +23,7 @@ fn forced(bits: u8, level: u8, mode: ChannelAssignment, samples: &[i32]) {
         channels: 2,
         bits_per_sample: bits,
         level,
+        threads: 1,
     })
     .unwrap();
     enc.coder.force_stereo(mode);
@@ -147,6 +148,7 @@ fn steady_state_does_not_grow_any_buffer() {
             channels,
             bits_per_sample: bits,
             level,
+            threads: 1,
         })
         .unwrap();
         let mut out = Vec::new();
@@ -209,6 +211,7 @@ fn band_limited_size() -> usize {
         channels: 2,
         bits_per_sample: 24,
         level: 5,
+        threads: 1,
     })
     .unwrap();
     let mut out = Vec::new();
@@ -362,4 +365,67 @@ fn a_wide_side_channel_that_fits_is_scored_like_any_other() {
         a.analyze(&music, 33, &mut plan);
         assert_eq!(a.window_codings, coded, "level {level}");
     }
+}
+
+fn threaded(level: u8, threads: usize) -> Encoder {
+    Encoder::new(EncoderConfig {
+        sample_rate: 44_100,
+        channels: 2,
+        bits_per_sample: 16,
+        level,
+        threads,
+    })
+    .unwrap()
+}
+
+#[test]
+fn a_panic_in_a_worker_is_an_error_from_then_on() {
+    let samples = pseudo(16, 4096 * 2 * 12, 3);
+    for threads in [2, 4] {
+        let mut enc = threaded(5, threads);
+        enc.panic_at = Some(3);
+        let mut out = Vec::new();
+        let first = enc
+            .write(&samples, &mut out)
+            .and_then(|()| enc.flush(&mut out));
+        let Err(Error::Internal(what)) = first else {
+            panic!("{threads} threads: {first:?}")
+        };
+        assert!(what.contains("frame 3"), "{what}");
+        // Only the frames before the one that failed were written.
+        let mut before = Vec::new();
+        threaded(5, 1)
+            .write(&samples[..4096 * 2 * 3], &mut before)
+            .unwrap();
+        assert_eq!(out, before, "{threads} threads");
+        assert!(matches!(
+            enc.write(&samples[..2], &mut out),
+            Err(Error::Internal(_))
+        ));
+        assert!(matches!(enc.flush(&mut out), Err(Error::Internal(_))));
+    }
+}
+
+#[test]
+fn a_stream_of_one_block_starts_no_thread() {
+    let mut enc = threaded(5, 8);
+    let mut out = Vec::new();
+    enc.write(&pseudo(16, 4096 * 2 - 6, 1), &mut out).unwrap();
+    enc.flush(&mut out).unwrap();
+    assert_eq!(enc.pool.as_ref().map_or(0, |p| p.workers()), 0);
+    assert!(enc.md5_stage.is_none());
+    assert!(!out.is_empty());
+}
+
+#[test]
+fn a_long_stream_codes_and_hashes_on_threads_of_its_own() {
+    let mut enc = threaded(5, 4);
+    let mut out = Vec::new();
+    enc.write(&pseudo(16, 4096 * 2 * 20, 2), &mut out).unwrap();
+    assert!(enc.pool.as_ref().is_some_and(|p| p.workers() >= 1));
+    assert!(enc.md5_stage.is_some());
+    enc.flush(&mut out).unwrap();
+    let info = enc.finish();
+    assert_eq!(info.total_samples, 4096 * 20);
+    assert!(enc.md5_stage.is_none(), "finish joins the MD5 thread");
 }
