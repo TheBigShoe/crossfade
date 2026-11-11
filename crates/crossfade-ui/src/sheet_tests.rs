@@ -805,7 +805,11 @@ fn type_into(cx: &mut TestAppContext, rig: &Rig, id: &'static str, text: &str) {
     click(cx, rig.window, id);
     cx.update_window(rig.window, |_, window, cx| {
         window.press("secondary-a", cx);
-        window.input(text, cx);
+        if text.is_empty() {
+            window.press("backspace", cx);
+        } else {
+            window.input(text, cx);
+        }
     })
     .expect("open");
     cx.run_until_parked();
@@ -1055,7 +1059,7 @@ fn choosing_a_preset_keeps_adjust_and_the_preset_row_says_custom_as_before(
         Some("Fade out 3 s")
     );
     // Something a preset fixed, changed: Custom.
-    pick(cx, &rig, "sheet-format", &FORMAT_LABELS, 5);
+    pick(cx, &rig, "sheet-format", &FORMAT_LABELS, 6);
     assert_eq!(dialog(cx, &rig, |d, cx| d.preset_label(cx)), None);
     assert_eq!(
         dialog(cx, &rig, |d, _| d.adjust_summary()).as_deref(),
