@@ -121,7 +121,7 @@
 //!   [`Encoder::new`] and reused; steady state allocates nothing but what the caller's `out`
 //!   needs. With threads, each worker has its own block of working memory and at most
 //!   `2 * threads` blocks are in flight (plus a few waiting for the MD5 thread), their buffers
-//!   reused. A panic on a worker (a bug) is [`Error::Internal`](crate::Error::Internal) from
+//!   reused. A panic on a worker (a bug) is [`Error::Internal`] from
 //!   then on, never a hang. Arithmetic on sample data is either checked against the limits or
 //!   wraps where the result is known to fit.
 

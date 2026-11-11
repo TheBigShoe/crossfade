@@ -5,7 +5,7 @@
 //! or Ogg reader) hands each frame over as a slice.
 //!
 //! [`Decoder::push_frame`] is the threaded form: frames go to worker threads (each with its own
-//! [`FrameDecoder`]) through the crate's ordered pool, blocks come back in order to a callback,
+//! `FrameDecoder`) through the crate's ordered pool, blocks come back in order to a callback,
 //! and the MD5 runs on a thread of its own. It gives exactly what `decode_frame` gives, errors
 //! included, at any thread count.
 
