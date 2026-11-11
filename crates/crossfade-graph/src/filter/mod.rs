@@ -7,7 +7,12 @@
 //! value follows it, then `key=value` words in any order, each key at most once. `Display`
 //! writes the canonical form, which parses back to the same value.
 
+mod plan;
 mod words;
+
+pub use crossfade_dsp::chain::ChainPlan;
+pub use crossfade_dsp::filters::FilterPlan;
+pub use plan::plan;
 
 pub use crossfade_dsp::filters::fade::Curve;
 pub use crossfade_dsp::filters::resample::Quality;

@@ -12,11 +12,7 @@ use std::fmt::Write;
 fn stream(rate: u32, format: SampleFormat, layout: &str, frames: Option<u64>) -> StreamInfo {
     let layout = ChannelLayout::from_name(layout)
         .unwrap_or_else(|| ChannelLayout::unpositioned(layout.parse().unwrap()).unwrap());
-    let codec = if format.is_float() {
-        CodecId::pcm_for(format)
-    } else {
-        CodecId::Flac
-    };
+    let codec = CodecId::pcm_for(format);
     StreamInfo {
         frames,
         ..StreamInfo::new(
@@ -95,9 +91,9 @@ fn render(c: &Case) -> String {
     let mut out = format!("### {}\n", c.title);
     for (i, input) in c.inputs.iter().enumerate() {
         let label = if c.inputs.len() == 1 {
-            "input:   ".to_owned()
+            "input:    ".to_owned()
         } else {
-            format!("input {}: ", i + 1)
+            format!("input {}:  ", i + 1)
         };
         writeln!(out, "{label}{}", describe_stream(input)).unwrap();
     }
@@ -109,7 +105,12 @@ fn render(c: &Case) -> String {
             _ => (*w).to_owned(),
         })
         .collect();
-    writeln!(out, "args:     -o {} {}", c.output, args.join(" ")).unwrap();
+    let mut line = format!("args:     -o {}", c.output);
+    for a in &args {
+        line.push(' ');
+        line.push_str(a);
+    }
+    writeln!(out, "{line}").unwrap();
     let s = match settings(c.words) {
         Ok(s) => s,
         Err(e) => {
@@ -375,25 +376,25 @@ fn plans() {
         case(
             "copy with a filter",
             stream(44100, SampleFormat::S16, "stereo", Some(1000)),
-            "o.flac",
+            "o.wav",
             &["--codec copy", "--filter gain -1dB"],
         ),
         case(
             "copy with a new rate",
             cd(1000),
-            "o.flac",
+            "o.wav",
             &["--codec copy", "--sample-rate 48000"],
         ),
         case(
             "copy with new channels",
             cd(1000),
-            "o.flac",
+            "o.wav",
             &["--codec copy", "--channels mono"],
         ),
         case(
             "copy with the same rate and channels",
             cd(1000),
-            "o.flac",
+            "o.wav",
             &["--codec copy", "--sample-rate 44100", "--channels stereo"],
         ),
         // Words that do not parse never reach a job.

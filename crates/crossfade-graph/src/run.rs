@@ -31,6 +31,11 @@ pub enum Event {
         frames_done: u64,
         frames_total: Option<u64>,
     },
+    /// Samples the output's integer format could not hold, saturated instead; sent once,
+    /// before `Finished`, and only when there were any.
+    Clipped {
+        samples: u64,
+    },
     Finished {
         frames: u64,
     },
@@ -57,6 +62,10 @@ pub fn run(
         io.commit(&output.path)?;
         Ok(frames)
     });
+    let clipped = pipeline.clipped();
+    if result.is_ok() && clipped > 0 {
+        on_event(&Event::Clipped { samples: clipped });
+    }
     match result {
         Ok(frames) => {
             on_event(&Event::Finished { frames });

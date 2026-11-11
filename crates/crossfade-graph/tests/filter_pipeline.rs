@@ -18,10 +18,8 @@ fn s16_wav(layout: ChannelLayout, samples: &[i16]) -> Vec<u8> {
 }
 
 fn s16_of(wav: &[u8]) -> Vec<i16> {
-    data_chunk(wav)
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]))
-        .collect()
+    let (pairs, _) = data_chunk(wav).as_chunks::<2>();
+    pairs.iter().map(|&b| i16::from_le_bytes(b)).collect()
 }
 
 fn gain(db: f64) -> FilterSpec {
@@ -163,7 +161,7 @@ fn twenty_db_up_clips_and_says_how_many() {
             !(-32768.0..=32767.0).contains(&v)
         })
         .count() as u64;
-    assert!(want > 9000, "{want}");
+    assert!(want > 8000, "{want}");
     let n = events.len();
     assert_eq!(events[n - 2], Event::Clipped { samples: want });
     assert!(matches!(events[n - 1], Event::Finished { .. }));

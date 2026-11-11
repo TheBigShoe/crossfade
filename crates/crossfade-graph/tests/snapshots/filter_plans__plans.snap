@@ -1,0 +1,410 @@
+---
+source: crates/crossfade-graph/tests/filter_plans.rs
+expression: table
+---
+### no filters
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac
+job:      {}
+chain:    none (the bit-exact path)
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: ok
+
+### the rate and layout the input already has
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --sample-rate 44100 --channels stereo --channels 2
+job:      {"sample_rate":44100,"channels":"2"}
+chain:    none (the bit-exact path)
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: ok
+
+### a 20-bit source keeps its depth without filters
+input:    96000 Hz stereo s24 (20-bit), 960000 frames
+args:     -o o.flac
+job:      {}
+chain:    none (the bit-exact path)
+output:   96000 Hz stereo s24 (20-bit), 960000 frames flac
+validate: ok
+
+### gain
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "gain -6dB"
+job:      {"filters":[{"filter":"gain","db":-6.0}]}
+chain:    1. gain x0.5011872336272722
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: ok
+
+### gain without dither
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.wav --filter "gain +3.5dB" --dither none
+job:      {"dither":"none","filters":[{"filter":"gain","db":3.5}]}
+chain:    1. gain x1.4962356560944334
+dither:   none
+output:   44100 Hz stereo s16 (full width), 441000 frames pcm_s16le
+validate: ok
+
+### gain on a 20-bit source writes full width
+input:    96000 Hz stereo s24 (20-bit), 960000 frames
+args:     -o o.flac --filter "gain -1dB"
+job:      {"filters":[{"filter":"gain","db":-1.0}]}
+chain:    1. gain x0.8912509381337456
+dither:   tpdf
+output:   96000 Hz stereo s24 (full width), 960000 frames flac
+validate: ok
+
+### gain into float
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.wav --filter "gain -1dB" --sample-format f32
+job:      {"sample_format":"f32","filters":[{"filter":"gain","db":-1.0}]}
+chain:    1. gain x0.8912509381337456
+dither:   tpdf
+output:   44100 Hz stereo f32 (full width), 441000 frames pcm_f32le
+validate: ok
+
+### two gains run in order
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "gain -3dB" --filter "gain +1dB"
+job:      {"filters":[{"filter":"gain","db":-3.0},{"filter":"gain","db":1.0}]}
+chain:    1. gain x0.7079457843841379
+          2. gain x1.1220184543019633
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: ok
+
+### an unknown length stays unknown
+input:    48000 Hz mono s24 (full width), length unknown
+args:     -o o.flac --filter "gain -3dB"
+job:      {"filters":[{"filter":"gain","db":-3.0}]}
+chain:    1. gain x0.7079457843841379
+dither:   tpdf
+output:   48000 Hz mono s24 (full width), length unknown flac
+validate: ok
+
+### trim start and end
+input:    44100 Hz stereo s16 (full width), 2646000 frames
+args:     -o o.flac --filter "trim start=10s end=1:00"
+job:      {"filters":[{"filter":"trim","start_seconds":10.0,"end_seconds":60.0}]}
+chain:    1. trim frames 441000..2646000
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 2205000 frames flac
+validate: unsupported: the trim filter is not built yet
+
+### trim by duration in milliseconds
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "trim start=1500ms duration=250ms"
+job:      {"filters":[{"filter":"trim","start_seconds":1.5,"duration_seconds":0.25}]}
+chain:    1. trim frames 66150..77175
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 11025 frames flac
+validate: unsupported: the trim filter is not built yet
+
+### trim past the end leaves nothing
+input:    44100 Hz stereo s16 (full width), 44100 frames
+args:     -o o.flac --filter "trim start=2s"
+job:      {"filters":[{"filter":"trim","start_seconds":2.0}]}
+chain:    1. trim frames 88200..end
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 0 frames flac
+validate: unsupported: the trim filter is not built yet
+
+### trim end on an input of unknown length
+input:    48000 Hz stereo s16 (full width), length unknown
+args:     -o o.flac --filter "trim end=0:30"
+job:      {"filters":[{"filter":"trim","end_seconds":30.0}]}
+chain:    1. trim frames 0..1440000
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), length unknown flac
+validate: unsupported: the trim filter is not built yet
+
+### trim to a sample-accurate frame
+input:    48000 Hz stereo s16 (full width), 480000 frames
+args:     -o o.wav --filter "trim start=0.0000208s end=1:00:00"
+job:      {"filters":[{"filter":"trim","start_seconds":0.0000208,"end_seconds":3600.0}]}
+chain:    1. trim frames 1..172800000
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 479999 frames pcm_s16le
+validate: unsupported: the trim filter is not built yet
+
+### fade in and out
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "fade in=2s out=3s curve=equal-power"
+job:      {"filters":[{"filter":"fade","in_seconds":2.0,"out_seconds":3.0,"curve":"equal-power"}]}
+chain:    1. fade in 88200 frames, out 132300 frames, equal-power
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: unsupported: the fade filter is not built yet
+
+### fade after trim counts at the trimmed stream
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "trim start=5s" --filter "fade out=500ms curve=s-curve"
+job:      {"filters":[{"filter":"trim","start_seconds":5.0},{"filter":"fade","out_seconds":0.5,"curve":"s-curve"}]}
+chain:    1. trim frames 220500..end
+          2. fade in 0 frames, out 22050 frames, s-curve
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 220500 frames flac
+validate: unsupported: the trim filter is not built yet
+
+### normalize
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "normalize -16LUFS"
+job:      {"filters":[{"filter":"normalize","lufs":-16.0,"true_peak_dbtp":-1.0}]}
+chain:    1. normalize to -16 LUFS, true peak at most -1 dBTP (gain from a measuring pass)
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: unsupported: the normalize filter is not built yet
+
+### normalize with a ceiling
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "normalize -23LUFS peak=-2dBTP"
+job:      {"filters":[{"filter":"normalize","lufs":-23.0,"true_peak_dbtp":-2.0}]}
+chain:    1. normalize to -23 LUFS, true peak at most -2 dBTP (gain from a measuring pass)
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: unsupported: the normalize filter is not built yet
+
+### two normalize filters
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "normalize -16LUFS" --filter "normalize -14LUFS"
+job:      {"filters":[{"filter":"normalize","lufs":-16.0,"true_peak_dbtp":-1.0},{"filter":"normalize","lufs":-14.0,"true_peak_dbtp":-1.0}]}
+chain:    error: unsupported: 2 normalize filters (a chain takes one: each needs its own measuring pass)
+output:   error: unsupported: 2 normalize filters (a chain takes one: each needs its own measuring pass)
+validate: unsupported: 2 normalize filters (a chain takes one: each needs its own measuring pass)
+
+### resample filter
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "resample 48kHz quality=best"
+job:      {"filters":[{"filter":"resample","rate":48000,"quality":"best"}]}
+chain:    1. resample to 48000 Hz (best)
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 480000 frames flac
+validate: unsupported: the resample filter is not built yet
+
+### output rate
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --sample-rate 48000
+job:      {"sample_rate":48000}
+chain:    1. resample to 48000 Hz (good)
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 480000 frames flac
+validate: unsupported: the resample filter is not built yet
+
+### output rate after a gain
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "gain -1dB" --sample-rate 96kHz
+job:      {"sample_rate":96000,"filters":[{"filter":"gain","db":-1.0}]}
+chain:    1. gain x0.8912509381337456
+          2. resample to 96000 Hz (good)
+dither:   tpdf
+output:   96000 Hz stereo s16 (full width), 960000 frames flac
+validate: unsupported: the resample filter is not built yet
+
+### an explicit resample then back by the output setting
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "resample 96000" --sample-rate 44100
+job:      {"sample_rate":44100,"filters":[{"filter":"resample","rate":96000}]}
+chain:    1. resample to 96000 Hz (good)
+          2. resample to 44100 Hz (good)
+dither:   tpdf
+output:   44100 Hz stereo s16 (full width), 441000 frames flac
+validate: unsupported: the resample filter is not built yet
+
+### an odd rate count is rounded up
+input:    44100 Hz stereo s16 (full width), 1 frames
+args:     -o o.flac --sample-rate 48000
+job:      {"sample_rate":48000}
+chain:    1. resample to 48000 Hz (good)
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 2 frames flac
+validate: unsupported: the resample filter is not built yet
+
+### mix to mono
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "mix mono"
+job:      {"filters":[{"filter":"mix","channels":"mono"}]}
+chain:    1. mix to mono
+dither:   tpdf
+output:   44100 Hz mono s16 (full width), 441000 frames flac
+validate: unsupported: the mix filter is not built yet
+
+### output channels down: mixed before resampling
+input:    48000 Hz 5.1 s24 (full width), 48000 frames
+args:     -o o.flac --channels stereo --sample-rate 44.1kHz
+job:      {"sample_rate":44100,"channels":"stereo"}
+chain:    1. mix to stereo
+          2. resample to 44100 Hz (good)
+dither:   tpdf
+output:   44100 Hz stereo s24 (full width), 44100 frames flac
+validate: unsupported: the mix filter is not built yet
+
+### output channels up: resampled before mixing
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.wav --channels 5.1 --sample-rate 48000
+job:      {"sample_rate":48000,"channels":"5.1"}
+chain:    1. resample to 48000 Hz (good)
+          2. mix to 5.1
+dither:   tpdf
+output:   48000 Hz 5.1 s16 (full width), 480000 frames pcm_s16le
+validate: unsupported: the resample filter is not built yet
+
+### a count takes the default layout for it
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.wav --channels 6
+job:      {"channels":"6"}
+chain:    1. mix to 5.1
+dither:   tpdf
+output:   44100 Hz 5.1 s16 (full width), 441000 frames pcm_s16le
+validate: unsupported: the mix filter is not built yet
+
+### a matrix
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "mix mono matrix=0.5,0.5"
+job:      {"filters":[{"filter":"mix","channels":"mono","matrix":[[0.5,0.5]]}]}
+chain:    1. mix to mono by matrix [[0.5, 0.5]]
+dither:   tpdf
+output:   44100 Hz mono s16 (full width), 441000 frames flac
+validate: unsupported: the mix filter is not built yet
+
+### a matrix that does not fit the input
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --filter "mix mono matrix=0.3,0.3,0.3"
+job:      {"filters":[{"filter":"mix","channels":"mono","matrix":[[0.3,0.3,0.3]]}]}
+chain:    error: unsupported: mix matrix rows have 3 coefficients but the input has 2 channels
+output:   error: unsupported: mix matrix rows have 3 coefficients but the input has 2 channels
+validate: unsupported: mix matrix rows have 3 coefficients but the input has 2 channels
+
+### unpositioned input to a named layout
+input:    48000 Hz 2 channels s16 (full width), 1000 frames
+args:     -o o.flac --channels stereo
+job:      {"channels":"stereo"}
+chain:    1. mix to stereo
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 1000 frames flac
+validate: unsupported: the mix filter is not built yet
+
+### more channels than FLAC holds
+input:    44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --channels 12
+job:      {"channels":"12"}
+chain:    1. mix to 12 channels
+dither:   tpdf
+output:   44100 Hz 12 channels s16 (full width), 441000 frames flac
+validate: unsupported: the mix filter is not built yet
+
+### a full chain
+input:    96000 Hz 5.1 s24 (full width), 28800000 frames
+args:     -o o.flac --filter "trim start=30s duration=2:00" --filter "mix stereo" --filter "fade in=1s out=4s" --filter "normalize -14LUFS peak=-1.5dBTP" --sample-rate 48000 --sample-format s16
+job:      {"sample_format":"s16","sample_rate":48000,"filters":[{"filter":"trim","start_seconds":30.0,"duration_seconds":120.0},{"filter":"mix","channels":"stereo"},{"filter":"fade","in_seconds":1.0,"out_seconds":4.0},{"filter":"normalize","lufs":-14.0,"true_peak_dbtp":-1.5}]}
+chain:    1. trim frames 2880000..14400000
+          2. mix to stereo
+          3. fade in 96000 frames, out 384000 frames, linear
+          4. normalize to -14 LUFS, true peak at most -1.5 dBTP (gain from a measuring pass)
+          5. resample to 48000 Hz (good)
+dither:   tpdf
+output:   48000 Hz stereo s16 (full width), 5760000 frames flac
+validate: unsupported: the trim filter is not built yet
+
+### copy with a filter
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.wav --codec copy --filter "gain -1dB"
+job:      {"codec":"copy","filters":[{"filter":"gain","db":-1.0}]}
+chain:    1. gain x0.8912509381337456
+dither:   tpdf
+output:   error: unsupported: --codec copy cannot apply filters (copying passes the packets through untouched; leave out --codec copy to process the audio)
+validate: unsupported: --codec copy cannot apply filters (copying passes the packets through untouched; leave out --codec copy to process the audio)
+
+### copy with a new rate
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.wav --codec copy --sample-rate 48000
+job:      {"codec":"copy","sample_rate":48000}
+chain:    1. resample to 48000 Hz (good)
+dither:   tpdf
+output:   error: unsupported: --codec copy cannot change the sample rate (copying passes the packets through untouched; leave out --codec copy to process the audio)
+validate: unsupported: --codec copy cannot change the sample rate (copying passes the packets through untouched; leave out --codec copy to process the audio)
+
+### copy with new channels
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.wav --codec copy --channels mono
+job:      {"codec":"copy","channels":"mono"}
+chain:    1. mix to mono
+dither:   tpdf
+output:   error: unsupported: --codec copy cannot change the channels (copying passes the packets through untouched; leave out --codec copy to process the audio)
+validate: unsupported: --codec copy cannot change the channels (copying passes the packets through untouched; leave out --codec copy to process the audio)
+
+### copy with the same rate and channels
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.wav --codec copy --sample-rate 44100 --channels stereo
+job:      {"codec":"copy","sample_rate":44100,"channels":"stereo"}
+chain:    none (the bit-exact path)
+output:   44100 Hz stereo s16 (full width), 1000 frames pcm_s16le (stream copy)
+validate: ok
+
+### a level without its unit
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --filter "gain -3"
+error:    "-3": expected a level in dB, such as -3dB
+
+### a misspelt filter
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --filter "gian -3dB"
+error:    "gian": unknown filter; expected gain, trim, fade, normalize, resample or mix
+
+### a misspelt option
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --filter "fade in=2s curve=exp"
+error:    "curve=exp": expected a curve: linear, equal-power or s-curve
+
+### a time that is not one
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --filter "trim start=90"
+error:    "start=90": expected a time such as 10s, 500ms or 1:30
+
+### a rate with a stray unit
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --sample-rate 48k
+error:    "48k": expected a sample rate such as 48000, 48000Hz or 44.1kHz
+
+### an unknown layout
+input:    44100 Hz stereo s16 (full width), 1000 frames
+args:     -o o.flac --channels 5.1(side)
+error:    "5.1(side)": expected a layout (mono, stereo, 2.1, 3.0, 3.1, 4.0, quad, quad-side, 5.0, 5.0-back, 5.1, 5.1-back, 6.1, 7.1) or a channel count from 1 to 64
+
+### concat of matching inputs
+input 1:  44100 Hz stereo s16 (full width), 441000 frames
+input 2:  44100 Hz stereo s16 (full width), 220500 frames
+args:     -o o.flac
+job:      {}
+output:   44100 Hz stereo s16 (full width), 661500 frames flac
+validate: unsupported: joining 2 inputs (crossfade concat) is not built yet
+
+### concat conforms to the first input
+input 1:  44100 Hz stereo s16 (full width), 441000 frames
+input 2:  48000 Hz mono s24 (full width), 48000 frames
+args:     -o o.flac --filter "fade out=2s"
+job:      {"filters":[{"filter":"fade","out_seconds":2.0}]}
+output:   44100 Hz stereo s16 (full width), 485100 frames flac
+validate: unsupported: the fade filter is not built yet
+
+### concat conforms to the output settings
+input 1:  44100 Hz stereo s16 (full width), 441000 frames
+input 2:  48000 Hz mono s24 (full width), 48000 frames
+args:     -o o.wav --sample-rate 48000 --channels mono
+job:      {"sample_rate":48000,"channels":"mono"}
+output:   48000 Hz mono s16 (full width), 528000 frames pcm_s16le
+validate: unsupported: joining 2 inputs (crossfade concat) is not built yet
+
+### concat with an input of unknown length
+input 1:  44100 Hz stereo s16 (full width), 441000 frames
+input 2:  44100 Hz stereo s16 (full width), length unknown
+args:     -o o.flac
+job:      {}
+output:   44100 Hz stereo s16 (full width), length unknown flac
+validate: unsupported: joining 2 inputs (crossfade concat) is not built yet
+
+### concat cannot copy
+input 1:  44100 Hz stereo s16 (full width), 441000 frames
+input 2:  44100 Hz stereo s16 (full width), 441000 frames
+args:     -o o.flac --codec copy
+job:      {"codec":"copy"}
+output:   error: unsupported: --codec copy cannot join inputs (joining decodes them)
+validate: unsupported: --codec copy cannot join inputs (joining decodes them)
