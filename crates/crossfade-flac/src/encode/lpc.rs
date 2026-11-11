@@ -571,6 +571,130 @@ mod tests {
     }
 
     #[test]
+    fn integer_scale_keeps_every_sum_inside_i64() {
+        for n in [1usize, 2, 17, 1152, 4096, 4097, 65535] {
+            let log_n = usize::BITS - (n - 1).leading_zeros();
+            for width in 0u32..=40 {
+                let peak = if width == 0 { 0 } else { (1u64 << width) - 1 };
+                match int_scale(n, peak) {
+                    Some(bits) => {
+                        assert!(bits <= 20);
+                        assert!(2 * (width + bits) + log_n <= 62, "n {n} width {width}");
+                        // As many fractional bits as fit, up to the cap.
+                        assert!(bits == 20 || 2 * (width + bits + 1) + log_n > 62);
+                    }
+                    None => assert!(2 * width + log_n > 62, "n {n} width {width}"),
+                }
+            }
+        }
+    }
+
+    /// The exact autocorrelation of the windowed samples rounded to `bits` fractional bits.
+    fn exact(x: &[i32], w: &[f64], bits: u32, lags: usize) -> Vec<f64> {
+        let scale = (1u64 << bits) as f64;
+        let q: Vec<i128> = x
+            .iter()
+            .zip(w)
+            .map(|(&s, &w)| i128::from(round(f64::from(s) * w * scale)))
+            .collect();
+        (0..lags)
+            .map(|lag| {
+                let sum: i128 = (lag..q.len()).map(|i| q[i] * q[i - lag]).sum();
+                sum as f64 / (1u64 << (2 * bits)) as f64
+            })
+            .collect()
+    }
+
+    #[test]
+    fn windowed_autocorrelation_is_exact_in_integers() {
+        let mut state = 77u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let (mut float, mut int) = (Vec::new(), Vec::new());
+        let mut w = Vec::new();
+        for (n, depth) in [
+            (4096usize, 16u32),
+            (4096, 17),
+            (4096, 24),
+            (4096, 25),
+            (1152, 8),
+            (37, 20),
+            (3, 4),
+        ] {
+            window(n, 0, n, 4, &mut w);
+            let lo = -(1i64 << (depth - 1));
+            let signals: [Vec<i32>; 3] = [
+                (0..n)
+                    .map(|_| (lo + (next() % (1u64 << depth)) as i64) as i32)
+                    .collect(),
+                // Every sample at the extreme: the largest sums the bound must hold.
+                vec![lo as i32; n],
+                (0..n)
+                    .map(|i| {
+                        if i % 2 == 0 {
+                            lo as i32
+                        } else {
+                            (-lo - 1) as i32
+                        }
+                    })
+                    .collect(),
+            ];
+            for x in &signals {
+                let peak = x
+                    .iter()
+                    .map(|&v| u64::from(v.unsigned_abs()))
+                    .max()
+                    .unwrap();
+                let bits = int_scale(n, peak).expect("these depths take the integer path");
+                let mut got = [0.0f64; 13];
+                windowed_autocorrelation(
+                    x,
+                    &w,
+                    peak,
+                    &mut Windowed {
+                        float: &mut float,
+                        int: &mut int,
+                    },
+                    &mut got,
+                );
+                assert_eq!(got.to_vec(), exact(x, &w, bits, 13), "n {n} depth {depth}");
+            }
+        }
+    }
+
+    #[test]
+    fn samples_too_wide_for_integers_take_the_float_path() {
+        let n = 4096;
+        let mut w = Vec::new();
+        window(n, 0, n, 4, &mut w);
+        let x: Vec<i64> = (0..n as i64)
+            .map(|i| (i * 7919 % 4001 - 2000) << 30)
+            .collect();
+        let peak = x.iter().map(|&v| v.unsigned_abs()).max().unwrap();
+        assert_eq!(int_scale(n, peak), None);
+        let (mut float, mut int) = (Vec::new(), Vec::new());
+        let mut got = [0.0f64; 9];
+        windowed_autocorrelation(
+            &x,
+            &w,
+            peak,
+            &mut Windowed {
+                float: &mut float,
+                int: &mut int,
+            },
+            &mut got,
+        );
+        let windowed: Vec<f64> = x.iter().zip(&w).map(|(&v, &w)| v as f64 * w).collect();
+        let mut want = [0.0f64; 9];
+        autocorrelation(&windowed, &mut want);
+        assert_eq!(got, want);
+    }
+
+    #[test]
     fn levinson_recovers_a_first_order_process() {
         let rho = 0.5;
         let autoc: Vec<f64> = (0..6).map(|k| 4.0 * f64::powi(rho, k)).collect();
