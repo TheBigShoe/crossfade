@@ -1,9 +1,12 @@
 //! FLAC encoder: `crossfade_flac::Encoder` behind the streaming [`Encoder`] trait.
 //!
 //! Input is re-blocked into fixed-size blocks, each coded to one complete FLAC frame, so a
-//! packet is exactly one frame. Everything runs on the calling thread: identical input gives
-//! identical bytes anywhere. The compression levels (0 to 8, `None` means 5) and what each one
-//! tries are the standalone encoder's; see its `encode` module.
+//! packet is exactly one frame. [`encoder`] runs on the calling thread; [`encoder_threads`]
+//! lets the standalone encoder code frames on worker threads, so packets may come out a few
+//! blocks after their samples went in, but their contents, order, timestamps and durations
+//! are the same: identical input gives identical bytes anywhere, at any thread count. The
+//! compression levels (0 to 8, `None` means 5) and what each one tries are the standalone
+//! encoder's; see its `encode` module.
 //!
 //! # Limits
 //!
@@ -62,6 +65,16 @@ struct FlacEncoder {
 }
 
 pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Encoder>, Error> {
+    encoder_threads(spec, options, 1)
+}
+
+/// As [`encoder`], coding on up to `threads` threads (the calling thread included; 0 means the
+/// machine's parallelism); see `crossfade_flac::EncoderConfig::threads`.
+pub fn encoder_threads(
+    spec: &AudioSpec,
+    options: &EncodeOptions,
+    threads: usize,
+) -> Result<Box<dyn Encoder>, Error> {
     let bits = bits_of(spec.format())?;
     let channels = spec.layout().channels();
     if channels > MAX_CHANNELS {
@@ -86,7 +99,7 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         channels: channels as u8,
         bits_per_sample: bits,
         level,
-        threads: 1,
+        threads,
     })
     .map_err(map)?;
     let block = inner.block_size();
@@ -110,11 +123,12 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
 }
 
 impl FlacEncoder {
-    /// Cuts what the inner encoder wrote into packets, one per frame.
-    fn collect(&mut self, last_len: Option<u64>) {
+    /// Cuts what the inner encoder wrote into packets, one per frame. Every frame holds a full
+    /// block but the stream's last, which holds what is left.
+    fn collect(&mut self) {
         let mut start = 0;
         for &end in &self.ends {
-            let duration = last_len.unwrap_or(self.block);
+            let duration = self.block.min(self.taken - self.emitted);
             self.pending.push_back(Packet {
                 stream: 0,
                 pts: self.emitted as i64,
@@ -133,16 +147,15 @@ impl FlacEncoder {
         self.inner
             .write_ends(samples, &mut self.bytes, &mut self.ends)
             .map_err(map)?;
-        self.collect(None);
+        self.collect();
         Ok(())
     }
 
     fn finish(&mut self) -> Result<(), Error> {
-        let rest = self.taken - self.emitted;
         self.inner
             .flush_ends(&mut self.bytes, &mut self.ends)
             .map_err(map)?;
-        self.collect(Some(rest));
+        self.collect();
         self.extradata = self.inner.finish().write();
         Ok(())
     }

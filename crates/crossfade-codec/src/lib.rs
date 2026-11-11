@@ -27,17 +27,29 @@ pub fn decoder_for(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
     })
 }
 
-/// `Error::Unsupported` for a codec with no encoder.
+/// `Error::Unsupported` for a codec with no encoder. Runs on the calling thread.
 pub fn encoder_for(
     codec: CodecId,
     spec: &AudioSpec,
     options: &EncodeOptions,
 ) -> Result<Box<dyn Encoder>, Error> {
+    encoder_for_threads(codec, spec, options, 1)
+}
+
+/// As [`encoder_for`], letting the encoder use up to `threads` threads (the calling thread
+/// included; 0 means the machine's parallelism). The output never depends on it, which is why
+/// it is not one of the [`EncodeOptions`]; an encoder with nothing to share out ignores it.
+pub fn encoder_for_threads(
+    codec: CodecId,
+    spec: &AudioSpec,
+    options: &EncodeOptions,
+    threads: usize,
+) -> Result<Box<dyn Encoder>, Error> {
     if codec.is_pcm() {
         return Ok(Box::new(pcm::PcmEncoder::new(codec, spec)?));
     }
     if codec == CodecId::Flac {
-        return flac::encode::encoder(spec, options);
+        return flac::encode::encoder_threads(spec, options, threads);
     }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),
