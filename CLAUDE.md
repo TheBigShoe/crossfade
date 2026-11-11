@@ -111,12 +111,24 @@ README giving the command that made each (5 MB budget for the repository).
   filter.
 - **Timing.** A filter's output pts count output frames at its output rate,
   without gaps, starting at its first input pts rescaled (see `Filter`).
-- **Adding a filter** (its text, JSON and plan already exist): write the
-  `Filter` in its module under `crates/crossfade-dsp/src/filters/` next to its
-  plan, test it there and in `crates/crossfade-dsp/tests/`, then change its arm
-  in `build` from `not_built(..)` to the constructor (one line). Update the
-  `validate:` lines of `crates/crossfade-graph/tests/snapshots/filter_plans__plans.snap`
-  that change, and the README's filter table.
+- **Adding a filter**: its text, JSON and rules in `crossfade-graph`'s `filter`
+  module, its plan and `Filter` in its own module under
+  `crates/crossfade-dsp/src/filters/`, one arm in `build_threads`, one arm in
+  `filter::plan`'s mapping; test it in `crates/crossfade-dsp/tests/` and
+  through the engine, add a row to the plans snapshot and the README's table.
+- **Normalising** runs twice (`run`): a measuring pass (the chain up to the
+  `normalize` stage, into a meter standing in for the encoder; nothing is
+  written) and the conversion, with the stage replaced by the gain the
+  measurement gives (`ChainPlan::with_measured_gain`). Events `Measuring`, then
+  `Normalized`, then `Started`; each pass is half the progress. The input is
+  opened twice through `JobIo`.
+- **Notes.** A plan's `notes` say what the job assumes (a downmix of unlabelled
+  channels takes FLAC's default layout for their count); the CLI prints them.
+- **Threads in DSP.** The resampler converts segments of the stream on up to
+  `Limits::max_threads` threads (`std::thread::scope`), bit-identical to one
+  thread: segments start on the ratio's input period and each has a pre- and
+  post-roll as long as the filter's reach. `1` starts no thread, nor does a
+  stream under two segments.
 - **Stream copy** refuses filters and any rate or channel change.
 
 The purity gate lives in its own crate so its `serde_json` dependency and

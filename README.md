@@ -74,12 +74,12 @@ crossfade concat a.wav b.wav -o both.flac                        # several input
 | gain | `gain -6dB` | built |
 | trim | `trim start=10s end=1:30`, `trim duration=500ms` | built (sample-accurate) |
 | fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | built (a fade-out holds its length in memory: at most 10 minutes) |
-| normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | parses and plans; the measuring pieces and `probe --loudness` are built, the two-pass run is not yet |
-| resample | `resample 48kHz quality=best` (`fast`, `good`, `best`); also `--sample-rate` | built: band-limited, time-aligned; a 44.1 -> 48 -> 44.1 kHz round trip keeps 143 / 159 / 239 dB (fast / good / best) |
-| mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | built: standard down- and up-mixes by speaker position (BS.775, LFE dropped, level-normalised), or a matrix |
+| normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | built: measures the signal as it reaches the stage (after any trim or rate change before it); a note says when the true-peak ceiling stops it short of the target |
+| resample | `resample 48kHz quality=best` (`fast`, `good`, `best`); also `--sample-rate` | built: band-limited, time-aligned, on several threads with the same bytes; a 44.1 -> 48 -> 44.1 kHz round trip keeps 143 / 159 / 239 dB (fast / good / best) |
+| mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | built: standard down- and up-mixes by speaker position (BS.775, LFE dropped, level-normalised), or a matrix; unlabelled channels mixed down are taken as FLAC's default layout for their count, with a note |
 | concat | `crossfade concat a.wav b.wav -o out.flac` | built: inputs conformed to the first one's rate and layout, sample-exact seams, bit-exact when the inputs match |
 
-A filter that is not built yet is refused before any file is written. A job
+Every filter is built; a trim stops reading the source once past its end. A job
 with no filters, no rate or channel change and no loss of depth takes exactly
 the path it took before, bit for bit. When something is processed, or an
 integer output is narrower than the input's real bit depth (24 real bits to

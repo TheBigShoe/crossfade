@@ -141,9 +141,33 @@ dithers integer output (TPDF).
 
 | Conversion | `crossfade` | `crossfade --threads 1` | `afconvert` |
 |---|---|---|---|
-| bench16 (60 s, 16-bit stereo) 44.1 -> 48 kHz, WAV | 188 | 191 | 733 |
-| bench16 44.1 -> 48 kHz, FLAC (level 5) | 198 | 271 | 1069 |
-| bench24 (10 s, 24-bit stereo) 96 -> 44.1 kHz, WAV | 61 | 62 | 262 |
+| bench16 (60 s, 16-bit stereo) 44.1 -> 48 kHz, WAV | 54 | 189 | 733 |
+| bench16 44.1 -> 48 kHz, FLAC (level 5) | 73 | 266 | 1069 |
+| bench24 (10 s, 24-bit stereo) 96 -> 44.1 kHz, WAV | 25 | 62 | 262 |
+
+The `afconvert` column is from the previous measurement on the same machine
+(it does not change with Crossfade). Wall time against CPU time (user plus
+system) for the same runs, with a 60 s 24-bit 5.1 file (`six.wav`, bench16
+mixed up to 5.1) as well:
+
+| Conversion | 1 thread: wall | CPU | auto: wall | CPU |
+|---|---|---|---|---|
+| bench16 44.1 -> 48 kHz WAV | 189 ms | 191 ms | 54 ms | 214 ms |
+| bench16 44.1 -> 48 kHz FLAC | 266 ms | 267 ms | 73 ms | 304 ms |
+| bench24 96 -> 44.1 kHz WAV | 62 ms | 61 ms | 25 ms | 70 ms |
+| six 44.1 -> 48 kHz WAV | 517 ms | 532 ms | 139 ms | 571 ms |
+| six 44.1 -> 48 kHz FLAC | 719 ms | 727 ms | 210 ms | 800 ms |
+
+The resampler splits the stream in time, not by channel, so stereo scales
+past two threads: segments of at least 32,768 input frames start on a multiple
+of the ratio's input period, each with a pre-roll and post-roll as long as
+the filter's reach, converted by its own copy of the resampler; up to 8
+segments run at once (`std::thread::scope`, one batch at a time). The bytes are
+the same at every thread count. The extra CPU on auto is the overlap and the
+threads' start-up, about 10 per cent. The budget is `--threads`: the
+resampler uses all of it for its batches, which run while the pipeline thread
+waits, so it shares the machine with a FLAC encoder's threads (which mostly
+wait in a rate-changing job) rather than splitting the count with them.
 
 By quality, bench16 44.1 -> 48 kHz to WAV: `fast` 108 ms, `good` 187 ms,
 `best` 302 ms.
@@ -153,17 +177,10 @@ conversion takes 6.1 ms; `--gain -3dB`, which runs the `f64` chain and TPDF
 dither, 16.8 ms (16.5 ms without dither); to FLAC, 28.4 ms plain and 31.3 ms
 with the gain.
 
-Where the time goes: a `sample` profile of a 5-minute conversion to FLAC at
-48 kHz puts about nine tenths of the main thread in the resampler (its dot
-product), a few per cent in the quantiser and the rest in reading, MD5 and
-handing frames on; the FLAC encoder's threads mostly wait. The resampler runs
-on one thread (about 385 times real time for stereo at `good`, see
-`crates/crossfade-resample/README.md`), so it sets the speed of any
-conversion that changes the rate. Channels are independent and the
-resampler's output does not depend on how channels are grouped, so running
-one resampler per channel on the pool would give the same bytes at close to
-the channel count's speed-up (an estimate, not measured: stereo up to about twice for the resampling,
-5.1 more); that is not built yet.
+Where the time went before threading: a `sample` profile of a 5-minute
+conversion to FLAC at 48 kHz put about nine tenths of the main thread in the
+resampler's dot product, a few per cent in the quantiser and the rest in
+reading, MD5 and handing frames on; the FLAC encoder's threads mostly waited.
 
 Quality, from the resampler's own measurements (`crates/crossfade-resample/README.md`):
 passband flat within 0.00003 / 0.000004 / 0.00000005 dB, stopband at least
