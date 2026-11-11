@@ -3,13 +3,14 @@
 
 mod crc;
 mod flac;
+mod mux;
 mod packets;
 mod page;
-mod writer;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod testutil;
+mod writer;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Tags};
 use crossfade_flac::frame::{self, HeaderError};
@@ -47,6 +48,8 @@ struct OggFlacDemuxer {
 fn malformed(what: String) -> Error {
     Error::Malformed { what }
 }
+
+pub use mux::create;
 
 pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
     let mut pages = PageReader::new(source);

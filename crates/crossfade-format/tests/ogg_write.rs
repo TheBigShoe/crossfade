@@ -3,8 +3,8 @@
 
 use crossfade_codec::{EncodeOptions, decoder_for, encoder_for_threads};
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Limits, MediaSink, Muxer, Packet,
-    SampleFormat, Samples, StreamInfo, Tags, TimeBase,
+    AudioFrame, AudioSpec, ChannelLayout, CodecId, Error, Limits, MediaSink, Packet, SampleFormat,
+    Samples, StreamInfo, Tags, TimeBase,
 };
 use crossfade_flac::streaminfo::StreamInfoBlock;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
@@ -326,11 +326,7 @@ fn every_depth_and_channel_count_round_trips_bit_exact_with_tags() {
             let (stream, got_tags, packets) = read_back(&w.file);
             assert_eq!(got_tags, tags(), "{format:?} x{channels}");
             assert_eq!(stream.frames, Some(9_000));
-            assert_eq!(
-                decode(&stream, &packets),
-                samples,
-                "{format:?} x{channels}"
-            );
+            assert_eq!(decode(&stream, &packets), samples, "{format:?} x{channels}");
         }
     }
 }
@@ -369,7 +365,8 @@ fn native_flac(samples: &[i32], s: &AudioSpec) -> Vec<u8> {
 
 /// Stream copy: demux `input`, hand its packets and STREAMINFO to a muxer for `to`.
 fn copy(input: &[u8], to: FormatId) -> Vec<u8> {
-    let (_, mut d) = open_demuxer(Box::new(Cursor::new(input.to_vec())), &Limits::default()).unwrap();
+    let (_, mut d) =
+        open_demuxer(Box::new(Cursor::new(input.to_vec())), &Limits::default()).unwrap();
     let sink = Shared::new(true);
     let stream = d.streams()[0].clone();
     let mut mux = create_muxer(to, Box::new(sink.clone()), &stream, d.tags()).unwrap();
@@ -400,7 +397,8 @@ fn native_flac_copied_into_ogg_and_back_is_the_same_file() {
 }
 
 fn read_back_native(file: &[u8]) -> (StreamInfo, Tags, Vec<Packet>) {
-    let (_, mut d) = open_demuxer(Box::new(Cursor::new(file.to_vec())), &Limits::default()).unwrap();
+    let (_, mut d) =
+        open_demuxer(Box::new(Cursor::new(file.to_vec())), &Limits::default()).unwrap();
     let mut packets = Vec::new();
     let mut p = Packet::default();
     while d.read_packet(&mut p).unwrap() {
@@ -432,7 +430,12 @@ fn a_sink_that_fails_surfaces_the_error_wherever_it_fails() {
     let s = spec(44100, SampleFormat::S16, 2);
     let samples = tone(2, 20_000, 16);
     let mut enc = encoder_for_threads(CodecId::Flac, &s, &EncodeOptions::default(), 1).unwrap();
-    let mut info = StreamInfo::new(0, CodecId::Flac, s.clone(), TimeBase::new(1, 44100).unwrap());
+    let mut info = StreamInfo::new(
+        0,
+        CodecId::Flac,
+        s.clone(),
+        TimeBase::new(1, 44100).unwrap(),
+    );
     info.extradata = enc.extradata().to_vec();
     enc.send_frame(&frame(&s, &samples)).unwrap();
     enc.drain();
@@ -445,15 +448,14 @@ fn a_sink_that_fails_surfaces_the_error_wherever_it_fails() {
     // Fails in the headers, in the audio, and in the closing page.
     for limit in [10, 100, total / 2, total - 5] {
         let sink = FaultySink::new(Shared::new(true)).fail_after(limit, ErrorKind::StorageFull);
-        let result = create_muxer(FormatId::Ogg, Box::new(sink), &info, &Tags::new()).and_then(
-            |mut m| {
+        let result =
+            create_muxer(FormatId::Ogg, Box::new(sink), &info, &Tags::new()).and_then(|mut m| {
                 for p in &packets {
                     m.write_packet(p)?;
                 }
                 m.set_extradata(enc.extradata())?;
                 m.finish()
-            },
-        );
+            });
         assert!(result.is_err(), "limit {limit}");
     }
     let sink = FaultySink::new(Shared::new(true)).fail_on_finish(ErrorKind::Other);

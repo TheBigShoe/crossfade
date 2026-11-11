@@ -99,9 +99,7 @@ pub fn create_muxer(
         FormatId::Wav => Ok(Box::new(wav::WavMuxer::with_tags(sink, stream, tags)?)),
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
-        FormatId::Ogg => Err(Error::Unsupported {
-            what: "writing ogg is not built yet".into(),
-        }),
+        FormatId::Ogg => ogg::create(sink, stream, tags),
     }
 }
 
@@ -237,14 +235,11 @@ mod tests {
     }
 
     #[test]
-    fn muxers_exist_for_wav_only_so_far() {
+    fn each_muxer_refuses_a_stream_it_cannot_hold() {
         let mk = |f| create_muxer(f, Box::new(Shared::default()), &stream(), &Tags::new());
         assert!(mk(FormatId::Wav).is_ok());
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
-        assert_eq!(
-            unsupported(mk(FormatId::Ogg)),
-            "writing ogg is not built yet"
-        );
+        assert!(unsupported(mk(FormatId::Ogg)).contains("ogg files can only hold flac"));
     }
 }
