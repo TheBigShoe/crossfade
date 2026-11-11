@@ -21,6 +21,8 @@ pub struct Plan {
     pub output: StreamInfo,
     /// Packets go straight from demuxer to muxer; no decoder or encoder exists.
     pub copy: bool,
+    /// What the job assumes (see `OutputPlan::notes`).
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +193,7 @@ impl Pipeline {
                     input: streams[0].clone(),
                     output: join.plan.output,
                     copy: false,
+                    notes: join.plan.notes,
                 };
                 let engine = Engine::Transcode(Box::new(Transcoder {
                     decoder,
@@ -258,6 +261,7 @@ impl Pipeline {
             input: stream.clone(),
             output: output.output,
             copy: output.copy,
+            notes: output.notes,
         };
         let muxer = make_muxer(&plan.output, demuxer.tags())?;
         Ok(Self {

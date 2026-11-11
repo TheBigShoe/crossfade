@@ -445,6 +445,11 @@ pub fn main() -> ExitCode {
     }
     let mut on_event = |e: &Event| match e {
         Event::Clipped { samples } => eprintln!("crossfade: warning: {}", clip_warning(*samples)),
+        Event::Started { plan } => {
+            for note in &plan.notes {
+                eprintln!("crossfade: note: {note}");
+            }
+        }
         Event::Normalized(n) => {
             if let Some(note) = normalize_note(n) {
                 eprintln!("crossfade: note: {note}");

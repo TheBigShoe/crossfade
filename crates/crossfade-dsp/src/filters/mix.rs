@@ -14,7 +14,8 @@
 //! - down to mono: that stereo mix, then `0.5 (L + R)`, composed into one matrix;
 //! - up-mixes (including stereo or mono to 5.1) invent nothing: each input goes to the same
 //!   position in the output, every other output channel is silent;
-//! - unpositioned channels are relabelled when the counts match.
+//! - unpositioned channels are relabelled when the counts match; mixed to another count,
+//!   they are taken to be FLAC's default layout for their count (`assumption` says so).
 //!
 //! Level convention: a downmix matrix is divided by its largest row sum of absolute
 //! coefficients, so full scale on every input at once is full scale out and cannot clip.
@@ -72,8 +73,37 @@ impl Mix {
     }
 }
 
+/// The layout a standard mix takes unlabelled (unpositioned) channels to be: FLAC's default
+/// for their count, when the mix changes the count to a named layout and a standard mix
+/// exists from that default. Readers still report what they read; only the mix assumes.
+fn assumed(from: &ChannelLayout, to: &ChannelLayout) -> Option<ChannelLayout> {
+    if from.positions().is_some() || to.positions().is_none() || from.channels() == to.channels() {
+        return None;
+    }
+    ChannelLayout::default_for(from.channels())
+        .ok()
+        .filter(|l| l.positions().is_some() && labelled_matrix(l, to).is_ok())
+}
+
+/// What a front end should say when a standard mix from `from` to `to` assumes a layout.
+pub fn assumption(from: &ChannelLayout, to: &ChannelLayout) -> Option<String> {
+    let layout = assumed(from, to)?;
+    Some(format!(
+        "treating {} unlabelled channels as {}",
+        from.channels(),
+        super::layout_words(&layout)
+    ))
+}
+
 /// The standard mix from `from` to `to`, `m[out][in]`; see the module doc for the rules.
 pub fn standard_matrix(from: &ChannelLayout, to: &ChannelLayout) -> Result<Vec<Vec<f64>>, Error> {
+    match assumed(from, to) {
+        Some(layout) => labelled_matrix(&layout, to),
+        None => labelled_matrix(from, to),
+    }
+}
+
+fn labelled_matrix(from: &ChannelLayout, to: &ChannelLayout) -> Result<Vec<Vec<f64>>, Error> {
     let (n_in, n_out) = (usize::from(from.channels()), usize::from(to.channels()));
     let refuse = || Error::Unsupported {
         what: format!(

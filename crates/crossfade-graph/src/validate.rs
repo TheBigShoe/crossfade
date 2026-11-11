@@ -5,7 +5,9 @@ use crate::choice::{can_hold, can_write, encode_options, output_codec, share_thr
 use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
+use crossfade_dsp::filters::FilterPlan;
 use crossfade_dsp::filters::gain::GainPlan;
+use crossfade_dsp::filters::mix::assumption;
 
 /// Stands in for a normalising job's gain when only checking that the job builds.
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
@@ -32,6 +34,37 @@ pub struct OutputPlan {
     pub output: StreamInfo,
     /// Packets go straight from demuxer to muxer.
     pub copy: bool,
+    /// Assumptions the job makes that a person should hear about, e.g. "treating 6
+    /// unlabelled channels as 5.1".
+    pub notes: Vec<String>,
+}
+
+/// What `chain` assumes about `input` along the way.
+fn notes(input: &AudioSpec, chain: Option<&ChainPlan>) -> Vec<String> {
+    let mut notes = Vec::new();
+    let (Some(chain), Ok(mut spec)) = (
+        chain,
+        AudioSpec::new(
+            input.sample_rate(),
+            SampleFormat::F64,
+            input.layout().clone(),
+        ),
+    ) else {
+        return notes;
+    };
+    for f in &chain.filters {
+        if let FilterPlan::Mix(m) = f
+            && m.matrix.is_none()
+            && let Some(note) = assumption(spec.layout(), &m.layout)
+        {
+            notes.push(note);
+        }
+        match f.output_spec(&spec) {
+            Ok(next) => spec = next,
+            Err(_) => break,
+        }
+    }
+    notes
 }
 
 /// The codecs a transcode runs, and its chain when it processes; a copy has none.
@@ -136,6 +169,7 @@ fn plan_output(
             output_format,
             output,
             copy: true,
+            notes: Vec::new(),
         };
         return Ok((plan, None));
     }
@@ -184,6 +218,7 @@ fn output_plan(
         output_format,
         output,
         copy: false,
+        notes: notes(in_spec, chain),
     })
 }
 
@@ -405,7 +440,15 @@ pub(crate) fn plan_join(
             dither: settings.dither,
         });
     }
-    let plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    let mut plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    let conform_notes = inputs
+        .iter()
+        .zip(&conform)
+        .flat_map(|(i, c)| notes(&i.audio, c.as_ref()));
+    let mut all: Vec<String> = conform_notes.collect();
+    all.append(&mut plan.notes);
+    all.dedup();
+    plan.notes = all;
     Ok(Join {
         plan,
         joined,
