@@ -107,23 +107,40 @@ impl<'a> Bits<'a> {
     /// Rice-decodes `out.len()` residuals with parameter `k` (below 32). A code that fits the
     /// window is taken in one step; a long one, or one at the end of the data, goes the slow way.
     fn read_rice<T: Sample>(&mut self, out: &mut [T], k: u32) -> Result<()> {
+        // The window lives in locals for the loop: kept in `self` it went through memory on
+        // every code, putting a store and a reload on the chain from one code to the next.
+        let data = self.data;
+        let (mut acc, mut n, mut next) = (self.acc, self.n, self.next);
         for v in out {
-            if self.n < 48 {
+            if let Some(word) = data.get(next..).and_then(|d| d.first_chunk::<8>()) {
+                acc |= u64::from_be_bytes(*word) >> n;
+                let take = (63 - n) >> 3;
+                next += take as usize;
+                n += take * 8;
+            } else if n < 48 {
+                (self.acc, self.n, self.next) = (acc, n, next);
                 self.refill();
+                (acc, n, next) = (self.acc, self.n, self.next);
             }
-            let lead = self.acc.leading_zeros();
+            let lead = acc.leading_zeros();
             let used = lead + 1 + k;
-            let folded = if used <= self.n {
-                let low = ((self.acc << (lead + 1)) >> 1) >> (63 - k);
-                self.acc <<= used;
-                self.n -= used;
+            let folded = if used <= n {
+                // `t` starts with the stop bit; the `k` bits after it are the low part.
+                let t = acc << lead;
+                let low = (t ^ (1 << 63)) >> (63 - k);
+                acc = t << (k + 1);
+                n -= used;
                 (u64::from(lead) << k) | low
             } else {
+                (self.acc, self.n, self.next) = (acc, n, next);
                 let q = u64::from(self.read_unary()?);
-                (q << k) | self.read(k)?
+                let folded = (q << k) | self.read(k)?;
+                (acc, n, next) = (self.acc, self.n, self.next);
+                folded
             };
             *v = T::from_i64(((folded >> 1) as i64) ^ -((folded & 1) as i64));
         }
+        (self.acc, self.n, self.next) = (acc, n, next);
         Ok(())
     }
 
