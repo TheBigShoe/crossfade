@@ -93,7 +93,7 @@ impl JobIo for FsIo {
 mod tests {
     use super::FsIo;
     use crossfade_core::{Error, JobIo};
-    use std::io::ErrorKind;
+    use std::io::{ErrorKind, SeekFrom};
     use std::path::{Path, PathBuf};
 
     struct Dir(PathBuf);
@@ -133,6 +133,52 @@ mod tests {
         std::fs::write(d.path("in.bin"), b"abc").unwrap();
         let src = FsIo::new().open_source(&d.path("in.bin")).unwrap();
         assert_eq!(src.byte_len(), Some(3));
+    }
+
+    #[test]
+    fn source_reads_and_seeks_through_its_buffer() {
+        let d = Dir::new("seek");
+        let bytes: Vec<u8> = (0..=255).cycle().take(600_000).collect();
+        std::fs::write(d.path("in.bin"), &bytes).unwrap();
+        let mut src = FsIo::new().open_source(&d.path("in.bin")).unwrap();
+        assert!(src.is_seekable());
+        let mut buf = [0u8; 10];
+        assert_eq!(src.read(&mut buf).unwrap(), 10);
+        assert_eq!(src.seek(SeekFrom::Current(-4)).unwrap(), 6);
+        src.read(&mut buf).unwrap();
+        assert_eq!(buf, bytes[6..16]);
+        assert_eq!(src.seek(SeekFrom::Start(599_990)).unwrap(), 599_990);
+        assert_eq!(src.read(&mut buf).unwrap(), 10);
+        assert_eq!(buf, bytes[599_990..]);
+        assert_eq!(src.read(&mut buf).unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_device_is_neither_seekable_nor_sized() {
+        let src = FsIo::new().open_source("/dev/null").unwrap();
+        assert!(!src.is_seekable());
+        assert_eq!(src.byte_len(), None);
+    }
+
+    #[test]
+    fn sink_seeks_back_over_buffered_writes() {
+        let d = Dir::new("patch");
+        let mut io = FsIo::new();
+        let target = d.path("out.bin");
+        let mut sink = io.create_sink(&target).unwrap();
+        sink.write_all(b"____").unwrap();
+        sink.write_all(&[7; 3000]).unwrap();
+        sink.seek(SeekFrom::Start(1)).unwrap();
+        sink.write_all(b"ab").unwrap();
+        sink.seek(SeekFrom::End(0)).unwrap();
+        sink.write_all(b"z").unwrap();
+        sink.finish().unwrap();
+        io.commit(&target).unwrap();
+        let out = std::fs::read(&target).unwrap();
+        assert_eq!(&out[..4], b"_ab_");
+        assert_eq!(out.len(), 3005);
+        assert_eq!(out[3004], b'z');
     }
 
     #[test]
