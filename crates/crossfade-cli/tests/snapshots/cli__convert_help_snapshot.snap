@@ -18,6 +18,8 @@ Options:
           How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the container's own [possible values: copy, pcm, flac]
       --compression-level <COMPRESSION_LEVEL>
           FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file
+      --threads <THREADS>
+          Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything on one thread. The output is the same either way [default: auto]
       --force
           Replace an existing output file
       --emit-job

@@ -247,7 +247,7 @@ fn install_interrupt_handler(cancel: &CancelToken) {
 
 #[cfg(test)]
 mod tests {
-    use super::{EXIT_CANCELLED, Outcome, run_command};
+    use super::{EXIT_CANCELLED, Outcome, request_from_args, run_command};
     use crossfade_app::FsIo;
     use crossfade_graph::{CancelToken, Event};
     use std::path::PathBuf;
@@ -340,6 +340,60 @@ mod tests {
         assert!(matches!(outcome, Outcome::Cancelled));
         assert_eq!(outcome.exit_code(), 130);
         assert_eq!(d.listing(), ["in.wav"]);
+    }
+
+    #[test]
+    fn the_thread_count_is_not_part_of_the_job() {
+        let base = [
+            "convert",
+            "a.wav",
+            "-o",
+            "b.flac",
+            "--compression-level",
+            "8",
+        ];
+        let plain = request_from_args(base).unwrap();
+        for threads in ["1", "4", "64", "auto"] {
+            let with = request_from_args(base.iter().copied().chain(["--threads", threads]));
+            assert_eq!(with.unwrap(), plain, "--threads {threads}");
+        }
+        for bad in ["0", "65", "x", "-1", ""] {
+            assert!(
+                request_from_args(base.iter().copied().chain(["--threads", bad])).is_err(),
+                "--threads {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emit_job_says_nothing_about_threads() {
+        let d = Dir::new("emit");
+        let emit = |extra: &[&str]| {
+            let mut args = vec!["convert", "a.wav", "-o", "b.flac", "--emit-job"];
+            args.extend_from_slice(extra);
+            match run_command(args, &mut FsIo::new(), &CancelToken::new(), &mut |_| {}).unwrap() {
+                Outcome::Done(json) => json,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(emit(&["--threads", "3"]), emit(&[]));
+        assert!(!emit(&["--threads", "3"]).contains("thread"));
+        assert_eq!(d.listing(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn every_thread_count_writes_the_same_file() {
+        let d = Dir::new("threads");
+        let input = write_silence(&d, "in.wav", 50_000);
+        let mut outputs = Vec::new();
+        for threads in ["1", "2", "auto"] {
+            let out = d.path(&format!("out{threads}.flac"));
+            let args = ["convert", &input, "-o", &out, "--threads", threads];
+            let outcome = run_command(args, &mut FsIo::new(), &CancelToken::new(), &mut |_| {});
+            assert!(matches!(outcome.unwrap(), Outcome::Done(_)), "{threads}");
+            outputs.push(std::fs::read(&out).unwrap());
+        }
+        assert!(outputs.windows(2).all(|w| w[0] == w[1]));
     }
 
     #[test]
