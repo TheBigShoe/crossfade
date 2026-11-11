@@ -1456,6 +1456,7 @@ version = "0.0.0"
 dependencies = [
  "crossfade-core",
  "crossfade-graph",
+ "crossfade-loudness",
  "crossfade-testkit",
  "insta",
  "proptest",

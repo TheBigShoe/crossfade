@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 crossfade-core.workspace = true
 crossfade-graph.workspace = true
+crossfade-loudness.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
