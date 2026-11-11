@@ -68,7 +68,8 @@ fn dc_gain_is_one_within_1e_12() {
 }
 
 /// An impulse at an input instant that lands exactly on an output instant comes out
-/// centred there, its peak at that output and symmetric about it.
+/// centred there, its peak at that output and symmetric about it (to rounding: mirrored
+/// table rows are designed and normalised from positions that round differently).
 #[test]
 fn impulse_response_is_symmetric_and_time_aligned() {
     for (a, b) in PAIRS {
@@ -87,7 +88,7 @@ fn impulse_response_is_symmetric_and_time_aligned() {
             let scale = y[centre].abs();
             for m in 1..centre.min(y.len() - centre - 1) {
                 assert!(
-                    (y[centre + m] - y[centre - m]).abs() <= 1e-15 * scale,
+                    (y[centre + m] - y[centre - m]).abs() <= 1e-14 * scale,
                     "{a} -> {b} {q:?}: asymmetric at {m}: {} vs {}",
                     y[centre + m],
                     y[centre - m]
