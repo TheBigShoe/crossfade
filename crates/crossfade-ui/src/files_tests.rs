@@ -537,3 +537,14 @@ fn a_short_name_leaves_the_directory_what_the_name_does_not_need(cx: &mut TestAp
     assert!(file.right() <= panel.right());
     assert!(dir.size.width > px(40.), "{dir:?}");
 }
+
+#[gpui_test]
+fn a_real_20_bit_flac_reads_as_20_bit_and_decodes_whole(cx: &mut TestAppContext) {
+    let flac = fixtures::programme_flac_20_bit(48_000, 2);
+    // Decoding every frame is what the labelled fixture could not do.
+    let wav = fixtures::convert(&flac, "x.wav", crossfade_graph::AudioSettings::default());
+    assert!(wav.len() > 48_000 * 2 * 3);
+    let rig = rig_with_file(cx, "master.flac", &flac);
+    let summary = rig.workspace.read_with(cx, |w, _| w.file_summary(0));
+    assert!(summary.contains("20-bit"), "{summary}");
+}

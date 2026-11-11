@@ -512,3 +512,44 @@ fn a_retry_starts_with_nothing_clipped() {
     let again = q.retry(a).unwrap();
     assert_eq!(q.get(again).unwrap().clipped, 0);
 }
+
+fn normalization(limited: bool) -> crossfade_graph::Normalization {
+    crossfade_graph::Normalization {
+        measured_lufs: Some(-23.0),
+        target_lufs: -16.0,
+        gain_db: if limited { 5.7 } else { 7.0 },
+        limited_by_ceiling: limited,
+        ceiling_dbtp: -1.0,
+    }
+}
+
+#[test]
+fn a_job_is_measuring_until_the_normalisation_is_reported() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let a = q.enqueue(request("a"));
+    q.pump(&mut r);
+    assert!(!q.get(a).unwrap().measuring);
+    q.apply(a, RunnerEvent::Measuring);
+    assert!(q.get(a).unwrap().measuring);
+    q.apply(a, progress(10, Some(100)));
+    assert!(
+        q.get(a).unwrap().measuring,
+        "progress does not end the pass"
+    );
+    q.apply(a, RunnerEvent::Normalized(normalization(true)));
+    let item = q.get(a).unwrap();
+    assert!(!item.measuring);
+    assert_eq!(item.normalization, Some(normalization(true)));
+    q.apply(a, RunnerEvent::Finished { frames: 1 });
+    assert_eq!(q.get(a).unwrap().normalization, Some(normalization(true)));
+}
+
+#[test]
+fn a_failed_measuring_pass_is_not_left_measuring() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let a = q.enqueue(request("a"));
+    q.pump(&mut r);
+    q.apply(a, RunnerEvent::Measuring);
+    q.apply(a, RunnerEvent::Cancelled);
+    assert!(!q.get(a).unwrap().measuring);
+}

@@ -98,8 +98,11 @@ just run
 Open or drop files to inspect them (a zoomable waveform and a loudness readout
 appear under the file name; scroll to pan, pinch or Cmd/Ctrl-scroll to zoom,
 double-click to fit), convert with the same options the command
-line has, and watch a queue with progress, cancel and retry. Every queued job
-can show the equivalent `crossfade` command. Settings, themes and key bindings
+line has (sample rate, channels, and an Adjust section for gain or loudness
+normalise, trim and fades), and watch a queue with progress, cancel and retry.
+A normalising job shows Measuring first; a finished job says how many samples
+clipped, or that the true-peak ceiling kept it below its loudness target. Every
+queued job can show the equivalent `crossfade` command. Settings, themes and key bindings
 are plain files in the config folder (`~/.config/crossfade` on macOS and
 Linux) and reload when saved.
 

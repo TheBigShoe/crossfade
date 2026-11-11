@@ -69,6 +69,38 @@ fn clip_line(samples: u64) -> String {
 const CLIP_ADVICE: &str = "The output could not hold the peaks, so they were cut off. \
 Lower the level, or use Normalize, which keeps the peaks under the ceiling.";
 
+/// The row's state line: `state_line`, saying Measuring while a normalise's first pass runs.
+fn item_line(item: &QueueItem) -> String {
+    if !item.measuring {
+        return state_line(&item.state);
+    }
+    match &item.state {
+        JobState::Running {
+            frames_done,
+            frames_total: Some(total),
+            cancelling: false,
+            ..
+        } => format!("Measuring \u{b7} {}%", percent(*frames_done, *total)),
+        JobState::Running {
+            cancelling: false, ..
+        } => "Measuring\u{2026}".to_owned(),
+        other => state_line(other),
+    }
+}
+
+/// `\u{2212}17.3 LUFS (limited by true peak)`: only for a finished job whose target the
+/// true-peak ceiling kept out of reach.
+fn note_line(item: &QueueItem) -> Option<String> {
+    let found = item.normalization.filter(|n| n.limited_by_ceiling)?;
+    let reached = found.reached_lufs()?;
+    matches!(item.state, JobState::Finished { .. }).then(|| {
+        format!(
+            "{} LUFS (limited by true peak)",
+            format!("{reached:.1}").replacen('-', "\u{2212}", 1)
+        )
+    })
+}
+
 fn percent(done: u64, total: u64) -> u64 {
     if total == 0 {
         100
@@ -80,11 +112,12 @@ fn percent(done: u64, total: u64) -> u64 {
 impl Workspace {
     /// What the row at `n` says about its job.
     pub fn queue_row_state(&self, n: usize) -> String {
-        self.queue
-            .items()
-            .get(n)
-            .map(|item| state_line(&item.state))
-            .unwrap_or_default()
+        self.queue.items().get(n).map(item_line).unwrap_or_default()
+    }
+
+    /// The muted note on a finished job whose normalise the true-peak ceiling limited.
+    pub fn queue_row_note(&self, n: usize) -> Option<String> {
+        note_line(self.queue.items().get(n)?)
     }
 
     /// `12,340 samples clipped` for a finished job that clipped; nothing for any other.
@@ -139,12 +172,17 @@ impl Workspace {
             .iter()
             .find(|item| matches!(item.state, JobState::Running { .. }))?;
         let name = output_name(item);
+        let verb = if item.measuring {
+            "Measuring"
+        } else {
+            "Converting"
+        };
         Some(match self.queue.fraction(item.id) {
             Some(fraction) => format!(
-                "Converting {name} \u{2014} {}%",
+                "{verb} {name} \u{2014} {}%",
                 (fraction * 100.0).floor() as u32
             ),
-            None => format!("Converting {name}"),
+            None => format!("{verb} {name}"),
         })
     }
 
@@ -240,6 +278,7 @@ impl Workspace {
         let finished = matches!(item.state, JobState::Finished { .. });
         let fraction = self.queue.fraction(id).filter(|_| running);
         let clip = self.queue_row_clip(n);
+        let note = note_line(item);
         let warning = cx.theme().warning;
         let menu_this = this.clone();
         v_flex()
@@ -347,8 +386,19 @@ impl Workspace {
                             .min_w_0()
                             .truncate()
                             .text_color(if failed { danger } else { muted })
-                            .child(SharedString::from(state_line(&item.state))),
+                            .child(SharedString::from(item_line(item))),
                     )
+                    .when_some(note, |line, note| {
+                        line.child(
+                            div()
+                                .id(SharedString::from(format!("queue-note-{n}")))
+                                .test_support()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(muted)
+                                .child(SharedString::from(note)),
+                        )
+                    })
                     .when_some(clip, |line, clip| {
                         line.child(
                             div()

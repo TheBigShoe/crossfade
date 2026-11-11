@@ -354,3 +354,93 @@ fn one_clipped_sample_is_singular(cx: &mut TestAppContext) {
         Some("1 sample clipped".to_owned())
     );
 }
+
+fn normalization(measured: Option<f64>, limited: bool) -> crossfade_graph::Normalization {
+    crossfade_graph::Normalization {
+        measured_lufs: measured,
+        target_lufs: -16.0,
+        gain_db: 5.7,
+        limited_by_ceiling: limited,
+        ceiling_dbtp: -1.0,
+    }
+}
+
+#[gpui_test]
+fn a_measuring_job_says_so_in_place_of_converting(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "one.wav");
+    assert_eq!(state(cx, &rig.workspace, 0), "Converting\u{2026}");
+    send(cx, &rig, 0, RunnerEvent::Measuring);
+    assert_eq!(state(cx, &rig.workspace, 0), "Measuring\u{2026}");
+    send(
+        cx,
+        &rig,
+        0,
+        RunnerEvent::Progress {
+            frames_done: 25,
+            frames_total: Some(100),
+        },
+    );
+    assert_eq!(state(cx, &rig.workspace, 0), "Measuring \u{b7} 25%");
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.converting_text()),
+        Some("Measuring one.wav \u{2014} 25%".to_owned())
+    );
+    assert!(has(cx, rig.window, "queue-progress-0"));
+    send(
+        cx,
+        &rig,
+        0,
+        RunnerEvent::Normalized(normalization(Some(-23.0), false)),
+    );
+    assert_eq!(state(cx, &rig.workspace, 0), "25%");
+}
+
+#[gpui_test]
+fn only_a_ceiling_limited_job_gets_a_note(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "one.wav");
+    enqueue(cx, &rig, "a.wav", "two.wav");
+    send(
+        cx,
+        &rig,
+        0,
+        RunnerEvent::Normalized(normalization(Some(-23.0), true)),
+    );
+    send(cx, &rig, 0, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_note(0)),
+        Some("\u{2212}17.3 LUFS (limited by true peak)".to_owned())
+    );
+    assert!(has(cx, rig.window, "queue-note-0"));
+
+    send(
+        cx,
+        &rig,
+        1,
+        RunnerEvent::Normalized(normalization(Some(-23.0), false)),
+    );
+    send(cx, &rig, 1, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_note(1)),
+        None
+    );
+    assert!(!has(cx, rig.window, "queue-note-1"));
+}
+
+#[gpui_test]
+fn a_limited_silent_job_has_no_loudness_to_quote(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "one.wav");
+    send(
+        cx,
+        &rig,
+        0,
+        RunnerEvent::Normalized(normalization(None, true)),
+    );
+    send(cx, &rig, 0, RunnerEvent::Finished { frames: 10 });
+    assert_eq!(
+        rig.workspace.read_with(cx, |w, _| w.queue_row_note(0)),
+        None
+    );
+}

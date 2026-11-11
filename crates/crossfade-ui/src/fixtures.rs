@@ -116,6 +116,29 @@ pub fn labelled_20_bit(flac: &[u8]) -> Vec<u8> {
     bytes
 }
 
+/// `seconds` of `programme_wav` as a real 20-bit FLAC from our own encoder: the samples are
+/// the programme's 16 bits shifted up four, so every frame is 20-bit as STREAMINFO says.
+pub fn programme_flac_20_bit(rate: u32, seconds: u32) -> Vec<u8> {
+    let wav = programme_wav(rate, seconds);
+    let samples: Vec<i32> = wav[44..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| i32::from(i16::from_le_bytes(*b)) << 4)
+        .collect();
+    let mut encoder = crossfade_flac::Encoder::new(crossfade_flac::EncoderConfig::new(rate, 2, 20))
+        .expect("an encoder");
+    let mut frames = Vec::new();
+    encoder.write(&samples, &mut frames).expect("encode");
+    encoder.flush(&mut frames).expect("flush");
+    let info = encoder.finish();
+    // A last-block STREAMINFO header: flag bit set, type 0, 34 bytes.
+    let mut out = b"fLaC\x80\0\0\x22".to_vec();
+    out.extend(info.write());
+    out.extend(frames);
+    out
+}
+
 /// One Ogg page holding a Vorbis identification packet's first bytes: enough for the
 /// reader to name the codec and refuse it.
 pub fn ogg_vorbis() -> Vec<u8> {

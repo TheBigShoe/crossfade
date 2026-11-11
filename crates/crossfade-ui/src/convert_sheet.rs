@@ -427,6 +427,11 @@ impl ConvertDialog {
             .or_else(|| self.sheet.processing_hint())
     }
 
+    /// The plan's notes, one per line under the hints.
+    pub fn notes(&self) -> Vec<String> {
+        self.sheet.notes()
+    }
+
     /// The equivalent command line, shown while only the file name is in the way.
     pub fn command_text(&self) -> Option<String> {
         // The command stays up while the sheet has a problem: a file that already exists
@@ -598,6 +603,13 @@ impl ConvertDialog {
 
 /// A short field, no wider than what goes in it.
 const FIELD_WIDTH: Pixels = px(84.);
+/// The small captions (Start, End, In, Out) share a width, so Trim and Fade form two
+/// columns of fields; the Level value sits on the second column's field.
+const CAPTION_WIDTH: Pixels = px(44.);
+const CAPTION_GAP: Pixels = px(6.);
+const COLUMN_GAP: Pixels = px(24.);
+/// Where the second column's field starts, from the left of the rows' content.
+const SECOND_FIELD: Pixels = px(44. + 6. + 84. + 24. + 44. + 6.);
 
 /// The warning box of the sheet's problems, sized for one line under a row.
 fn problem_box(
@@ -644,10 +656,12 @@ impl ConvertDialog {
     /// `Start [0:00]` in the muted caption style.
     fn captioned(caption: &'static str, field: impl IntoElement, muted: Hsla) -> Div {
         h_flex()
-            .gap_1p5()
+            .gap(CAPTION_GAP)
             .items_center()
             .child(
                 div()
+                    .flex_none()
+                    .w(CAPTION_WIDTH)
                     .text_size(LABEL_SIZE + px(1.))
                     .text_color(muted)
                     .child(caption),
@@ -689,6 +703,8 @@ impl ConvertDialog {
             .items_center()
             .child(
                 h_flex()
+                    .flex_none()
+                    .w(SECOND_FIELD - px(8.))
                     .gap_0p5()
                     .child(button("sheet-level-off", "Off", LevelMode::Off))
                     .child(button("sheet-level-gain", "Gain", LevelMode::Gain))
@@ -714,7 +730,7 @@ impl ConvertDialog {
     fn adjust_rows(&self, warning: Hsla, muted: Hsla, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = self.sheet.processing_enabled();
         let trim = h_flex()
-            .gap_3()
+            .gap(COLUMN_GAP)
             .child(Self::captioned(
                 "Start",
                 self.field("sheet-trim-start", &self.trim_start, None, enabled, muted),
@@ -726,7 +742,7 @@ impl ConvertDialog {
                 muted,
             ));
         let fade = h_flex()
-            .gap_3()
+            .gap(COLUMN_GAP)
             .child(Self::captioned(
                 "In",
                 self.field("sheet-fade-in", &self.fade_in, Some("s"), enabled, muted),
@@ -818,6 +834,7 @@ impl Render for ConvertDialog {
         let overwrite = self.sheet.overwrite();
         let hint = self.sheet.hint();
         let note = self.processing_note();
+        let notes = self.sheet.notes();
         let enabled = self.sheet.processing_enabled();
         let (copy_available, copy) = (self.sheet.copy_available(), self.sheet.copy());
         // The footer stays in view: the rows above it scroll when the window is short.
@@ -904,6 +921,20 @@ impl Render for ConvertDialog {
                         .text_size(LABEL_SIZE + px(1.))
                         .text_color(muted)
                         .child(SharedString::from(hint)),
+                )
+            })
+            .when(!notes.is_empty(), |sheet| {
+                sheet.child(
+                    v_flex()
+                        .id("sheet-notes")
+                        .test_support()
+                        .text_size(LABEL_SIZE + px(1.))
+                        .text_color(muted)
+                        .children(
+                            notes
+                                .iter()
+                                .map(|n| div().child(SharedString::from(n.clone()))),
+                        ),
                 )
             })
             .child(self.adjust_toggle(muted, cx))
