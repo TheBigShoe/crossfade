@@ -64,7 +64,9 @@
 //!   (predictable, band-limited audio at a high rate, where coefficients of a wide dynamic
 //!   range quantise coarsely) gets a closer look: a search for a better integer point near the
 //!   rounded coefficients, and from level 5 a few more coefficient sets from a ridge added to
-//!   the autocorrelation (2 extra at levels 5 and 6, 3 at 7, 5 at 8), each coded for real.
+//!   the autocorrelation (2 extra amounts at levels 5 and 6, 3 at 7, 5 at 8), each rounded and
+//!   refined. Those are scored by the error energy the block's covariance predicts for them
+//!   (an exact quadratic form, no pass over the block) and the best two are coded for real.
 //!   Ordinary audio never gets there, so it pays nothing for it.
 //! - **Rice coding** with the partition order searched from 0 up to the level's maximum (and
 //!   as far as the block size and predictor order allow). Each partition's parameter is the

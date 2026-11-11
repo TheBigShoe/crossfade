@@ -99,10 +99,20 @@ pub(super) fn windowed_autocorrelation<T: Sample>(
             .zip(window)
             .map(|(&s, &w)| round(s.into() as f64 * w * scale) as i32),
     );
+    let mut sums = [0i64; MAX_ORDER + 1];
+    lagged_sums(v, &mut sums[..out.len()]);
+    let unscale = 1.0 / (1u64 << (2 * bits)) as f64;
+    for (o, &s) in out.iter_mut().zip(&sums) {
+        *o = s as f64 * unscale;
+    }
+}
+
+/// `out[lag]` is the sum of `v[t] * v[t + lag]`, exact as long as it fits an `i64` (the
+/// caller's bound). Pads `v` with zeros past its end.
+fn lagged_sums(v: &mut Vec<i32>, out: &mut [i64]) {
     let n = v.len();
     // Zeros past the end let every lag run over the same range.
     v.resize(n + out.len() + 4, 0);
-    let unscale = 1.0 / (1u64 << (2 * bits)) as f64;
     // Four lags per pass: four independent sums, and each sample loaded once for them.
     for (group, o) in out.chunks_mut(4).enumerate() {
         let lag = group * 4;
@@ -114,9 +124,93 @@ pub(super) fn windowed_autocorrelation<T: Sample>(
                 acc[k] += i64::from(p) * i64::from(q[k]);
             }
         }
-        for (o, &a) in o.iter_mut().zip(&acc) {
-            *o = a as f64 * unscale;
+        o.copy_from_slice(&acc[..o.len()]);
+    }
+    v.truncate(n);
+}
+
+/// The covariance of a block for predictors up to order `p`: `phi[a][b]` is the sum over
+/// `i` in `p..n` of `x[i - a] * x[i - b]`, exact in `i64`. With it the error energy of any
+/// predictor of order up to `p` over those samples is a quadratic form, a few hundred
+/// operations instead of a pass over the block.
+pub(super) struct Covariance {
+    p: usize,
+    n: usize,
+    phi: [[i64; MAX_ORDER + 1]; MAX_ORDER + 1],
+}
+
+impl Covariance {
+    pub(super) fn new() -> Self {
+        Self {
+            p: 0,
+            n: 0,
+            phi: [[0; MAX_ORDER + 1]; MAX_ORDER + 1],
         }
+    }
+
+    /// Fills the matrix for `x` and order `p`; false when `x` is not `i32` samples whose
+    /// sums are sure to fit an `i64`. `scratch` is reused.
+    pub(super) fn compute<T: Sample>(
+        &mut self,
+        x: &[T],
+        p: usize,
+        peak: u64,
+        scratch: &mut Vec<i32>,
+    ) -> bool {
+        let n = x.len();
+        let Some(x) = T::as_i32(x) else {
+            return false;
+        };
+        if p >= n || int_scale(n, peak).is_none() {
+            return false;
+        }
+        (self.p, self.n) = (p, n);
+        scratch.clear();
+        scratch.extend_from_slice(x);
+        let mut full = [0i64; MAX_ORDER + 1];
+        lagged_sums(scratch, &mut full[..=p]);
+        // The whole-block sums with the ends trimmed: for entry (a, b), t = i - b runs over
+        // p - b..n - b, where the lagged sum covers 0..n - d.
+        let v = |t: usize| i64::from(x[t]);
+        for a in 0..=p {
+            for b in a..=p {
+                let d = b - a;
+                let head: i64 = (0..p - b).map(|t| v(t) * v(t + d)).sum();
+                let tail: i64 = (n - b..n - d).map(|t| v(t) * v(t + d)).sum();
+                let e = full[d] - head - tail;
+                self.phi[a][b] = e;
+                self.phi[b][a] = e;
+            }
+        }
+        true
+    }
+
+    /// The error energy, times `2^(2 shift)`, of the quantised predictor `q` over samples
+    /// `p..n` before the prediction is floored: exact.
+    pub(super) fn scaled_energy(&self, q: &[i32], shift: u32) -> i128 {
+        let m = q.len();
+        debug_assert!(m <= self.p);
+        let phi = &self.phi;
+        let mut cross: i128 = 0;
+        let mut quad: i128 = 0;
+        for j in 0..m {
+            let qj = i128::from(q[j]);
+            cross += qj * i128::from(phi[0][j + 1]);
+            let mut row: i128 = 0;
+            for k in 0..m {
+                row += i128::from(q[k]) * i128::from(phi[j + 1][k + 1]);
+            }
+            quad += qj * row;
+        }
+        (i128::from(phi[0][0]) << (2 * shift)) - (cross << (shift + 1)) + quad
+    }
+
+    /// Mean squared residual per sample of `q`: the exact energy, plus a third for the
+    /// flooring of each prediction (a uniform `[0, 1)` added to every residual).
+    pub(super) fn mean_energy(&self, q: &[i32], shift: u32) -> f64 {
+        let count = (self.n - self.p) as f64;
+        let e = self.scaled_energy(q, shift).max(0) as f64 / (1u64 << (2 * shift)) as f64;
+        e / count + 1.0 / 3.0
     }
 }
 
