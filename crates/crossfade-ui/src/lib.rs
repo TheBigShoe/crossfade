@@ -87,6 +87,7 @@ pub mod prelude {
     pub use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
     pub use gpui_kit::component::select::{Select, SelectEvent, SelectState};
     pub use gpui_kit::component::switch::Switch;
+    pub use gpui_kit::component::tooltip::Tooltip;
     pub use gpui_kit::component::{
         ActiveTheme, Disableable, Icon, Selectable, Sizable, StyledExt, Theme, ThemeMode, h_flex,
         v_flex,
