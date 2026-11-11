@@ -131,6 +131,49 @@ Everything is safe Rust: every crate forbids `unsafe`, so there are no
 hand-written SIMD intrinsics. The hot loops are written so the compiler
 vectorises them under any release profile.
 
+## Sample-rate conversion
+
+Measured on the same Apple M1 Max, whole process against whole process, the
+minimum of 9 interleaved runs (milliseconds). `afconvert` is macOS's, at its
+best setting (`-r 127 --src-complexity bats`), writing the same format.
+Crossfade uses its default quality (`good`, the resampler's `Balanced`) and
+dithers integer output (TPDF).
+
+| Conversion | `crossfade` | `crossfade --threads 1` | `afconvert` |
+|---|---|---|---|
+| bench16 (60 s, 16-bit stereo) 44.1 -> 48 kHz, WAV | 188 | 191 | 733 |
+| bench16 44.1 -> 48 kHz, FLAC (level 5) | 198 | 271 | 1069 |
+| bench24 (10 s, 24-bit stereo) 96 -> 44.1 kHz, WAV | 61 | 62 | 262 |
+
+By quality, bench16 44.1 -> 48 kHz to WAV: `fast` 108 ms, `good` 187 ms,
+`best` 302 ms.
+
+What processing costs on its own (bench16, no rate change): a plain WAV to WAV
+conversion takes 6.1 ms; `--gain -3dB`, which runs the `f64` chain and TPDF
+dither, 16.8 ms (16.5 ms without dither); to FLAC, 28.4 ms plain and 31.3 ms
+with the gain.
+
+Where the time goes: a `sample` profile of a 5-minute conversion to FLAC at
+48 kHz puts about nine tenths of the main thread in the resampler (its dot
+product), a few per cent in the quantiser and the rest in reading, MD5 and
+handing frames on; the FLAC encoder's threads mostly wait. The resampler runs
+on one thread (about 385 times real time for stereo at `good`, see
+`crates/crossfade-resample/README.md`), so it sets the speed of any
+conversion that changes the rate. Channels are independent and the
+resampler's output does not depend on how channels are grouped, so running
+one resampler per channel on the pool would give the same bytes at close to
+the channel count's speed-up (an estimate, not measured: stereo up to about twice for the resampling,
+5.1 more); that is not built yet.
+
+Quality, from the resampler's own measurements (`crates/crossfade-resample/README.md`):
+passband flat within 0.00003 / 0.000004 / 0.00000005 dB, stopband at least
+106 / 126 / 165 dB (fast / good / best). Through the engine (two real jobs, a
+1 kHz sine at -1 dBFS, 44.1 -> 48 -> 44.1 kHz,
+`round_trip_44k1_48k_44k1_snr_exit_criterion`): 142.9 / 159.4 / 239.5 dB with
+64-bit float files in between, 142.4 / 153.2 / 154.8 dB with 32-bit float, and
+139.0 / 141.0 / 141.0 dB with dithered 24-bit (one 24-bit quantisation alone
+allows 140.5 dB).
+
 ## Repeating it
 
 ```sh

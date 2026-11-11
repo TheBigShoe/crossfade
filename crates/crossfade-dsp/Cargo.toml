@@ -10,6 +10,7 @@ license.workspace = true
 crossfade-core.workspace = true
 crossfade-loudness.workspace = true
 libm.workspace = true
+crossfade-resample.workspace = true
 
 [lints]
 workspace = true

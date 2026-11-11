@@ -1521,6 +1521,7 @@ version = "0.0.0"
 dependencies = [
  "crossfade-core",
  "crossfade-loudness",
+ "crossfade-resample",
  "crossfade-testkit",
  "libm",
  "proptest",
@@ -1557,6 +1558,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-dsp",
  "crossfade-format",
+ "crossfade-resample",
  "crossfade-testkit",
  "insta",
  "libm",

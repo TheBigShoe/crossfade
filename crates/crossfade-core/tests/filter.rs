@@ -108,3 +108,43 @@ fn a_filter_is_driven_like_a_codec_and_its_pts_count_output_frames() {
 fn filters_are_object_safe() {
     fn _boxed(_: Box<dyn Filter>) {}
 }
+
+/// Passes frames through; says it ignores further input once it has seen `limit` frames.
+struct Upto {
+    spec: AudioSpec,
+    seen: u64,
+    limit: u64,
+}
+
+impl Filter for Upto {
+    fn output_spec(&self) -> &AudioSpec {
+        &self.spec
+    }
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        self.seen += frame.frames() as u64;
+        Ok(())
+    }
+    fn receive_frame(&mut self, _: &mut AudioFrame) -> Result<bool, Error> {
+        Ok(false)
+    }
+    fn drain(&mut self) {}
+    fn ignores_further_input(&self) -> bool {
+        self.seen >= self.limit
+    }
+}
+
+#[test]
+fn a_filter_needs_all_its_input_unless_it_says_otherwise() {
+    let spec = AudioSpec::new(8000, SampleFormat::F64, ChannelLayout::mono()).unwrap();
+    // The default: every filter wants its whole input.
+    assert!(!Decimate::new(&spec).ignores_further_input());
+    let mut f = Upto {
+        spec: spec.clone(),
+        seen: 0,
+        limit: 3,
+    };
+    f.send_frame(&frame(&spec, 0, vec![0.0; 2])).unwrap();
+    assert!(!f.ignores_further_input());
+    f.send_frame(&frame(&spec, 2, vec![0.0; 2])).unwrap();
+    assert!(f.ignores_further_input());
+}

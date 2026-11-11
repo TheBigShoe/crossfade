@@ -87,13 +87,30 @@ impl Chain {
     pub fn new(input: &AudioSpec, plan: &ChainPlan, format: SampleFormat) -> Result<Self, Error> {
         let mut spec = working(input)?;
         let mut stages = Vec::with_capacity(plan.filters.len());
-        let mut outs = Vec::with_capacity(plan.filters.len());
         for p in &plan.filters {
             let stage = build(p, &spec)?;
             spec = stage.output_spec().clone();
-            outs.push(AudioFrame::new(&spec));
             stages.push(stage);
         }
+        Self::with_filters(input, stages, format, plan.dither)
+    }
+
+    /// A chain of filters already built, each taking `f64` frames of the previous one's output
+    /// spec (the first takes `input`'s rate and layout).
+    pub fn with_filters(
+        input: &AudioSpec,
+        stages: Vec<Box<dyn Filter>>,
+        format: SampleFormat,
+        dither: Dither,
+    ) -> Result<Self, Error> {
+        let mut spec = working(input)?;
+        let outs = stages
+            .iter()
+            .map(|stage| {
+                spec = stage.output_spec().clone();
+                AudioFrame::new(&spec)
+            })
+            .collect();
         let out_spec = AudioSpec::new(spec.sample_rate(), format, spec.layout().clone())?;
         Ok(Self {
             stages,
@@ -101,7 +118,7 @@ impl Chain {
             working: AudioFrame::new(&working(input)?),
             sink: Sink {
                 spec: out_spec,
-                quantiser: Quantiser::new(format, plan.dither),
+                quantiser: Quantiser::new(format, dither),
                 ready: VecDeque::new(),
                 spare: Vec::new(),
             },
@@ -161,6 +178,12 @@ impl Filter for Chain {
         std::mem::swap(out, &mut frame);
         self.sink.spare.push(frame);
         Ok(true)
+    }
+
+    /// Once any stage ignores further input, so does the chain: nothing sent later can reach
+    /// past that stage.
+    fn ignores_further_input(&self) -> bool {
+        self.stages.iter().any(|s| s.ignores_further_input())
     }
 
     fn drain(&mut self) {

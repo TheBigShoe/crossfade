@@ -4,7 +4,7 @@
 
 use super::FilterSpec;
 use crate::job::AudioSettings;
-use crossfade_core::{AudioSpec, Error, SampleFormat};
+use crossfade_core::{AudioSpec, ChannelLayout, Error, SampleFormat};
 use crossfade_dsp::chain::ChainPlan;
 use crossfade_dsp::filters::FilterPlan;
 use crossfade_dsp::filters::fade::FadePlan;
@@ -50,22 +50,7 @@ pub fn plan(input: &AudioSpec, settings: &AudioSettings) -> Result<Option<ChainP
         .channels
         .as_ref()
         .map_or_else(|| spec.layout().clone(), |c| c.resolve(spec.layout()));
-    let resample = (rate != spec.sample_rate()).then_some(FilterPlan::Resample(ResamplePlan {
-        rate,
-        quality: Quality::default(),
-    }));
-    let down = layout.channels() < spec.layout().channels();
-    let mix = (layout != *spec.layout()).then_some(FilterPlan::Mix(MixPlan {
-        layout,
-        matrix: None,
-    }));
-    // Fewer channels to resample is cheaper: mix down first, mix up last.
-    let tail = if down {
-        [mix, resample]
-    } else {
-        [resample, mix]
-    };
-    filters.extend(tail.into_iter().flatten());
+    filters.extend(conversions(&spec, rate, layout));
     if filters.is_empty() {
         return Ok(None);
     }
@@ -73,6 +58,26 @@ pub fn plan(input: &AudioSpec, settings: &AudioSettings) -> Result<Option<ChainP
         filters,
         dither: settings.dither,
     }))
+}
+
+/// The resample and mix stages that take `from` to `rate` and `layout`, if any. Fewer channels
+/// to resample is cheaper: mix down first, mix up last.
+pub(crate) fn conversions(from: &AudioSpec, rate: u32, layout: ChannelLayout) -> Vec<FilterPlan> {
+    let resample = (rate != from.sample_rate()).then_some(FilterPlan::Resample(ResamplePlan {
+        rate,
+        quality: Quality::default(),
+    }));
+    let down = layout.channels() < from.layout().channels();
+    let mix = (layout != *from.layout()).then_some(FilterPlan::Mix(MixPlan {
+        layout,
+        matrix: None,
+    }));
+    let order = if down {
+        [mix, resample]
+    } else {
+        [resample, mix]
+    };
+    order.into_iter().flatten().collect()
 }
 
 /// One filter at the rate and layout it will see.

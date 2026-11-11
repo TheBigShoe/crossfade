@@ -384,3 +384,108 @@ fn a_reader_error_reports_a_decoding_error_from_before_it_first() {
         })
     );
 }
+
+/// Counts the packets read, to see a pipeline stop reading.
+struct CountingDemuxer {
+    inner: Box<dyn Demuxer>,
+    reads: Rc<std::cell::Cell<usize>>,
+}
+
+impl Demuxer for CountingDemuxer {
+    fn streams(&self) -> &[StreamInfo] {
+        self.inner.streams()
+    }
+    fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        self.reads.set(self.reads.get() + 1);
+        self.inner.read_packet(out)
+    }
+}
+
+/// Passes frames through; ignores further input once `limit` frames have gone by.
+struct Upto {
+    spec: AudioSpec,
+    seen: u64,
+    limit: u64,
+    held: Option<AudioFrame>,
+}
+
+impl Filter for Upto {
+    fn output_spec(&self) -> &AudioSpec {
+        &self.spec
+    }
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        self.seen += frame.frames() as u64;
+        self.held = Some(frame.clone());
+        Ok(())
+    }
+    fn receive_frame(&mut self, out: &mut AudioFrame) -> Result<bool, Error> {
+        match self.held.take() {
+            Some(f) => {
+                *out = f;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+    fn drain(&mut self) {}
+    fn ignores_further_input(&self) -> bool {
+        self.seen >= self.limit
+    }
+}
+
+#[test]
+fn reading_stops_once_the_chain_ignores_further_input() {
+    let (log, seen) = (Log::default(), Rc::default());
+    let reads = Rc::new(std::cell::Cell::new(0));
+    let packets = (0..10).map(|i| packet(&[i, 0, i, 0], 2)).collect();
+    let d = Box::new(CountingDemuxer {
+        inner: demuxer(CodecId::PcmS16Le, Tags::new(), packets),
+        reads: reads.clone(),
+    });
+    let mut p = build(FormatId::Wav, d, &settings(None), &log, &seen).unwrap();
+    let Engine::Transcode(t) = &mut p.engine else {
+        panic!("not copying");
+    };
+    t.decoder = Box::new(ScriptedDecoder(None));
+    t.encoder = Box::new(ScriptedEncoder {
+        pending: None,
+        extradata: Vec::new(),
+    });
+    let f64_spec = AudioSpec::new(8000, SampleFormat::F64, ChannelLayout::mono()).unwrap();
+    let stage = Box::new(Upto {
+        spec: f64_spec,
+        seen: 0,
+        limit: 4,
+        held: None,
+    });
+    t.chain = Some(
+        Chain::with_filters(
+            &spec(),
+            vec![stage],
+            SampleFormat::S16,
+            crossfade_dsp::dither::Dither::None,
+        )
+        .unwrap(),
+    );
+    let steps = run_to_end(&mut p);
+    assert_eq!(
+        reads.get(),
+        2,
+        "two packets give the four frames the filter wants"
+    );
+    // Progress ends at the whole input: what was skipped counts as done.
+    assert_eq!(
+        steps[steps.len() - 2..],
+        [
+            Step::Progress {
+                frames_done: 1000,
+                frames_total: Some(1000)
+            },
+            Step::Finished
+        ]
+    );
+    assert_eq!(
+        log.borrow().as_slice(),
+        ["packet:[0, 0, 0, 0]", "packet:[1, 0, 1, 0]", "finish"]
+    );
+}

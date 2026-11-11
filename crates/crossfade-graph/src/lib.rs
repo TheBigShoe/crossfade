@@ -24,4 +24,4 @@ pub use probe::{
     probe_with_cancel,
 };
 pub use run::{CancelToken, Event, run};
-pub use validate::{OutputPlan, describe, describe_concat, validate, validate_concat};
+pub use validate::{OutputPlan, describe, describe_concat, processing, validate, validate_concat};

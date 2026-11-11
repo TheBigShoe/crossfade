@@ -93,6 +93,14 @@ pub trait Filter {
 
     /// Signals end of input; `receive_frame` then returns what is left and finally `Ok(false)`.
     fn drain(&mut self);
+
+    /// True once no further input can change the output: everything still to come, through
+    /// `drain`, follows from what has been sent (a trim past its end). The caller may stop
+    /// reading and decoding, and drain. Checked after `receive_frame` returns `Ok(false)`;
+    /// once true it stays true. Most filters need their whole input: the default is `false`.
+    fn ignores_further_input(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

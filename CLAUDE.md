@@ -19,7 +19,7 @@ and a GPUI desktop app (`crossfade-gui`).
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
-4. **Dependency direction:** core, flac, loudness <- codec, dsp <- format <- graph <-
+4. **Dependency direction:** core, flac, loudness, resample <- codec, dsp <- format <- graph <-
    app <- cli, ui. Standalone crates (`crossfade-flac` first, then `crossfade-loudness`) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
    adapters. `crossfade-resample` stands alone the same way (only `libm`). A demuxer needs a codec's frame-header parser to split packets (as
@@ -48,8 +48,8 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
-| `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s), `dither` (TPDF, clip count), `level` (dB through `libm`) |
-| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` (the I/O-free plan and check `Pipeline::open` shares), `Pipeline::step` with transcode and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
+| `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
+| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`) |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
@@ -75,9 +75,22 @@ README giving the command that made each (5 MB budget for the repository).
 - **Working format.** Filters process interleaved `f64` frames. The `Chain`
   (in `crossfade-dsp`) converts its input to `f64` with `convert`'s rule, runs
   the filters in order, then quantises to the output format.
-- **Bit-exact when nothing is asked.** A job with no filters and no rate or
-  channel change has no chain (`filter::plan` returns `None`) and takes the
-  unprocessed path byte for byte; only a chain converts to `f64`.
+- **Bit-exact when nothing is asked.** A job with no filters, no rate or
+  channel change and no loss of depth has no chain (`processing` returns
+  `None`) and takes the unprocessed path byte for byte; only a chain converts
+  to `f64`. Losing depth (`loses_depth`, beside `output_depth`): an integer
+  output narrower than the input's true depth, or float to integer; it gets a
+  quantise-only chain when the job dithers (`--dither none` keeps the old
+  truncation and rounding).
+- **Joins** (`crossfade concat`): one input open at a time; each input that
+  differs from the joined rate and layout (the first input's, or the output
+  settings') gets its own conversion, drained at its end, so seams are
+  sample-exact; one main chain runs over the joined stream; inputs alike with
+  no processing join bit for bit. `Pipeline::step_with(io)` opens the next
+  input.
+- **Stopping early.** `Filter::ignores_further_input` (default `false`): once
+  any stage of the chain says so, the pipeline stops reading and decoding,
+  drains, and reports the whole input as done.
 - **Dither and clipping.** After a chain, integer output gets TPDF dither
   (`--dither none` turns it off) from SplitMix64 with a fixed seed, one draw
   per sample in stream order: the same bytes on every platform, at every

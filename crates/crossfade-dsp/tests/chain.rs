@@ -164,22 +164,13 @@ fn the_bytes_do_not_depend_on_how_the_input_is_split() {
 #[test]
 fn a_filter_not_built_yet_says_so_by_name() {
     let input = spec(48000, SampleFormat::F64, ChannelLayout::stereo());
-    let cases = [
-        (
-            FilterPlan::Normalize(NormalizePlan {
-                target_lufs: -16.0,
-                ceiling_dbtp: -1.0,
-            }),
-            "normalize",
-        ),
-        (
-            FilterPlan::Resample(ResamplePlan {
-                rate: 44100,
-                quality: Quality::Good,
-            }),
-            "resample",
-        ),
-    ];
+    let cases = [(
+        FilterPlan::Normalize(NormalizePlan {
+            target_lufs: -16.0,
+            ceiling_dbtp: -1.0,
+        }),
+        "normalize",
+    )];
     for (p, name) in cases {
         assert_eq!(p.name(), name);
         let want = Error::Unsupported {
@@ -296,4 +287,74 @@ fn names_of_curves_and_qualities_round_trip() {
         (Curve::default(), Quality::default()),
         (Curve::Linear, Quality::Good)
     );
+}
+
+/// Passes frames through and ignores further input once `limit` frames have gone by.
+struct Upto {
+    spec: AudioSpec,
+    seen: u64,
+    limit: u64,
+    held: Option<AudioFrame>,
+}
+
+impl Upto {
+    fn boxed(spec: &AudioSpec, limit: u64) -> Box<dyn Filter> {
+        Box::new(Self {
+            spec: spec.clone(),
+            seen: 0,
+            limit,
+            held: None,
+        })
+    }
+}
+
+impl Filter for Upto {
+    fn output_spec(&self) -> &AudioSpec {
+        &self.spec
+    }
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        self.seen += frame.frames() as u64;
+        self.held = Some(frame.clone());
+        Ok(())
+    }
+    fn receive_frame(&mut self, out: &mut AudioFrame) -> Result<bool, Error> {
+        match self.held.take() {
+            Some(f) => {
+                *out = f;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+    fn drain(&mut self) {}
+    fn ignores_further_input(&self) -> bool {
+        self.seen >= self.limit
+    }
+}
+
+#[test]
+fn a_chain_ignores_further_input_as_soon_as_any_stage_does() {
+    let input = spec(8000, SampleFormat::F64, ChannelLayout::mono());
+    let gain = || build(&gain(1.0), &input).unwrap();
+    let frame = AudioFrame {
+        samples: Samples::F64(vec![0.5; 4]),
+        ..AudioFrame::new(&input)
+    };
+    for stages in [
+        vec![Upto::boxed(&input, 6), gain()],
+        vec![gain(), Upto::boxed(&input, 6)],
+    ] {
+        let mut chain =
+            Chain::with_filters(&input, stages, SampleFormat::S16, Dither::None).unwrap();
+        assert!(!chain.ignores_further_input());
+        chain.send_frame(&frame).unwrap();
+        let mut out = AudioFrame::new(chain.output_spec());
+        while chain.receive_frame(&mut out).unwrap() {}
+        assert!(!chain.ignores_further_input());
+        chain.send_frame(&frame).unwrap();
+        while chain.receive_frame(&mut out).unwrap() {}
+        assert!(chain.ignores_further_input());
+    }
+    let plain = Chain::with_filters(&input, vec![gain()], SampleFormat::S16, Dither::None).unwrap();
+    assert!(!plain.ignores_further_input());
 }

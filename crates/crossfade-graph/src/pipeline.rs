@@ -1,18 +1,21 @@
 use crate::job::{AudioSettings, Job};
-use crate::validate::{concat_not_built, output_format_for, resolve};
+use crate::validate::{output_format_for, resolve, resolve_join};
+use crossfade_codec::decoder_for_threads;
 use crossfade_core::{
     AudioFrame, Decoder, Demuxer, Encoder, Error, Filter, JobIo, Limits, Muxer, Packet,
     SampleFormat, StreamInfo, Tags,
 };
-use crossfade_dsp::chain::Chain;
+use crossfade_dsp::chain::{Chain, ChainPlan};
 use crossfade_dsp::convert::convert_format;
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
+use std::collections::VecDeque;
 
 /// What a job will do, known once the input has been opened.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub input_format: FormatId,
     pub output_format: FormatId,
+    /// The input; for a join, the first one.
     pub input: StreamInfo,
     pub output: StreamInfo,
     /// Packets go straight from demuxer to muxer; no decoder or encoder exists.
@@ -29,13 +32,29 @@ pub enum Step {
 }
 
 struct Transcoder {
+    /// The current input's.
     decoder: Box<dyn Decoder>,
     encoder: Box<dyn Encoder>,
-    /// Between decoder and encoder when the job processes; `None` is the bit-exact path.
+    /// Between the join and the encoder when the job processes; `None` is the bit-exact path.
     chain: Option<Chain>,
+    /// The current input's conversion to the joined rate and layout, to `f64`.
+    conform: Option<Chain>,
     decoded: AudioFrame,
+    /// What `conform` gives.
+    joined: AudioFrame,
     /// The format conversion's output, or the chain's.
     converted: AudioFrame,
+    /// Joined frames give contiguous pts across inputs; `None` leaves a single input's alone.
+    next_pts: Option<i64>,
+}
+
+/// An input of a join still to come: opened only when its turn comes.
+struct Pending {
+    path: String,
+    /// As planned; the file must still say so when it is opened.
+    stream: StreamInfo,
+    conform: Option<ChainPlan>,
+    decoder_threads: usize,
 }
 
 enum Engine {
@@ -50,6 +69,10 @@ pub struct Pipeline {
     muxer: Box<dyn Muxer>,
     packet: Packet,
     frames_done: u64,
+    /// Input frames, over every input.
+    frames_total: Option<u64>,
+    rest: VecDeque<Pending>,
+    limits: Limits,
     finished: bool,
 }
 
@@ -57,18 +80,26 @@ fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
 }
 
+/// The one stream of the demuxer for `path`.
+fn only_stream(demuxer: &dyn Demuxer, path: &str) -> Result<StreamInfo, Error> {
+    match demuxer.streams() {
+        [stream] => Ok(stream.clone()),
+        streams => Err(unsupported(format!(
+            "{} streams in {path} (exactly one is supported)",
+            streams.len()
+        ))),
+    }
+}
+
 impl Pipeline {
-    /// Milestone 1 handles one input and one output, each with one audio
-    /// stream. If this fails after the sink exists, the sink is discarded.
+    /// One output with one audio stream, from one input or several joined in order (each
+    /// input with one audio stream). Every input is read up front for its stream, one at a
+    /// time; only the first stays open. If this fails after the sink exists, the sink is
+    /// discarded.
     pub fn open(job: &Job, io: &mut dyn JobIo, limits: &Limits) -> Result<Self, Error> {
         if job.version != Job::VERSION {
             return Err(unsupported(format!("job version {}", job.version)));
         }
-        let input = match job.inputs.as_slice() {
-            [input] => input,
-            [] => return Err(unsupported("0 inputs (exactly one is supported)")),
-            several => return Err(concat_not_built(several.len())),
-        };
         let [output] = job.outputs.as_slice() else {
             return Err(unsupported(format!(
                 "{} outputs (exactly one is supported)",
@@ -76,28 +107,91 @@ impl Pipeline {
             )));
         };
         let output_format = output_format_for(&output.path)?;
-
-        let (input_format, demuxer) = open_demuxer(io.open_source(&input.path)?, limits)?;
-        if demuxer.streams().len() != 1 {
-            return Err(unsupported(format!(
-                "{} streams in {} (exactly one is supported)",
-                demuxer.streams().len(),
-                input.path
-            )));
-        }
-        Self::build(
-            input_format,
-            output_format,
-            demuxer,
-            &output.audio,
-            limits.max_threads,
-            |out_stream, tags| {
-                let sink = io.create_sink(&output.path)?;
-                create_muxer(output_format, sink, out_stream, tags).inspect_err(|_| {
-                    io.discard(&output.path);
+        let make_muxer = |io: &mut dyn JobIo, out_stream: &StreamInfo, tags: &Tags| {
+            let sink = io.create_sink(&output.path)?;
+            create_muxer(output_format, sink, out_stream, tags).inspect_err(|_| {
+                io.discard(&output.path);
+            })
+        };
+        match job.inputs.as_slice() {
+            [] => Err(unsupported("0 inputs (exactly one is supported)")),
+            [input] => {
+                let (input_format, demuxer) = open_demuxer(io.open_source(&input.path)?, limits)?;
+                only_stream(&*demuxer, &input.path)?;
+                let mut p = Self::build(
+                    input_format,
+                    output_format,
+                    demuxer,
+                    &output.audio,
+                    limits.max_threads,
+                    |out_stream, tags| make_muxer(io, out_stream, tags),
+                )?;
+                p.limits = *limits;
+                Ok(p)
+            }
+            inputs => {
+                let mut first = None;
+                let mut streams = Vec::with_capacity(inputs.len());
+                for input in inputs {
+                    let (format, demuxer) = open_demuxer(io.open_source(&input.path)?, limits)?;
+                    streams.push(only_stream(&*demuxer, &input.path)?);
+                    // The others close here and open again in turn.
+                    first.get_or_insert((format, demuxer));
+                }
+                let Some((input_format, demuxer)) = first else {
+                    return Err(unsupported("0 inputs"));
+                };
+                let (join, codecs) =
+                    resolve_join(&streams, output_format, &output.audio, limits.max_threads)?;
+                let decoder = decoder_for_threads(&streams[0], codecs.decoder_threads[0])?;
+                let conform = conform_chain(&streams[0], join.conform[0].as_ref())?;
+                let frames_total = streams
+                    .iter()
+                    .try_fold(0u64, |sum, s| sum.checked_add(s.frames?));
+                let rest = inputs
+                    .iter()
+                    .zip(&streams)
+                    .zip(join.conform.iter().zip(&codecs.decoder_threads))
+                    .skip(1)
+                    .map(|((input, stream), (conform, &decoder_threads))| Pending {
+                        path: input.path.clone(),
+                        stream: stream.clone(),
+                        conform: conform.clone(),
+                        decoder_threads,
+                    })
+                    .collect();
+                let plan = Plan {
+                    input_format,
+                    output_format,
+                    input: streams[0].clone(),
+                    output: join.plan.output,
+                    copy: false,
+                };
+                let engine = Engine::Transcode(Box::new(Transcoder {
+                    decoder,
+                    encoder: codecs.encoder,
+                    chain: codecs.main,
+                    conform,
+                    decoded: AudioFrame::new(&streams[0].audio),
+                    joined: AudioFrame::new(&join.joined.audio),
+                    converted: AudioFrame::new(&plan.output.audio),
+                    next_pts: Some(0),
+                }));
+                let muxer = make_muxer(io, &plan.output, demuxer.tags())?;
+                Ok(Self {
+                    plan,
+                    demuxer,
+                    engine,
+                    muxer,
+                    packet: Packet::default(),
+                    frames_done: 0,
+                    frames_total,
+                    rest,
+                    limits: *limits,
+                    finished: false,
                 })
-            },
-        )
+            }
+        }
     }
 
     /// Decides copy or transcode through `resolve`; `make_muxer` runs last, so nothing is
@@ -120,8 +214,11 @@ impl Pipeline {
                 decoder: c.decoder,
                 encoder: c.encoder,
                 chain: c.chain,
+                conform: None,
                 decoded: AudioFrame::new(&stream.audio),
+                joined: AudioFrame::new(&stream.audio),
                 converted: AudioFrame::new(&output.output.audio),
+                next_pts: None,
             })),
         };
         let plan = Plan {
@@ -133,12 +230,15 @@ impl Pipeline {
         };
         let muxer = make_muxer(&plan.output, demuxer.tags())?;
         Ok(Self {
+            frames_total: plan.input.frames,
             plan,
             demuxer,
             engine,
             muxer,
             packet: Packet::default(),
             frames_done: 0,
+            rest: VecDeque::new(),
+            limits: Limits::default(),
             finished: false,
         })
     }
@@ -157,8 +257,25 @@ impl Pipeline {
     }
 
     /// Moves one packet through the pipeline. At the end of input it drains
-    /// the codecs, hands the muxer the final codec header and finishes it.
+    /// the codecs, hands the muxer the final codec header and finishes it. A join needs `io`
+    /// to open its next input: use [`Self::step_with`]; this fails there.
     pub fn step(&mut self) -> Result<Step, Error> {
+        self.advance(None)
+    }
+
+    /// [`Self::step`], opening a join's next input through `io` when its turn comes.
+    pub fn step_with(&mut self, io: &mut dyn JobIo) -> Result<Step, Error> {
+        self.advance(Some(io))
+    }
+
+    fn progress(&self) -> Step {
+        Step::Progress {
+            frames_done: self.frames_done,
+            frames_total: self.frames_total,
+        }
+    }
+
+    fn advance(&mut self, io: Option<&mut dyn JobIo>) -> Result<Step, Error> {
         if self.finished {
             return Ok(Step::Finished);
         }
@@ -170,6 +287,7 @@ impl Pipeline {
             while t.decoder.receive_frame(&mut t.decoded)? {}
             return Err(e.clone());
         }
+        let out_format = self.plan.output.audio.format();
         if read? {
             match &mut self.engine {
                 Engine::Copy => {
@@ -178,25 +296,59 @@ impl Pipeline {
                 }
                 Engine::Transcode(t) => {
                     t.decoder.send_packet(&self.packet)?;
-                    self.frames_done += t.pump_frames(
-                        &mut self.packet,
-                        &mut *self.muxer,
-                        self.plan.output.audio.format(),
-                    )?;
+                    self.frames_done +=
+                        t.pump_frames(&mut self.packet, &mut *self.muxer, out_format)?;
+                    if t.chain.as_ref().is_some_and(Filter::ignores_further_input) {
+                        // Nothing still to read can change the output (a trim is past its
+                        // end): skip it, later inputs too, count it as done, and finish now.
+                        self.frames_done = self.frames_total.unwrap_or(self.frames_done);
+                        self.finish()?;
+                    }
                 }
             }
-            return Ok(Step::Progress {
-                frames_done: self.frames_done,
-                frames_total: self.plan.input.frames,
-            });
+            return Ok(self.progress());
         }
         if let Engine::Transcode(t) = &mut self.engine {
             t.decoder.drain();
-            self.frames_done += t.pump_frames(
-                &mut self.packet,
-                &mut *self.muxer,
-                self.plan.output.audio.format(),
-            )?;
+            self.frames_done += t.pump_frames(&mut self.packet, &mut *self.muxer, out_format)?;
+            // The conversion's tail belongs to this input: the next one starts after it.
+            if let Some(conform) = &mut t.conform {
+                conform.drain();
+            }
+            t.pump_conform(&mut self.packet, &mut *self.muxer, out_format)?;
+        }
+        if let Some(next) = self.rest.pop_front() {
+            let io = io
+                .ok_or_else(|| unsupported("a pipeline joining inputs steps with step_with(io)"))?;
+            self.open_next(io, next)?;
+            return Ok(self.progress());
+        }
+        self.finish()?;
+        Ok(Step::Finished)
+    }
+
+    /// Makes `next` the current input: its demuxer, decoder and conversion.
+    fn open_next(&mut self, io: &mut dyn JobIo, next: Pending) -> Result<(), Error> {
+        let (_, demuxer) = open_demuxer(io.open_source(&next.path)?, &self.limits)?;
+        let stream = only_stream(&*demuxer, &next.path)?;
+        if stream != next.stream {
+            return Err(Error::Malformed {
+                what: format!("{} changed while the join was running", next.path),
+            });
+        }
+        let Engine::Transcode(t) = &mut self.engine else {
+            return Err(unsupported("joining inputs decodes them"));
+        };
+        t.decoder = decoder_for_threads(&stream, next.decoder_threads)?;
+        t.conform = conform_chain(&stream, next.conform.as_ref())?;
+        t.decoded = AudioFrame::new(&stream.audio);
+        self.demuxer = demuxer;
+        Ok(())
+    }
+
+    /// Drains the chain and the encoder, hands the muxer the final codec header, finishes it.
+    fn finish(&mut self) -> Result<(), Error> {
+        if let Engine::Transcode(t) = &mut self.engine {
             if let Some(chain) = &mut t.chain {
                 chain.drain();
             }
@@ -210,7 +362,60 @@ impl Pipeline {
         }
         self.muxer.finish()?;
         self.finished = true;
-        Ok(Step::Finished)
+        Ok(())
+    }
+}
+
+fn conform_chain(stream: &StreamInfo, plan: Option<&ChainPlan>) -> Result<Option<Chain>, Error> {
+    plan.map(|p| Chain::new(&stream.audio, p, SampleFormat::F64))
+        .transpose()
+}
+
+/// One joined frame on to the encoder: through the main chain, or converted to the output
+/// format, or as it is.
+fn feed(
+    frame: &AudioFrame,
+    chain: &mut Option<Chain>,
+    encoder: &mut dyn Encoder,
+    converted: &mut AudioFrame,
+    packet: &mut Packet,
+    muxer: &mut dyn Muxer,
+    out_format: SampleFormat,
+) -> Result<(), Error> {
+    if let Some(chain) = chain {
+        chain.send_frame(frame)?;
+        while chain.receive_frame(converted)? {
+            encoder.send_frame(converted)?;
+            write_packets(encoder, packet, muxer)?;
+        }
+        return Ok(());
+    }
+    let frame = if frame.samples.format() == out_format {
+        frame
+    } else {
+        convert_format(frame, out_format, converted)?;
+        converted
+    };
+    encoder.send_frame(frame)?;
+    write_packets(encoder, packet, muxer)
+}
+
+fn write_packets(
+    encoder: &mut dyn Encoder,
+    packet: &mut Packet,
+    muxer: &mut dyn Muxer,
+) -> Result<(), Error> {
+    while encoder.receive_packet(packet)? {
+        muxer.write_packet(packet)?;
+    }
+    Ok(())
+}
+
+/// Gives a joined frame the next pts of the joined stream.
+fn restamp(frame: &mut AudioFrame, next_pts: &mut Option<i64>) {
+    if let Some(pts) = next_pts {
+        frame.pts = *pts;
+        *pts += frame.frames() as i64;
     }
 }
 
@@ -226,21 +431,48 @@ impl Transcoder {
         let mut frames = 0;
         while self.decoder.receive_frame(&mut self.decoded)? {
             frames += self.decoded.frames() as u64;
-            if let Some(chain) = &mut self.chain {
-                chain.send_frame(&self.decoded)?;
-                self.pump_chain(packet, muxer)?;
+            if let Some(conform) = &mut self.conform {
+                conform.send_frame(&self.decoded)?;
+                self.pump_conform(packet, muxer, out_format)?;
                 continue;
             }
-            let frame = if self.decoded.samples.format() == out_format {
-                &self.decoded
-            } else {
-                convert_format(&self.decoded, out_format, &mut self.converted)?;
-                &self.converted
-            };
-            self.encoder.send_frame(frame)?;
-            self.pump_packets(packet, muxer)?;
+            restamp(&mut self.decoded, &mut self.next_pts);
+            feed(
+                &self.decoded,
+                &mut self.chain,
+                &mut *self.encoder,
+                &mut self.converted,
+                packet,
+                muxer,
+                out_format,
+            )?;
         }
         Ok(frames)
+    }
+
+    /// The current input's conversion to the encoder, until it has nothing more for now.
+    fn pump_conform(
+        &mut self,
+        packet: &mut Packet,
+        muxer: &mut dyn Muxer,
+        out_format: SampleFormat,
+    ) -> Result<(), Error> {
+        let Some(conform) = &mut self.conform else {
+            return Ok(());
+        };
+        while conform.receive_frame(&mut self.joined)? {
+            restamp(&mut self.joined, &mut self.next_pts);
+            feed(
+                &self.joined,
+                &mut self.chain,
+                &mut *self.encoder,
+                &mut self.converted,
+                packet,
+                muxer,
+                out_format,
+            )?;
+        }
+        Ok(())
     }
 
     /// Chain to encoder, until the chain has nothing more for now.
@@ -250,18 +482,13 @@ impl Transcoder {
         };
         while chain.receive_frame(&mut self.converted)? {
             self.encoder.send_frame(&self.converted)?;
-            while self.encoder.receive_packet(packet)? {
-                muxer.write_packet(packet)?;
-            }
+            write_packets(&mut *self.encoder, packet, muxer)?;
         }
         Ok(())
     }
 
     fn pump_packets(&mut self, packet: &mut Packet, muxer: &mut dyn Muxer) -> Result<(), Error> {
-        while self.encoder.receive_packet(packet)? {
-            muxer.write_packet(packet)?;
-        }
-        Ok(())
+        write_packets(&mut *self.encoder, packet, muxer)
     }
 }
 

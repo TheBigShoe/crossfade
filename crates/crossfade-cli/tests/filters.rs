@@ -348,19 +348,47 @@ fn stream_copy_with_a_filter_is_refused_with_the_reason() {
 }
 
 #[test]
-fn concat_parses_and_says_it_is_not_built_yet() {
+fn concat_joins_files_end_to_end() {
     let d = Dir::new("concat");
     let a = write_wav(&d, "a.wav", &[1, 2, 3]);
     let b = write_wav(&d, "b.wav", &[4, 5]);
-    let out = d.path("ab.wav");
-    let o = crossfade(&["concat", &a, &b, "-o", &out]);
-    assert_eq!(o.status.code(), Some(1));
-    assert_eq!(
-        text(&o.stderr),
-        "crossfade: unsupported: joining 2 inputs (crossfade concat) is not built yet\n"
-    );
-    assert!(std::fs::metadata(&out).is_err());
+    let c = write_wav(&d, "c.wav", &[-6]);
+    let out = d.path("abc.wav");
+    let o = crossfade(&["concat", &a, &b, &c, "-o", &out]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(o.stderr.is_empty(), "{}", text(&o.stderr));
+    assert_eq!(samples_of(&out), [1, 2, 3, 4, 5, -6]);
+    // Joined with a gain on the whole: one filter, both inputs.
+    let loud = d.path("loud.wav");
+    let o = crossfade(&[
+        "concat", &a, &b, "-o", &loud, "--gain", "+20dB", "--dither", "none",
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(samples_of(&loud), [10, 20, 30, 40, 50]);
     let o = crossfade(&["concat", &a, &b, "-o", &out, "--emit-job"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o.stdout).contains("b.wav"));
+    // A missing input fails before anything is written.
+    let missing = d.path("missing.wav");
+    let o = crossfade(&["concat", &a, &missing, "-o", &d.path("x.wav")]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(std::fs::metadata(d.path("x.wav")).is_err());
+}
+
+#[test]
+fn concat_conforms_a_second_rate_to_the_first() {
+    let d = Dir::new("concat-rate");
+    let a = write_wav(&d, "a.wav", &[100; 8000]);
+    // The same, but at 16 kHz.
+    let mut b16 = std::fs::read(write_wav(&d, "tmp.wav", &[100; 16_000])).unwrap();
+    b16[24..28].copy_from_slice(&16_000u32.to_le_bytes());
+    b16[28..32].copy_from_slice(&32_000u32.to_le_bytes());
+    let b = d.path("b.wav");
+    std::fs::write(&b, b16).unwrap();
+    let out = d.path("ab.flac");
+    let o = crossfade(&["concat", &a, &b, "-o", &out]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let probe = text(&crossfade(&["probe", &out, "--json"]).stdout);
+    assert!(probe.contains("\"sample_rate\": 8000"), "{probe}");
+    assert!(probe.contains("\"frames\": 16000"), "{probe}");
 }

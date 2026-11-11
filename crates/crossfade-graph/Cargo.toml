@@ -16,6 +16,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
+crossfade-resample.workspace = true
 insta.workspace = true
 libm.workspace = true
 crossfade-testkit.workspace = true
