@@ -223,9 +223,11 @@ pub(super) struct Analyzer {
     /// Samples with the wasted bits shifted out.
     pool32: Vec<i32>,
     pool64: Vec<i64>,
-    window: Vec<f64>,
-    /// What `window` currently holds: block length and span.
-    window_key: (usize, usize, usize, usize),
+    /// One window per apodization of the level, and the block length they were made for.
+    windows: Vec<Vec<f64>>,
+    window_len: usize,
+    /// The unridged autocorrelation from each window, for the current block.
+    autocs: Vec<[f64; MAX_ORDER + 1]>,
     reg: f64,
     windowed: Vec<f64>,
     lp: Box<[[f64; MAX_ORDER]; MAX_ORDER]>,
@@ -244,8 +246,13 @@ impl Analyzer {
             rice: RiceSearch::new(),
             pool32: Vec::with_capacity(level.block),
             pool64: Vec::with_capacity(wide_cap),
-            window: Vec::with_capacity(level.block),
-            window_key: (0, 0, 0, 0),
+            windows: level
+                .windows
+                .iter()
+                .map(|_| Vec::with_capacity(level.block))
+                .collect(),
+            window_len: 0,
+            autocs: vec![[0.0; MAX_ORDER + 1]; level.windows.len()],
             reg: 1e-15,
             windowed: Vec::with_capacity(level.block),
             lp: Box::new([[0.0; MAX_ORDER]; MAX_ORDER]),
@@ -326,8 +333,8 @@ impl Analyzer {
         if self.level.max_lpc > 0 && n >= 16 {
             self.reg = BASE_RIDGE;
             let mut gap = 0.0f64;
-            for &apod in self.level.windows {
-                gap = gap.max(self.search_lpc(x, bps, head, apod, plan));
+            for w in 0..self.level.windows.len() {
+                gap = gap.max(self.search_lpc(x, bps, head, w, plan));
             }
             // A predictable signal can sit far above the size its own error energy promises:
             // the quantised coefficients of a badly conditioned fit are too coarse. A little
@@ -337,9 +344,8 @@ impl Analyzer {
             if gap > GAP_BITS {
                 for &ridge in self.level.ridges {
                     self.reg = ridge;
-                    for &apod in &self.level.windows[..1] {
-                        self.search_lpc(x, bps, head, apod, plan);
-                    }
+                    // The first window's autocorrelation is still in `autocs[0]`.
+                    self.fit_lpc(x, bps, head, 0, plan);
                 }
             }
         }
@@ -405,27 +411,47 @@ impl Analyzer {
         x: &[T],
         bps: u32,
         head: u64,
-        apod: Apodization,
+        w: usize,
         plan: &mut Plan,
     ) -> f64 {
         let n = x.len();
         let max_order = self.level.max_lpc.min(n - 1);
-        let span = (n * apod.from / 60, n * apod.to / 60);
-        if self.window_key != (n, span.0, span.1, apod.taper) {
-            lpc::window(n, span.0, span.1, apod.taper, &mut self.window);
-            self.window_key = (n, span.0, span.1, apod.taper);
+        if self.window_len != n {
+            for (apod, window) in self.level.windows.iter().zip(&mut self.windows) {
+                let span = (n * apod.from / 60, n * apod.to / 60);
+                lpc::window(n, span.0, span.1, apod.taper, window);
+            }
+            self.window_len = n;
         }
+        let apod = self.level.windows[w];
         // Only the span inside the window carries anything.
-        let (from, to) = (span.0.min(n), span.1.min(n));
+        let (from, to) = ((n * apod.from / 60).min(n), (n * apod.to / 60).min(n));
         self.windowed.clear();
         self.windowed.extend(
             x[from..to]
                 .iter()
-                .zip(&self.window[from..to])
+                .zip(&self.windows[w][from..to])
                 .map(|(&v, &w)| v.into() as f64 * w),
         );
-        let mut autoc = [0.0f64; MAX_ORDER + 1];
-        lpc::autocorrelation(&self.windowed, &mut autoc[..=max_order]);
+        lpc::autocorrelation(&self.windowed, &mut self.autocs[w][..=max_order]);
+        self.fit_lpc(x, bps, head, w, plan)
+    }
+
+    /// The rest of [`search_lpc`](Self::search_lpc), from the autocorrelation of window `w`
+    /// with the current ridge.
+    fn fit_lpc<T: Sample>(
+        &mut self,
+        x: &[T],
+        bps: u32,
+        head: u64,
+        w: usize,
+        plan: &mut Plan,
+    ) -> f64 {
+        let n = x.len();
+        let max_order = self.level.max_lpc.min(n - 1);
+        let apod = self.level.windows[w];
+        let mut autoc = self.autocs[w];
+        autoc[max_order + 1..].fill(0.0);
         autoc[0] *= 1.0 + self.reg;
         let mut err = [0.0f64; MAX_ORDER];
         let orders = lpc::levinson(&autoc, max_order, &mut self.lp, &mut err);
@@ -496,13 +522,13 @@ impl Analyzer {
 impl Analyzer {
     /// Capacities of every scratch buffer, to check that steady state does not grow them.
     pub(super) fn capacities(&self) -> Vec<usize> {
-        let mut v = vec![
+        let mut v: Vec<usize> = self.windows.iter().map(Vec::capacity).collect();
+        v.extend([
             self.cand.capacity(),
             self.pool32.capacity(),
             self.pool64.capacity(),
-            self.window.capacity(),
             self.windowed.capacity(),
-        ];
+        ]);
         v.extend(self.acc.capacities());
         v
     }
