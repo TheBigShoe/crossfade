@@ -60,6 +60,15 @@ pub(crate) fn state_line(state: &JobState) -> String {
     }
 }
 
+/// `12,340 samples clipped`.
+fn clip_line(samples: u64) -> String {
+    let noun = if samples == 1 { "sample" } else { "samples" };
+    format!("{} {noun} clipped", grouped(samples))
+}
+
+const CLIP_ADVICE: &str = "The output could not hold the peaks, so they were cut off. \
+Lower the level, or use Normalize, which keeps the peaks under the ceiling.";
+
 fn percent(done: u64, total: u64) -> u64 {
     if total == 0 {
         100
@@ -76,6 +85,18 @@ impl Workspace {
             .get(n)
             .map(|item| state_line(&item.state))
             .unwrap_or_default()
+    }
+
+    /// `12,340 samples clipped` for a finished job that clipped; nothing for any other.
+    pub fn queue_row_clip(&self, n: usize) -> Option<String> {
+        let item = self.queue.items().get(n)?;
+        (matches!(item.state, JobState::Finished { .. }) && item.clipped > 0)
+            .then(|| clip_line(item.clipped))
+    }
+
+    /// What the clipped line's tooltip suggests.
+    pub fn queue_row_clip_advice(&self, n: usize) -> Option<&'static str> {
+        self.queue_row_clip(n).map(|_| CLIP_ADVICE)
     }
 
     /// The labels of the row's overflow menu.
@@ -218,6 +239,8 @@ impl Workspace {
         let failed = matches!(item.state, JobState::Failed { .. });
         let finished = matches!(item.state, JobState::Finished { .. });
         let fraction = self.queue.fraction(id).filter(|_| running);
+        let clip = self.queue_row_clip(n);
+        let warning = cx.theme().warning;
         let menu_this = this.clone();
         v_flex()
             .id(SharedString::from(format!("queue-row-{n}")))
@@ -316,11 +339,27 @@ impl Workspace {
                     ),
             )
             .child(
-                div()
-                    .truncate()
+                h_flex()
+                    .gap_2()
                     .text_size(LABEL_SIZE)
-                    .text_color(if failed { danger } else { muted })
-                    .child(SharedString::from(state_line(&item.state))),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if failed { danger } else { muted })
+                            .child(SharedString::from(state_line(&item.state))),
+                    )
+                    .when_some(clip, |line, clip| {
+                        line.child(
+                            div()
+                                .id(SharedString::from(format!("queue-clip-{n}")))
+                                .test_support()
+                                .flex_none()
+                                .text_color(warning)
+                                .tooltip(|window, cx| Tooltip::new(CLIP_ADVICE).build(window, cx))
+                                .child(SharedString::from(clip)),
+                        )
+                    }),
             )
             .when_some(fraction, |row, fraction| {
                 row.child(

@@ -799,3 +799,270 @@ fn level_and_format_are_disabled_when_the_source_cannot_be_saved_as_the_containe
     pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 2);
     assert!(dialog(cx, &rig, |d, _| d.format_enabled()));
 }
+
+/// Replace what a field holds the way a user does: focus it, select all, type.
+fn type_into(cx: &mut TestAppContext, rig: &Rig, id: &'static str, text: &str) {
+    click(cx, rig.window, id);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.press("secondary-a", cx);
+        if text.is_empty() {
+            window.press("backspace", cx);
+        } else {
+            window.input(text, cx);
+        }
+    })
+    .expect("open");
+    cx.run_until_parked();
+    draw(cx, rig.window);
+}
+
+fn expand_adjust(cx: &mut TestAppContext, rig: &Rig) {
+    click(cx, rig.window, "sheet-adjust");
+    draw(cx, rig.window);
+}
+
+fn cli_request(rig: &Rig, flags: &[&str]) -> Request {
+    let mut args = vec![
+        "convert".to_owned(),
+        rig.dir.path("in.wav"),
+        "-o".to_owned(),
+        rig.dir.path("in-copy.wav"),
+    ];
+    args.extend(flags.iter().map(|f| (*f).to_owned()));
+    crossfade_cli::request_from_args(&args)
+        .expect("valid arguments")
+        .expect("a convert request")
+}
+
+#[gpui_test]
+fn the_sheet_gains_a_rate_row_a_channels_row_and_a_collapsed_adjust_row(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    for id in ["sheet-rate", "sheet-channels", "sheet-adjust"] {
+        assert!(has(cx, rig.window, id), "missing {id}");
+    }
+    // The source is 48 kHz stereo: those are what "Same as source" means.
+    assert_eq!(
+        labels(cx, &rig, "sheet-rate"),
+        [
+            "Same as source",
+            "44.1 kHz",
+            "88.2 kHz",
+            "96 kHz",
+            "176.4 kHz",
+            "192 kHz"
+        ]
+    );
+    assert_eq!(
+        labels(cx, &rig, "sheet-channels"),
+        ["Same as source", "Mono"]
+    );
+    // Collapsed with nothing set: no body, no summary, no note.
+    for absent in [
+        "sheet-adjust-body",
+        "sheet-adjust-summary",
+        "sheet-processing-note",
+    ] {
+        assert!(!has(cx, rig.window, absent), "{absent}");
+    }
+    assert!(!dialog(cx, &rig, |d, _| d.adjust_open()));
+}
+
+#[gpui_test]
+fn the_adjust_row_opens_and_closes_its_three_rows(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    for id in [
+        "sheet-adjust-body",
+        "sheet-level-off",
+        "sheet-level-gain",
+        "sheet-level-normalize",
+        "sheet-level-value",
+        "sheet-trim-start",
+        "sheet-trim-end",
+        "sheet-fade-in",
+        "sheet-fade-out",
+    ] {
+        assert!(has(cx, rig.window, id), "missing {id}");
+    }
+    assert!(dialog(cx, &rig, |d, _| d.adjust_open()));
+    expand_adjust(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-adjust-body"));
+}
+
+#[gpui_test]
+fn typed_values_queue_what_the_cli_builds(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    click(cx, rig.window, "sheet-level-gain");
+    draw(cx, rig.window);
+    type_into(cx, &rig, "sheet-level-value", "-3 dB");
+    type_into(cx, &rig, "sheet-trim-start", "1");
+    type_into(cx, &rig, "sheet-fade-out", "500ms");
+    pick_label(cx, &rig, "sheet-channels", "Mono");
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    draw(cx, rig.window);
+    let cli = cli_request(
+        &rig,
+        &[
+            "--channels",
+            "mono",
+            "--start",
+            "1s",
+            "--fade-out",
+            "500ms",
+            "--gain",
+            "-3dB",
+        ],
+    );
+    assert_eq!(queued(cx, &rig), [cli]);
+}
+
+#[gpui_test]
+fn rate_and_normalize_build_what_the_cli_builds(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    pick_label(cx, &rig, "sheet-rate", "96 kHz");
+    click(cx, rig.window, "sheet-level-normalize");
+    draw(cx, rig.window);
+    type_into(cx, &rig, "sheet-level-value", "-16");
+    // Whether the engine builds these yet is not the sheet's business.
+    let draft = dialog(cx, &rig, |d, _| d.draft());
+    assert_eq!(
+        draft,
+        cli_request(&rig, &["--sample-rate", "96kHz", "--normalize", "-16LUFS"])
+    );
+}
+
+#[gpui_test]
+fn the_collapsed_row_summarises_what_is_set(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    click(cx, rig.window, "sheet-level-normalize");
+    type_into(cx, &rig, "sheet-level-value", "-16");
+    type_into(cx, &rig, "sheet-fade-out", "3");
+    expand_adjust(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-adjust-body"));
+    assert!(has(cx, rig.window, "sheet-adjust-summary"));
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.adjust_summary()).as_deref(),
+        Some("Normalize \u{2212}16 LUFS \u{b7} Fade out 3 s")
+    );
+    // Clearing the fields clears the line.
+    expand_adjust(cx, &rig);
+    type_into(cx, &rig, "sheet-level-value", "");
+    type_into(cx, &rig, "sheet-fade-out", "");
+    assert_eq!(dialog(cx, &rig, |d, _| d.adjust_summary()), None);
+    expand_adjust(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-adjust-summary"));
+}
+
+#[gpui_test]
+fn a_bad_value_is_flagged_under_its_row_and_blocks_adding(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    type_into(cx, &rig, "sheet-trim-start", "30");
+    type_into(cx, &rig, "sheet-trim-end", "10");
+    assert!(has(cx, rig.window, "sheet-adjust-problem-trim"));
+    assert!(!has(cx, rig.window, "sheet-adjust-problem-fade"));
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+    assert!(
+        dialog(cx, &rig, |d, cx| d.adjust_problem_text(cx, "trim"))
+            .is_some_and(|m| m.to_lowercase().contains("end must be after start"))
+    );
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    assert!(queued(cx, &rig).is_empty());
+
+    type_into(cx, &rig, "sheet-trim-end", "40");
+    assert!(!has(cx, rig.window, "sheet-adjust-problem-trim"));
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+
+    type_into(cx, &rig, "sheet-fade-in", "soon");
+    assert!(has(cx, rig.window, "sheet-adjust-problem-fade"));
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+}
+
+#[gpui_test]
+fn a_problem_in_a_collapsed_adjust_is_still_shown(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    type_into(cx, &rig, "sheet-fade-in", "soon");
+    expand_adjust(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-adjust-body"));
+    assert!(has(cx, rig.window, "sheet-problems"));
+    assert!(disabled(cx, rig.window, "dialog-ok"));
+}
+
+#[gpui_test]
+fn the_note_says_what_will_be_written_and_the_command_shows_the_flags(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    pick_label(cx, &rig, "sheet-channels", "Mono");
+    assert!(has(cx, rig.window, "sheet-processing-note"));
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.processing_note()).as_deref(),
+        Some("48 kHz \u{b7} mono \u{b7} 16-bit \u{b7} 0:00.010")
+    );
+    let command = rig.workspace.read_with(cx, |w, cx| {
+        w.convert_dialog().unwrap().read(cx).command_text()
+    });
+    assert!(
+        command.is_some_and(|c| c.contains("--channels mono")),
+        "the command line shows the flag"
+    );
+}
+
+#[gpui_test]
+fn stream_copy_switches_the_new_controls_off_and_gives_the_engines_reason(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    type_into(cx, &rig, "sheet-fade-out", "3");
+    assert!(dialog(cx, &rig, |d, _| d.processing_enabled()));
+    click(cx, rig.window, "sheet-copy");
+    draw(cx, rig.window);
+    assert!(dialog(cx, &rig, |d, _| d.copy()));
+    assert!(!dialog(cx, &rig, |d, _| d.processing_enabled()));
+    let note = dialog(cx, &rig, |d, _| d.processing_note()).expect("a reason");
+    assert!(note.contains("copy") && !note.contains("--"), "{note}");
+    assert_eq!(dialog(cx, &rig, |d, _| d.adjust_summary()), None);
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    let audio = queued(cx, &rig)[0].job.outputs[0].audio.clone();
+    assert!(audio.filters.is_empty());
+    assert_eq!(audio.codec.as_deref(), Some("copy"));
+}
+
+#[gpui_test]
+fn choosing_a_preset_keeps_adjust_and_the_preset_row_says_custom_as_before(
+    cx: &mut TestAppContext,
+) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    type_into(cx, &rig, "sheet-fade-out", "3");
+    pick(cx, &rig, "sheet-preset", &PRESET_LABELS, 1);
+    assert_eq!(
+        dialog(cx, &rig, |d, cx| d.preset_label(cx)),
+        Some("16-bit (CD)")
+    );
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.adjust_summary()).as_deref(),
+        Some("Fade out 3 s")
+    );
+    // Something a preset fixed, changed: Custom.
+    pick(cx, &rig, "sheet-format", &FORMAT_LABELS, 6);
+    assert_eq!(dialog(cx, &rig, |d, cx| d.preset_label(cx)), None);
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.adjust_summary()).as_deref(),
+        Some("Fade out 3 s")
+    );
+}

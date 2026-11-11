@@ -6,8 +6,16 @@
 use crate::command::Request;
 use crate::inputs::InputEntry;
 use crossfade_core::{Error, SampleFormat, StreamInfo};
-use crossfade_graph::{AudioSettings, Job, JobInput, JobOutput, validate, writable_extensions};
+use crossfade_graph::filter::{Channels, FilterSpec, parse_channels};
+use crossfade_graph::{
+    AudioSettings, Job, JobInput, JobOutput, describe, validate, writable_extensions,
+};
 use std::path::Path;
+
+mod adjust;
+
+use adjust::{Adjust, clock_exact};
+pub use adjust::{AdjustField, AdjustRow, LevelMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatChoice {
@@ -149,6 +157,11 @@ pub enum Problem {
     Extension,
     /// The engine would refuse this source with these choices, in plain words.
     Source(String),
+    /// A value in the Adjust section that does not parse or that the filter rules refuse.
+    Adjust {
+        row: AdjustRow,
+        message: String,
+    },
 }
 
 impl Problem {
@@ -160,7 +173,7 @@ impl Problem {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
             Self::Extension => "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files.".into(),
-            Self::Source(text) => text.clone(),
+            Self::Source(text) | Self::Adjust { message: text, .. } => text.clone(),
         }
     }
 }
@@ -197,7 +210,14 @@ pub struct ConvertSheet {
     level: Option<u8>,
     copy: bool,
     overwrite: bool,
+    sample_rate: Option<u32>,
+    channels: Option<Channels>,
+    adjust: Adjust,
+    adjust_open: bool,
 }
+
+/// The output rates the sheet offers besides the source's own.
+const RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
 
 impl ConvertSheet {
     pub fn for_input(entry: &InputEntry) -> Self {
@@ -211,6 +231,10 @@ impl ConvertSheet {
             level: None,
             copy: false,
             overwrite: false,
+            sample_rate: None,
+            channels: None,
+            adjust: Adjust::default(),
+            adjust_open: false,
         };
         sheet.output = sheet.default_output();
         sheet
@@ -450,8 +474,183 @@ impl ConvertSheet {
             Self::copy_settings()
         } else {
             let level = self.level.filter(|_| self.container.has_level());
-            Self::format_settings(self.format(), level)
+            AudioSettings {
+                sample_rate: self.sample_rate,
+                channels: self.channels.clone(),
+                filters: self.adjust.resolve().filters,
+                ..Self::format_settings(self.format(), level)
+            }
         }
+    }
+
+    /// `kHz` as people write it: `44.1 kHz`, `48 kHz`.
+    pub fn rate_label(rate: Option<u32>) -> String {
+        let Some(hz) = rate else {
+            return "Same as source".into();
+        };
+        let khz = format!("{:.3}", f64::from(hz) / 1000.0);
+        format!("{} kHz", khz.trim_end_matches('0').trim_end_matches('.'))
+    }
+
+    /// The rates to choose from: the source's own is what "Same as source" means.
+    pub fn rate_options(&self) -> Vec<Option<u32>> {
+        let own = self.stream.as_ref().map(|s| s.audio.sample_rate());
+        std::iter::once(None)
+            .chain(RATES.into_iter().filter(|r| Some(*r) != own).map(Some))
+            .collect()
+    }
+
+    pub fn sample_rate(&self) -> Option<u32> {
+        self.sample_rate
+    }
+
+    pub fn set_sample_rate(&mut self, rate: Option<u32>) {
+        self.sample_rate = rate;
+    }
+
+    pub fn channel_label(channels: &Option<Channels>) -> String {
+        match channels {
+            None => "Same as source".into(),
+            Some(Channels::Layout(l)) => match l.name() {
+                Some("mono") => "Mono".into(),
+                Some("stereo") => "Stereo".into(),
+                Some(name) => name.to_owned(),
+                None => format!("{} channels", l.channels()),
+            },
+            Some(Channels::Count(n)) => format!("{n} channels"),
+        }
+    }
+
+    /// Mono and stereo, less the source's own layout.
+    pub fn channel_options(&self) -> Vec<Option<Channels>> {
+        let own = self.stream.as_ref().map(|s| s.audio.layout().clone());
+        std::iter::once(None)
+            .chain(["mono", "stereo"].into_iter().filter_map(|name| {
+                let choice = parse_channels(name).ok()?;
+                let same = own.as_ref().is_some_and(|l| choice.resolve(l) == *l);
+                (!same).then_some(Some(choice))
+            }))
+            .collect()
+    }
+
+    pub fn channels(&self) -> Option<&Channels> {
+        self.channels.as_ref()
+    }
+
+    pub fn set_channels(&mut self, channels: Option<Channels>) {
+        self.channels = channels;
+    }
+
+    pub fn adjust_open(&self) -> bool {
+        self.adjust_open
+    }
+
+    pub fn set_adjust_open(&mut self, open: bool) {
+        self.adjust_open = open;
+    }
+
+    pub fn level_mode(&self) -> LevelMode {
+        self.adjust.mode
+    }
+
+    pub fn set_level_mode(&mut self, mode: LevelMode) {
+        self.adjust.mode = mode;
+    }
+
+    /// What the field holds, as typed.
+    pub fn adjust_text(&self, field: AdjustField) -> &str {
+        self.adjust.text(field)
+    }
+
+    pub fn set_adjust_text(&mut self, field: AdjustField, text: String) {
+        self.adjust.set_text(field, text);
+    }
+
+    /// The field's text in the one spelling the engine's parsers take (`-3dB`, `90s`);
+    /// `None` when it is empty.
+    pub fn adjust_value(&self, field: AdjustField) -> Option<String> {
+        self.adjust.value(field)
+    }
+
+    /// Whether the controls for rate, channels and Adjust can be used: stream copy passes
+    /// the packets through untouched.
+    pub fn processing_enabled(&self) -> bool {
+        !self.copy()
+    }
+
+    /// Why they cannot, in the engine's words.
+    pub fn processing_disabled_reason(&self) -> Option<String> {
+        if !self.copy() {
+            return None;
+        }
+        let asks = AudioSettings {
+            filters: vec![FilterSpec::Gain { db: 0.0 }],
+            ..Self::copy_settings()
+        };
+        let what = match self.check(self.container, &asks) {
+            Err(Error::Unsupported { what }) => what,
+            _ => return Some("Stream copy leaves the audio untouched.".into()),
+        };
+        let text = what.replacen("--codec copy", "Stream copy", 1);
+        let mut text = match text.split_once("; ") {
+            Some((kept, _)) => format!("{kept})"),
+            None => text,
+        };
+        text.push('.');
+        Some(text)
+    }
+
+    /// The problem under a row of the Adjust section, if there is one.
+    pub fn adjust_problem(&self, row: AdjustRow) -> Option<String> {
+        self.adjust_problems()
+            .into_iter()
+            .find_map(|(r, message)| (r == row).then_some(message))
+    }
+
+    fn adjust_problems(&self) -> Vec<(AdjustRow, String)> {
+        if self.copy() {
+            return Vec::new();
+        }
+        self.adjust.resolve().problems
+    }
+
+    /// One muted line for the collapsed Adjust row: `Normalize −16 LUFS · Trim 0:10–1:30`.
+    pub fn adjust_summary(&self) -> Option<String> {
+        if self.copy() {
+            return None;
+        }
+        let parts = self.adjust.resolve().summary;
+        (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
+    }
+
+    /// What will be written, when processing changes it: `48 kHz · mono · 16-bit · 1:20.000`.
+    pub fn processing_hint(&self) -> Option<String> {
+        let stream = self.stream.as_ref()?;
+        let audio = self.audio();
+        let processed =
+            audio.sample_rate.is_some() || audio.channels.is_some() || !audio.filters.is_empty();
+        if self.copy() || !processed || !self.adjust_problems().is_empty() {
+            return None;
+        }
+        let plan = describe(stream, &format!("x.{}", self.container.extension()), &audio).ok()?;
+        let out = &plan.output;
+        let layout = out.audio.layout();
+        let layout = layout
+            .name()
+            .map_or_else(|| format!("{} ch", layout.channels()), str::to_owned);
+        let format = out.audio.format();
+        let bits = out.bits_per_raw_sample.map_or(format.bits(), usize::from);
+        let depth = if format.is_float() {
+            format!("{bits}-bit float")
+        } else {
+            format!("{bits}-bit")
+        };
+        let rate = out.audio.sample_rate();
+        let mut parts = vec![Self::rate_label(Some(rate)), layout, depth];
+        if let Some(frames) = out.frames {
+            parts.push(clock_exact(frames as f64 / f64::from(rate)));
+        }
+        Some(parts.join(" \u{b7} "))
     }
 
     fn engine_problem(&self) -> Option<Problem> {
@@ -488,6 +687,11 @@ impl ConvertSheet {
         if Container::from_extension(&ext).is_none() {
             problems.push(Problem::Extension);
         } else {
+            problems.extend(
+                self.adjust_problems()
+                    .into_iter()
+                    .map(|(row, message)| Problem::Adjust { row, message }),
+            );
             problems.extend(self.engine_problem());
         }
         problems
@@ -498,7 +702,13 @@ impl ConvertSheet {
         if !problems.is_empty() {
             return Err(problems);
         }
-        Ok(Request {
+        Ok(self.draft())
+    }
+
+    /// The request as the choices stand, without asking whether the file system or the
+    /// engine will take it; [`build`](Self::build) is the checked one.
+    pub fn draft(&self) -> Request {
+        Request {
             job: Job {
                 version: Job::VERSION,
                 inputs: vec![JobInput {
@@ -510,6 +720,6 @@ impl ConvertSheet {
                 }],
             },
             overwrite: self.overwrite,
-        })
+        }
     }
 }

@@ -479,3 +479,36 @@ fn finished_jobs_are_not_part_of_the_quit_sentence() {
         Some("1 conversion is still running. Quitting will cancel it.")
     );
 }
+
+#[test]
+fn clipped_samples_are_kept_on_the_item_and_only_for_that_job() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let a = q.enqueue(request("a"));
+    let b = q.enqueue(request("b"));
+    q.pump(&mut r);
+    assert_eq!(q.get(a).unwrap().clipped, 0);
+    q.apply(a, RunnerEvent::Clipped { samples: 12_340 });
+    q.apply(a, RunnerEvent::Finished { frames: 5 });
+    assert_eq!(q.get(a).unwrap().clipped, 12_340);
+    assert_eq!(state(&q, a), JobState::Finished { frames: 5 });
+    assert_eq!(q.get(b).unwrap().clipped, 0);
+    // A stray report for a job that is not running is dropped, as other events are.
+    q.apply(b, RunnerEvent::Clipped { samples: 9 });
+    assert_eq!(q.get(b).unwrap().clipped, 0);
+}
+
+#[test]
+fn a_retry_starts_with_nothing_clipped() {
+    let (mut q, mut r) = (Queue::new(), Scripted::default());
+    let a = q.enqueue(request("a"));
+    q.pump(&mut r);
+    q.apply(a, RunnerEvent::Clipped { samples: 3 });
+    q.apply(
+        a,
+        RunnerEvent::Failed {
+            message: "x".into(),
+        },
+    );
+    let again = q.retry(a).unwrap();
+    assert_eq!(q.get(again).unwrap().clipped, 0);
+}

@@ -32,6 +32,10 @@ pub enum RunnerEvent {
         frames_done: u64,
         frames_total: Option<u64>,
     },
+    /// Samples the output's format saturated; sent before `Finished`, only when there were any.
+    Clipped {
+        samples: u64,
+    },
     Finished {
         frames: u64,
     },
@@ -50,6 +54,8 @@ pub struct QueueItem {
     pub id: JobId,
     pub request: Request,
     pub state: JobState,
+    /// Samples the finished job saturated; 0 when it did not clip.
+    pub clipped: u64,
     token: Option<CancelToken>,
 }
 
@@ -97,6 +103,7 @@ impl Queue {
             id,
             request,
             state: JobState::Pending,
+            clipped: 0,
             token: None,
         });
         id
@@ -135,6 +142,10 @@ impl Queue {
         };
         let next = match event {
             RunnerEvent::Started => return,
+            RunnerEvent::Clipped { samples } => {
+                item.clipped = samples;
+                return;
+            }
             RunnerEvent::Progress {
                 frames_done,
                 frames_total,
