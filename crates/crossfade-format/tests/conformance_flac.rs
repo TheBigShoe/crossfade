@@ -99,10 +99,10 @@ fn run(path: &Path, threads: usize) -> Run {
                 Ok(true) => {}
                 Ok(false) => break,
                 Err(e) => {
-                    // The frames read before the bad packet count, even those a threaded
-                    // decoder still holds: hand them over, then report the reader's error.
-                    decoder.drain();
-                    while let Ok(true) = decoder.receive_frame(&mut frame) {
+                    // As the pipeline does: the frames read before the bad packet count, even
+                    // those a threaded decoder still holds, and an error among them comes first.
+                    decoder.flush()?;
+                    while decoder.receive_frame(&mut frame)? {
                         take(&frame, &mut r);
                     }
                     return Err(e);
