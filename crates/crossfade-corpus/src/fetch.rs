@@ -2,16 +2,24 @@
 //! then rename, so the final name only ever holds a verified file.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::cache::verify_file;
-use crate::{Cache, Entry, Manifest};
+use crate::archive::extract;
+use crate::cache::{verify_file, verify_path};
+use crate::{Archive, Cache, Entry, Manifest, Source};
+
+/// What the server said about a body, for an error that names the cause.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Received {
+    pub content_type: Option<String>,
+}
 
 /// Seam for the network, so tests inject a fake.
 pub trait Downloader {
-    /// Write the body of `url` to `dest`.
-    fn download(&mut self, url: &str, dest: &Path) -> Result<(), String>;
+    /// Write the body of `url` to `dest`, refusing more than `max_bytes`.
+    fn download(&mut self, url: &str, dest: &Path, max_bytes: u64) -> Result<Received, String>;
 }
 
 /// Shells out to `curl`, which keeps a TLS stack out of the dependency tree.
@@ -19,21 +27,28 @@ pub trait Downloader {
 pub struct CurlDownloader;
 
 impl Downloader for CurlDownloader {
-    fn download(&mut self, url: &str, dest: &Path) -> Result<(), String> {
+    fn download(&mut self, url: &str, dest: &Path, max_bytes: u64) -> Result<Received, String> {
         let out = Command::new("curl")
             .args([
                 "--fail",
                 "--location",
                 "--silent",
                 "--show-error",
-                "--output",
+                "--write-out",
+                "%{content_type}",
+                "--max-filesize",
             ])
+            .arg(max_bytes.to_string())
+            .arg("--output")
             .arg(dest)
             .arg(url)
             .output()
             .map_err(|e| format!("cannot run curl: {e}"))?;
         if out.status.success() {
-            Ok(())
+            let ct = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            Ok(Received {
+                content_type: (!ct.is_empty()).then_some(ct),
+            })
         } else {
             Err(format!(
                 "curl: {}",
@@ -53,6 +68,8 @@ pub enum Outcome {
 #[derive(Debug, Clone, Copy)]
 pub enum Event<'a> {
     Starting(&'a Entry),
+    /// An archive is being downloaded for its members.
+    Archive(&'a Archive),
     Finished(&'a Entry, &'a Outcome),
 }
 
@@ -86,17 +103,91 @@ impl Summary {
     }
 }
 
-fn install(
-    cache: &Cache,
-    entry: &Entry,
-    produce: impl FnOnce(&Path) -> Result<(), String>,
+/// True when `id` starts with one of the `--only` prefixes (always, with none).
+pub fn selected(id: &str, only: &[String]) -> bool {
+    only.is_empty() || only.iter().any(|p| id.starts_with(p.as_str()))
+}
+
+/// What a wrong download looked like: the ISO server answers a wrong URL with
+/// status 200 and an HTML page, which only a size or hash check would catch.
+fn received_note(path: &Path, content_type: Option<&str>) -> String {
+    let len = std::fs::metadata(path).map_or(0, |m| m.len());
+    let mut head = Vec::new();
+    if let Ok(f) = std::fs::File::open(path) {
+        let _ = f.take(48).read_to_end(&mut head);
+    }
+    let printable = !head.is_empty()
+        && head
+            .iter()
+            .all(|b| b.is_ascii_graphic() || matches!(b, b' ' | b'\n' | b'\r' | b'\t'));
+    let start = if printable {
+        let text: String = head
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_whitespace() {
+                    ' '
+                } else {
+                    char::from(b)
+                }
+            })
+            .collect();
+        format!("`{text}`")
+    } else {
+        head.iter()
+            .take(16)
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let lower = String::from_utf8_lossy(&head).to_ascii_lowercase();
+    let html = content_type.is_some_and(|c| c.to_ascii_lowercase().contains("html"))
+        || lower.trim_start().starts_with("<!doctype html")
+        || lower.trim_start().starts_with("<html");
+    format!(
+        "; received {len} bytes of {}, starting {start}{}",
+        content_type.unwrap_or("unknown content type"),
+        if html {
+            " (an HTML page: the URL is probably wrong)"
+        } else {
+            ""
+        }
+    )
+}
+
+/// Download `url` to `tmp`, check it and rename it to `dest`; `tmp` never
+/// outlives a failure.
+fn download_verified(
+    downloader: &mut dyn Downloader,
+    url: &str,
+    (tmp, dest): (&Path, &Path),
+    (bytes, sha256): (u64, &str),
 ) -> Result<(), String> {
+    if let Some(parent) = tmp.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // Room for a small error page, so it can be described rather than cut off.
+    let max = bytes.saturating_add(1 << 20);
+    let result = downloader
+        .download(url, tmp, max)
+        .and_then(|got| {
+            verify_path(tmp, bytes, sha256)
+                .map_err(|p| format!("{p}{}", received_note(tmp, got.content_type.as_deref())))
+        })
+        .and_then(|()| std::fs::rename(tmp, dest).map_err(|e| e.to_string()));
+    if result.is_err() {
+        let _ = std::fs::remove_file(tmp);
+    }
+    result
+}
+
+fn copy_verified(src: &Path, entry: &Entry, cache: &Cache) -> Result<(), String> {
     let tmp = cache.temp_path(entry);
     if let Some(parent) = tmp.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let result = produce(&tmp)
-        .and_then(|()| verify_file(entry, &tmp).map_err(|p| p.to_string()))
+    let result = std::fs::copy(src, &tmp)
+        .map_err(|e| e.to_string())
+        .and_then(|_| verify_file(entry, &tmp).map_err(|p| p.to_string()))
         .and_then(|()| std::fs::rename(&tmp, cache.path(entry)).map_err(|e| e.to_string()));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -104,40 +195,98 @@ fn install(
     result
 }
 
-/// Download every entry whose id starts with `only` (all when `None`) that is
-/// not already valid. One bad file never stops the rest.
+/// Download every selected entry that is not already valid. A file is fetched
+/// on its own; archive members come from one download of their archive, which
+/// is deleted once all its members are in (it is as large as they are). One
+/// bad file never stops the rest.
 pub fn fetch(
     manifest: &Manifest,
     cache: &Cache,
     downloader: &mut dyn Downloader,
-    only: Option<&str>,
+    only: &[String],
     progress: &mut dyn FnMut(Event<'_>),
 ) -> Summary {
     let mut summary = Summary::default();
+    let mut waiting: HashMap<&str, Vec<&Entry>> = HashMap::new();
     for entry in manifest.entries() {
-        if only.is_some_and(|p| !entry.id.starts_with(p)) {
+        if !selected(&entry.id, only) {
             continue;
         }
-        let outcome = if cache.verify(entry).is_ok() {
-            Outcome::Skipped
-        } else {
-            progress(Event::Starting(entry));
-            let Some(url) = entry.url() else {
-                // Archive members arrive with the archive support.
-                continue;
-            };
-            match install(cache, entry, |tmp| downloader.download(url, tmp)) {
-                Ok(()) => Outcome::Fetched,
-                Err(e) => Outcome::Failed(e),
+        if cache.verify(entry).is_ok() {
+            let outcome = Outcome::Skipped;
+            progress(Event::Finished(entry, &outcome));
+            summary.record(entry, &outcome);
+            continue;
+        }
+        match &entry.source {
+            Source::Url(url) => {
+                progress(Event::Starting(entry));
+                let outcome = match download_verified(
+                    downloader,
+                    url,
+                    (&cache.temp_path(entry), &cache.path(entry)),
+                    (entry.bytes, &entry.sha256),
+                ) {
+                    Ok(()) => Outcome::Fetched,
+                    Err(e) => Outcome::Failed(e),
+                };
+                progress(Event::Finished(entry, &outcome));
+                summary.record(entry, &outcome);
             }
+            Source::Archive { archive, .. } => waiting.entry(archive).or_default().push(entry),
+        }
+    }
+    for archive in manifest.archives() {
+        let Some(entries) = waiting.remove(archive.id.as_str()) else {
+            continue;
         };
-        progress(Event::Finished(entry, &outcome));
-        summary.record(entry, &outcome);
+        let results = fetch_archive(cache, downloader, archive, &entries, progress);
+        let all_ok = results.iter().all(Result::is_ok);
+        for (entry, result) in entries.iter().zip(results) {
+            let outcome = result.map_or_else(Outcome::Failed, |()| Outcome::Fetched);
+            progress(Event::Finished(entry, &outcome));
+            summary.record(entry, &outcome);
+        }
+        if all_ok {
+            let _ = std::fs::remove_file(cache.archive_path(archive));
+        }
     }
     summary
 }
 
-fn index_tree(dir: &Path, out: &mut HashMap<(String, String), PathBuf>) {
+fn fetch_archive(
+    cache: &Cache,
+    downloader: &mut dyn Downloader,
+    archive: &Archive,
+    entries: &[&Entry],
+    progress: &mut dyn FnMut(Event<'_>),
+) -> Vec<Result<(), String>> {
+    for entry in entries {
+        progress(Event::Starting(entry));
+    }
+    let file = cache.archive_path(archive);
+    if cache.verify_archive(archive).is_err() {
+        progress(Event::Archive(archive));
+        if let Err(why) = download_verified(
+            downloader,
+            &archive.url,
+            (&cache.temp_archive_path(archive), &file),
+            (archive.bytes, &archive.sha256),
+        ) {
+            return entries
+                .iter()
+                .map(|_| Err(format!("archive {}: {why}", archive.id)))
+                .collect();
+        }
+    }
+    extract(&file, archive, cache, entries)
+}
+
+const MAX_DEPTH: usize = 16;
+
+type Index = HashMap<String, Vec<(String, PathBuf)>>;
+
+fn index_tree(dir: &Path, depth: usize, out: &mut Index) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -148,40 +297,128 @@ fn index_tree(dir: &Path, out: &mut HashMap<(String, String), PathBuf>) {
     for item in rd.flatten() {
         let path = item.path();
         if path.is_dir() {
-            index_tree(&path, out);
+            if depth < MAX_DEPTH {
+                index_tree(&path, depth + 1, out);
+            }
         } else if let Some(name) = path.file_name() {
-            out.entry((parent.clone(), name.to_string_lossy().into_owned()))
-                .or_insert(path);
+            out.entry(name.to_string_lossy().into_owned())
+                .or_default()
+                .push((parent.clone(), path));
         }
     }
 }
 
-/// Copy files found under `from` into the cache, matching on file name inside
-/// the sub-directory named by the entry's id (`subset`, `uncommon`, ...), and
-/// verify each. For offline mirrors; entries not found there are failures
-/// unless the cache already holds them.
-pub fn seed(manifest: &Manifest, cache: &Cache, from: &Path) -> Summary {
-    let mut index = HashMap::new();
-    index_tree(from, &mut index);
+/// `from` may be a directory tree or one file (an archive).
+fn build_index(from: &Path) -> Index {
+    let mut index = Index::new();
+    if from.is_file() {
+        if let Some(name) = from.file_name() {
+            let parent = from
+                .parent()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            index
+                .entry(name.to_string_lossy().into_owned())
+                .or_default()
+                .push((parent, from.to_path_buf()));
+        }
+    } else {
+        index_tree(from, 0, &mut index);
+    }
+    for files in index.values_mut() {
+        files.sort();
+    }
+    index
+}
+
+/// Files called `name`, those in a directory called `group` first.
+fn candidates<'a>(index: &'a Index, name: &str, group: &str) -> Vec<&'a Path> {
+    let Some(files) = index.get(name) else {
+        return vec![];
+    };
+    let (near, far): (Vec<_>, Vec<_>) = files.iter().partition(|(dir, _)| dir == group);
+    near.into_iter()
+        .chain(far)
+        .map(|(_, p)| p.as_path())
+        .collect()
+}
+
+fn url_file_name(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or(url)
+}
+
+/// Copy files found under `from` into the cache, matching on file name (a file
+/// in a directory named like the entry's group, such as `subset`, is tried
+/// first) and verify each. Archive members are taken from an already
+/// extracted copy, or else extracted from the archive file (found under `from`
+/// by its name, or `from` itself). For offline mirrors; entries not found are
+/// failures unless the cache already holds them. Nothing is trusted unverified.
+pub fn seed(manifest: &Manifest, cache: &Cache, from: &Path, only: &[String]) -> Summary {
+    let index = build_index(from);
     let mut summary = Summary::default();
+    let mut unextracted: Vec<&Entry> = vec![];
     for entry in manifest.entries() {
-        let outcome = if cache.verify(entry).is_ok() {
-            Outcome::Skipped
-        } else {
-            let group = entry.id.rsplit('/').nth(1).unwrap_or_default().to_string();
-            match index.get(&(group, entry.name.clone())) {
-                None => Outcome::Failed(format!("not found under {}", from.display())),
-                Some(src) => match install(cache, entry, |tmp| {
-                    std::fs::copy(src, tmp)
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                }) {
-                    Ok(()) => Outcome::Fetched,
-                    Err(e) => Outcome::Failed(e),
-                },
+        if !selected(&entry.id, only) {
+            continue;
+        }
+        if cache.verify(entry).is_ok() {
+            summary.record(entry, &Outcome::Skipped);
+            continue;
+        }
+        let group = entry.id.rsplit('/').nth(1).unwrap_or_default();
+        let mut last = None;
+        let mut done = false;
+        for src in candidates(&index, &entry.name, group) {
+            match copy_verified(src, entry, cache) {
+                Ok(()) => {
+                    done = true;
+                    break;
+                }
+                Err(e) => last = Some(e),
             }
+        }
+        if done {
+            summary.record(entry, &Outcome::Fetched);
+        } else if matches!(entry.source, Source::Archive { .. }) {
+            unextracted.push(entry);
+        } else {
+            let why = last.unwrap_or_else(|| format!("not found under {}", from.display()));
+            summary.record(entry, &Outcome::Failed(why));
+        }
+    }
+    for archive in manifest.archives() {
+        let wanted: Vec<&Entry> = unextracted
+            .iter()
+            .copied()
+            .filter(|e| matches!(&e.source, Source::Archive { archive: a, .. } if *a == archive.id))
+            .collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        let found = candidates(&index, url_file_name(&archive.url), "")
+            .into_iter()
+            .chain(from.is_file().then_some(from))
+            .find(|p| verify_path(p, archive.bytes, &archive.sha256).is_ok());
+        let results = match found {
+            Some(file) => extract(file, archive, cache, &wanted),
+            None => wanted
+                .iter()
+                .map(|_| {
+                    Err(format!(
+                        "not found under {}, nor inside a valid copy of {}",
+                        from.display(),
+                        url_file_name(&archive.url)
+                    ))
+                })
+                .collect(),
         };
-        summary.record(entry, &outcome);
+        for (entry, result) in wanted.iter().zip(results) {
+            summary.record(
+                entry,
+                &result.map_or_else(Outcome::Failed, |()| Outcome::Fetched),
+            );
+        }
     }
     summary
 }

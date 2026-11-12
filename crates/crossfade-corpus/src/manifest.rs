@@ -75,6 +75,14 @@ pub enum ArchiveFormat {
     TarGz,
 }
 
+impl ArchiveFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::TarGz => "tar.gz",
+        }
+    }
+}
+
 /// A download that holds several corpus files. Only the members the manifest
 /// names are ever extracted.
 #[derive(Debug, Clone, PartialEq, Eq)]

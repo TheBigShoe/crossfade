@@ -4,10 +4,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{Cache, Downloader, Event, Manifest, Outcome, Problem, Received, Summary, fetch, seed};
+use crate::{Cache, Downloader, Event, Manifest, Outcome, Problem, Summary, fetch, seed, selected};
 
 const USAGE: &str = "usage: crossfade-corpus [--manifest <path>] [--dir <path>] \
-<fetch [--only <id-prefix>] | verify | list | seed --from <dir> | path <id>>";
+<fetch | verify | list | seed --from <dir-or-archive> | path <id>> [--only <id-prefix>]...";
 
 /// Where the manifest and cache live when no flag says otherwise.
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct Defaults {
 struct Args {
     manifest: Option<PathBuf>,
     dir: Option<PathBuf>,
-    only: Option<String>,
+    only: Vec<String>,
     from: Option<PathBuf>,
     positional: Vec<String>,
 }
@@ -37,7 +37,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         match a.as_str() {
             "--manifest" => parsed.manifest = Some(value(a)?.into()),
             "--dir" => parsed.dir = Some(value(a)?.into()),
-            "--only" => parsed.only = Some(value(a)?),
+            "--only" => parsed.only.push(value(a)?),
             "--from" => parsed.from = Some(value(a)?.into()),
             f if f.starts_with("--") => return Err(format!("unknown option {f}")),
             _ => parsed.positional.push(a.clone()),
@@ -96,7 +96,10 @@ pub fn run(
             return 2;
         }
     };
-    if args.positional.len() != wanted_args || (command == "seed" && args.from.is_none()) {
+    if args.positional.len() != wanted_args
+        || (command == "seed" && args.from.is_none())
+        || (command == "path" && !args.only.is_empty())
+    {
         let _ = writeln!(err, "{USAGE}");
         return 2;
     }
@@ -112,24 +115,24 @@ pub fn run(
 
     match command {
         "fetch" => {
-            let summary = fetch(
-                &manifest,
-                &cache,
-                downloader,
-                args.only.as_deref(),
-                &mut |ev| {
-                    let _ = match ev {
-                        Event::Starting(e) => {
-                            writeln!(err, "fetching {} ({} bytes)", e.id, e.bytes)
-                        }
-                        Event::Finished(e, Outcome::Skipped) => writeln!(err, "skip {}", e.id),
-                        Event::Finished(e, Outcome::Fetched) => writeln!(err, "ok {}", e.id),
-                        Event::Finished(e, Outcome::Failed(why)) => {
-                            writeln!(err, "FAIL {}: {why}", e.id)
-                        }
-                    };
-                },
-            );
+            let summary = fetch(&manifest, &cache, downloader, &args.only, &mut |ev| {
+                let _ = match ev {
+                    Event::Starting(e) if e.url().is_none() => {
+                        writeln!(err, "extracting {} ({} bytes)", e.id, e.bytes)
+                    }
+                    Event::Starting(e) => {
+                        writeln!(err, "fetching {} ({} bytes)", e.id, e.bytes)
+                    }
+                    Event::Archive(a) => {
+                        writeln!(err, "fetching archive {} ({} bytes)", a.id, a.bytes)
+                    }
+                    Event::Finished(e, Outcome::Skipped) => writeln!(err, "skip {}", e.id),
+                    Event::Finished(e, Outcome::Fetched) => writeln!(err, "ok {}", e.id),
+                    Event::Finished(e, Outcome::Failed(why)) => {
+                        writeln!(err, "FAIL {}: {why}", e.id)
+                    }
+                };
+            });
             // Failures were already printed per file above.
             let _ = writeln!(
                 err,
@@ -142,11 +145,15 @@ pub fn run(
         }
         "seed" => {
             let from = args.from.as_deref().unwrap_or(Path::new("."));
-            report(&seed(&manifest, &cache, from), err)
+            report(&seed(&manifest, &cache, from, &args.only), err)
         }
         "verify" => {
             let (mut ok, mut missing, mut invalid) = (0, 0, 0);
-            for e in manifest.entries() {
+            for e in manifest
+                .entries()
+                .iter()
+                .filter(|e| selected(&e.id, &args.only))
+            {
                 match cache.verify(e) {
                     Ok(()) => ok += 1,
                     Err(p) => {
@@ -166,7 +173,11 @@ pub fn run(
             i32::from(missing + invalid > 0)
         }
         "list" => {
-            for e in manifest.entries() {
+            for e in manifest
+                .entries()
+                .iter()
+                .filter(|e| selected(&e.id, &args.only))
+            {
                 let _ = writeln!(
                     out,
                     "{:<18} {:>10} {:<16} {}",
@@ -197,6 +208,7 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Received;
     use crate::testutil::{entry, temp_dir};
     use std::path::Path;
 
