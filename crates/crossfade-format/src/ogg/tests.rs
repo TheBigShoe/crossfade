@@ -357,7 +357,12 @@ fn vorbis_and_opus_are_recognised_and_handed_to_their_mappings() {
 #[test]
 fn the_first_flac_vorbis_or_opus_stream_is_chosen() {
     let first = |serial: u32, prefix: &[u8]| {
-        testutil::pages(serial, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255])
+        testutil::pages(
+            serial,
+            0,
+            &[fake_first_packet(prefix), vec![1; 10]],
+            &[1, 255],
+        )
     };
     let flac = stream_pages("stereo16", 1001, &[255]);
     let skeleton = first(1, b"fishead\0");
@@ -389,9 +394,13 @@ fn the_chosen_stream_reaches_its_mapping_after_the_beginning_pages() {
         vorbis[0].clone(),
         theora[1].clone(),
         vorbis[1].clone(),
+        vorbis[2].clone(),
     ];
-    let (mapping, mut stream) =
-        choose(Box::new(Cursor::new(testutil::bytes(&pages))), &Limits::default()).unwrap();
+    let (mapping, mut stream) = choose(
+        Box::new(Cursor::new(testutil::bytes(&pages))),
+        &Limits::default(),
+    )
+    .unwrap();
     assert_eq!(mapping, Mapping::Vorbis);
     assert_eq!((stream.serial, &stream.id), (6, &id));
     let mut p = Vec::new();

@@ -165,6 +165,20 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
     let mut io = MemoryIo::new();
     io.insert("song.ogg", ogg_page(b"\x01vorbis\0\0\0\0"));
     io.insert("odd.ogg", ogg_page(b"mystery!"));
+    io.insert("talk.opus", ogg_page(b"OpusHead\x01\x02\0\0"));
+    io.insert("film.ogv", ogg_page(b"\x80theora\0\0\0\0"));
+    for (path, holds) in [("talk.opus", "Opus audio"), ("film.ogv", "Theora video")] {
+        let InputState::Failed(text) = probe_path(path, &mut io, &Limits::default()) else {
+            panic!("expected Failed");
+        };
+        assert_eq!(
+            text,
+            format!(
+                "This Ogg file holds {holds}, which Crossfade cannot open yet. \
+                 Only FLAC inside Ogg can be opened."
+            )
+        );
+    }
     let InputState::Failed(vorbis) = probe_path("song.ogg", &mut io, &Limits::default()) else {
         panic!("expected Failed");
     };

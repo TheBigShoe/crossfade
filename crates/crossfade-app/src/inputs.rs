@@ -53,10 +53,12 @@ fn refusal(error: &Error) -> String {
     let Error::Unsupported { what } = error else {
         return error.to_string();
     };
-    let Some(codec) = what
+    // A codec with no mapping, or one whose reader is not built yet.
+    let codec = what
         .strip_prefix("ogg stream holds ")
         .and_then(|rest| rest.split(';').next())
-    else {
+        .or_else(|| what.strip_suffix(" in ogg is recognised, but reading it is not built yet"));
+    let Some(codec) = codec else {
         return plain(what);
     };
     let holds = match codec {

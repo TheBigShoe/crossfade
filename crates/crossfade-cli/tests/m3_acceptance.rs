@@ -1210,9 +1210,12 @@ fn an_ogg_vorbis_input_is_identified_and_refused() {
     d.write("in.ogg", &ogg_vorbis());
     d.refused(
         &["convert", "in.ogg", "-o", "out.wav"],
-        "ogg stream holds vorbis",
+        "vorbis in ogg is recognised, but reading it is not built yet",
     );
-    d.refused(&["probe", "in.ogg"], "ogg stream holds vorbis");
+    d.refused(
+        &["probe", "in.ogg"],
+        "vorbis in ogg is recognised, but reading it is not built yet",
+    );
 }
 
 #[test]
