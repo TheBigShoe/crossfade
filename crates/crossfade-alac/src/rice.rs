@@ -126,7 +126,12 @@ mod tests {
         kb: 14,
     };
 
-    fn decoded(bytes: &[u8], params: Params, chan_bits: u32, n: usize) -> Result<(Vec<i32>, usize)> {
+    fn decoded(
+        bytes: &[u8],
+        params: Params,
+        chan_bits: u32,
+        n: usize,
+    ) -> Result<(Vec<i32>, usize)> {
         let mut bits = Bits::new(bytes);
         let mut out = vec![7; n];
         decode(&mut bits, params, chan_bits, &mut out)?;
@@ -188,7 +193,10 @@ mod tests {
             decoded(&w.bytes, p, 16, 5),
             Err(Error::Malformed("run of zeros past the end of the frame"))
         );
-        assert_eq!(decoded(&[0xFF, 0xFF], AFCONVERT, 16, 1), Err(Error::UnexpectedEnd));
+        assert_eq!(
+            decoded(&[0xFF, 0xFF], AFCONVERT, 16, 1),
+            Err(Error::UnexpectedEnd)
+        );
         assert_eq!(decoded(&[], AFCONVERT, 16, 1), Err(Error::UnexpectedEnd));
     }
 
@@ -206,7 +214,8 @@ mod tests {
                 1 => -300i32..=300,
                 1 => min..=max,
             ];
-            let in_range = prop::collection::vec(value.prop_map(move |v| v.clamp(min, max)), 1..600);
+            let in_range =
+                prop::collection::vec(value.prop_map(move |v| v.clamp(min, max)), 1..600);
             (in_range, Just(bits))
         })
     }

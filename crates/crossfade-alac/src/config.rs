@@ -194,7 +194,10 @@ mod tests {
             Config::parse(&c.write())
         };
         let bad = |what| Err(Error::InvalidConfig(what));
-        assert_eq!(Config::parse(&AFCONVERT[..23]), bad("shorter than 24 bytes"));
+        assert_eq!(
+            Config::parse(&AFCONVERT[..23]),
+            bad("shorter than 24 bytes")
+        );
         assert_eq!(
             with(|c| c.compatible_version = 1),
             bad("compatible version is not 0")
@@ -229,7 +232,8 @@ mod tests {
             c.kb = kb;
             assert_eq!(Config::parse(&c.write()), bad("kb is not between 1 and 31"));
         }
-        for (depth, channels, frame_length) in [(20, 1, 1), (24, 8, MAX_FRAME_LENGTH), (32, 5, 4096)]
+        for (depth, channels, frame_length) in
+            [(20, 1, 1), (24, 8, MAX_FRAME_LENGTH), (32, 5, 4096)]
         {
             let mut c = afconvert();
             (c.bit_depth, c.channels, c.frame_length) = (depth, channels, frame_length);

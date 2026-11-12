@@ -39,7 +39,7 @@ impl BitWriter {
 /// quotient in unary (ones, then a zero), then `k - 1` zero bits for `r == 0` or `r + 1` in `k`
 /// bits; a quotient of 9 or more is nine ones and `n` in `escape` bits.
 fn put_rice(w: &mut BitWriter, n: u32, m: u32, k: u32, escape: u32) {
-    let q = if m == 0 { 9 } else { n / m };
+    let q = n.checked_div(m).unwrap_or(9);
     if q >= 9 {
         w.put(9, 0x1FF);
         w.put(escape, u64::from(n));
@@ -115,14 +115,22 @@ pub(crate) fn predict(x: &[i32], coefs: &mut [i16], chan_bits: u32, den_shift: u
         return x.to_vec();
     }
     let mut r = vec![x[0]];
-    let warm = if order == 31 { x.len() - 1 } else { order.min(x.len() - 1) };
+    let warm = if order == 31 {
+        x.len() - 1
+    } else {
+        order.min(x.len() - 1)
+    };
     for j in 1..=warm {
         r.push(sign_extend(x[j].wrapping_sub(x[j - 1]), chan_bits));
     }
     if order == 31 {
         return r;
     }
-    let den_half = if den_shift == 0 { 0 } else { 1i32 << (den_shift - 1) };
+    let den_half = if den_shift == 0 {
+        0
+    } else {
+        1i32 << (den_shift - 1)
+    };
     for j in order + 1..x.len() {
         let top = x[j - order - 1];
         let mut sum = 0i32;

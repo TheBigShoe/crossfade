@@ -61,7 +61,10 @@ fn an_uncompressed_mono_frame() {
     for s in [1i16, -2, i16::MIN] {
         w.put(16, u64::from(s as u16));
     }
-    assert_eq!(decode(config(16, 1, 4096), &end(&mut w)), Ok(vec![1, -2, -32768]));
+    assert_eq!(
+        decode(config(16, 1, 4096), &end(&mut w)),
+        Ok(vec![1, -2, -32768])
+    );
 }
 
 #[test]
@@ -179,7 +182,10 @@ fn samples_wrap_to_the_stream_depth() {
     head(&mut w, SCE, Some(2), 0, true);
     w.put(20, 0xF_FFFF);
     w.put(20, 0x7_FFFF);
-    assert_eq!(decode(config(20, 1, 4096), &end(&mut w)), Ok(vec![-1, 0x7_FFFF]));
+    assert_eq!(
+        decode(config(20, 1, 4096), &end(&mut w)),
+        Ok(vec![-1, 0x7_FFFF])
+    );
 }
 
 #[test]
@@ -243,7 +249,10 @@ fn broken_packets_are_errors() {
     }
     let mut w = BitWriter::default();
     w.put(3, u64::from(END));
-    assert_eq!(fails(c, &mut w), Error::Malformed("packet ends before every channel"));
+    assert_eq!(
+        fails(c, &mut w),
+        Error::Malformed("packet ends before every channel")
+    );
     let mut w = BitWriter::default();
     head(&mut w, CPE, Some(1), 0, true);
     w.put(32, 0);
@@ -258,7 +267,10 @@ fn broken_packets_are_errors() {
     w.put(4, 0);
     w.put(12, 1);
     w.put(4, 0);
-    assert_eq!(fails(c, &mut w), Error::Malformed("reserved header bits are set"));
+    assert_eq!(
+        fails(c, &mut w),
+        Error::Malformed("reserved header bits are set")
+    );
     let mut w = BitWriter::default();
     head(&mut w, CPE, Some(9), 0, true);
     assert_eq!(

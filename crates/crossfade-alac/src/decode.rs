@@ -104,7 +104,36 @@ impl Decoder {
     }
 
     fn decode_into(&mut self, packet: &[u8], out: &mut Vec<i32>) -> Result<usize> {
-        let _ = (packet, out, Error::UnexpectedEnd); Ok(0)
+        let channels = usize::from(self.config.channels);
+        out.resize(self.config.frame_length as usize * channels, 0);
+        let mut bits = Bits::new(packet);
+        let mut ch = 0;
+        let mut frames = None;
+        while ch < channels {
+            match bits.read(3)? {
+                SCE | LFE => {
+                    self.mono(&mut bits, ch, &mut frames, out)?;
+                    ch += 1;
+                }
+                CPE => {
+                    if ch + 2 > channels {
+                        return Err(Error::Malformed("more channels than the config has"));
+                    }
+                    self.pair(&mut bits, ch, &mut frames, out)?;
+                    ch += 2;
+                }
+                DSE => skip_data_stream(&mut bits)?,
+                FIL => skip_fill(&mut bits)?,
+                END => break,
+                CCE => return Err(Error::Unsupported("a coupling channel element")),
+                PCE => return Err(Error::Unsupported("a program config element")),
+                _ => unreachable!("a 3-bit tag"),
+            }
+        }
+        if ch < channels {
+            return Err(Error::Malformed("packet ends before every channel"));
+        }
+        Ok(frames.unwrap_or(0))
     }
 
     /// The element header after the tag; every element of a packet must give the same length.
@@ -121,7 +150,9 @@ impl Decoder {
             self.config.frame_length as usize
         };
         if num > self.config.frame_length as usize {
-            return Err(Error::Malformed("frame longer than the config's frame length"));
+            return Err(Error::Malformed(
+                "frame longer than the config's frame length",
+            ));
         }
         if frames.is_some_and(|f| f != num) {
             return Err(Error::Malformed("elements of one packet differ in length"));
@@ -235,7 +266,7 @@ impl Decoder {
             // The side channel needs one bit more than the samples.
             let chan_bits = depth - shift_bytes * 8 + 1;
             mix_bits = bits.read(8)?;
-            mix_res = bits.read(8)? as u8 as i8 as i32;
+            mix_res = i32::from(bits.read(8)? as u8 as i8);
             let mut cu = Channel::read(bits)?;
             let mut cv = Channel::read(bits)?;
             shift_pos = bits.position();
