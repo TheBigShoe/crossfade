@@ -165,48 +165,54 @@ impl Book {
         self
     }
 
-    /// The codeword of every entry, assigned as the specification says (the lowest free
-    /// codeword of the entry's length, in entry order), found by walking the code tree: this
-    /// is deliberately not the decoder's algorithm.
+    /// The codeword of every entry, assigned as the specification says (the lowest codeword
+    /// of the entry's length that neither prefixes nor extends one already given, in entry
+    /// order): each codeword is a block of the interval [0, 2^32), and this finds the lowest
+    /// free aligned block. Deliberately not the decoder's algorithm. `None` for an unused
+    /// entry or one that no longer fits (an overspecified tree).
     pub fn codewords(&self) -> Vec<Option<(u32, u8)>> {
-        let mut taken: Vec<(u32, u8)> = Vec::new();
-        let conflicts = |code: u32, len: u8, taken: &[(u32, u8)]| {
-            taken.iter().any(|&(c, l)| {
-                let l2 = l.min(len);
-                (u64::from(c) >> (l - l2)) == (u64::from(code) >> (len - l2))
-            })
-        };
-        fn find(
-            prefix: u32,
-            depth: u8,
-            len: u8,
-            taken: &[(u32, u8)],
-            conflicts: &dyn Fn(u32, u8, &[(u32, u8)]) -> bool,
-        ) -> Option<u32> {
-            // A taken codeword above this node, or (at the target depth) below it.
-            if taken
-                .iter()
-                .any(|&(c, l)| l <= depth && (u64::from(prefix) >> (depth - l)) == u64::from(c))
-            {
-                return None;
-            }
-            if depth == len {
-                return (!conflicts(prefix, len, taken)).then_some(prefix);
-            }
-            find(prefix << 1, depth + 1, len, taken, conflicts)
-                .or_else(|| find((prefix << 1) | 1, depth + 1, len, taken, conflicts))
-        }
+        use std::collections::BTreeMap;
+        // Taken space as disjoint, non-adjacent [start, end) intervals, by start.
+        let mut taken: BTreeMap<u64, u64> = BTreeMap::new();
         self.lengths
             .iter()
             .map(|&len| {
                 if len == 0 {
                     return None;
                 }
-                let code = find(0, 0, len, &taken, &conflicts)?;
-                taken.push((code, len));
-                Some((code, len))
+                let size = 1u64 << (32 - u32::from(len));
+                let mut at = 0u64;
+                let start = loop {
+                    let cand = at.div_ceil(size) * size;
+                    if cand + size > 1 << 32 {
+                        return None;
+                    }
+                    match taken.range(..cand + size).next_back() {
+                        Some((_, &end)) if end > cand => at = end,
+                        _ => break cand,
+                    }
+                };
+                let mut lo = start;
+                let mut hi = start + size;
+                if let Some((&s, &e)) = taken.range(..lo).next_back()
+                    && e == lo
+                {
+                    taken.remove(&s);
+                    lo = s;
+                }
+                if let Some(e) = taken.remove(&hi) {
+                    hi = e;
+                }
+                taken.insert(lo, hi);
+                Some(((start / size) as u32, len))
             })
             .collect()
+    }
+
+    /// Writes `entry` with codewords from [`codewords`](Self::codewords); panics if it has none.
+    pub fn encode_with(words: &[Option<(u32, u8)>], w: &mut BitWriter, entry: u32) {
+        let (code, len) = words[entry as usize].expect("entry has a codeword");
+        w.put_codeword(code, len);
     }
 
     /// Writes the codeword of `entry`; panics if it has none.

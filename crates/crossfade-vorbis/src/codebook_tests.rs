@@ -24,9 +24,10 @@ fn malformed(r: Result<Codebook>) -> String {
 /// Encodes `entries` with the writer and decodes them back.
 fn round_trip(book: &Book, entries: &[u32]) {
     let cb = parse(book).unwrap();
+    let words = book.codewords();
     let mut w = BitWriter::new();
     for &e in entries {
-        book.encode(&mut w, e);
+        Book::encode_with(&words, &mut w, e);
     }
     let bits = w.bits();
     let bytes = w.into_bytes();
@@ -180,7 +181,9 @@ fn values(cb: &Codebook, entry: u32, book: &Book) -> Vec<f32> {
     let mut w = BitWriter::new();
     book.encode(&mut w, entry);
     let bytes = w.into_bytes();
-    cb.decode_vector(&mut BitReader::new(&bytes)).unwrap().to_vec()
+    cb.decode_vector(&mut BitReader::new(&bytes))
+        .unwrap()
+        .to_vec()
 }
 
 #[test]
@@ -197,10 +200,7 @@ fn lookup_type_1_is_a_lattice_and_sequence_p_accumulates() {
     };
     let cb = parse(&book).unwrap();
     for e in 0..9u32 {
-        let want = [
-            (e % 3) as f32 * 0.5 - 1.0,
-            (e / 3) as f32 * 0.5 - 1.0,
-        ];
+        let want = [(e % 3) as f32 * 0.5 - 1.0, (e / 3) as f32 * 0.5 - 1.0];
         assert_eq!(values(&cb, e, &book), want, "entry {e}");
     }
     if let Lookup::Values { sequence, .. } = &mut book.lookup {
@@ -295,7 +295,10 @@ fn ordered_lengths_cannot_overrun_or_promise_impossible_runs() {
     w.put(1, 5);
     w.put(5, 3);
     let bytes = w.into_bytes();
-    let err = malformed(Codebook::parse(&mut BitReader::new(&bytes), &mut Budget::new(1000)));
+    let err = malformed(Codebook::parse(
+        &mut BitReader::new(&bytes),
+        &mut Budget::new(1000),
+    ));
     assert!(err.contains("length"), "{err}");
     // A run longer than the entries left.
     let mut w = BitWriter::new();
@@ -306,7 +309,10 @@ fn ordered_lengths_cannot_overrun_or_promise_impossible_runs() {
     w.put(2, 5);
     w.put(6, 3);
     let bytes = w.into_bytes();
-    let err = malformed(Codebook::parse(&mut BitReader::new(&bytes), &mut Budget::new(1000)));
+    let err = malformed(Codebook::parse(
+        &mut BitReader::new(&bytes),
+        &mut Budget::new(1000),
+    ));
     assert!(err.contains("entries"), "{err}");
     // Lengths running past 32.
     let mut w = BitWriter::new();
@@ -318,7 +324,10 @@ fn ordered_lengths_cannot_overrun_or_promise_impossible_runs() {
     w.put(0, 1);
     w.put(0, 1);
     let bytes = w.into_bytes();
-    let err = malformed(Codebook::parse(&mut BitReader::new(&bytes), &mut Budget::new(1000)));
+    let err = malformed(Codebook::parse(
+        &mut BitReader::new(&bytes),
+        &mut Budget::new(1000),
+    ));
     assert!(err.contains("length"), "{err}");
 }
 
@@ -347,11 +356,11 @@ fn the_budget_is_checked_before_the_tables_are_built() {
         }
         other => panic!("{:?}", other.err()),
     }
-    // Lengths for 2^24 entries are charged before they are read.
+    // Lengths for 2^23 entries are charged before they are read.
     let mut w = BitWriter::new();
     w.put(0x56_4342, 24);
     w.put(1, 16);
-    w.put((1 << 24) - 1, 24);
+    w.put((1 << 23) - 1, 24);
     w.put_bit(true);
     w.put(0, 5);
     let bytes = w.into_bytes();
@@ -380,5 +389,10 @@ fn what_a_codebook_holds_never_exceeds_what_the_budget_was_charged() {
     let bytes = w.into_bytes();
     let mut budget = Budget::new(usize::MAX);
     let cb = Codebook::parse(&mut BitReader::new(&bytes), &mut budget).unwrap();
-    assert!(cb.heap_bytes() <= budget.used(), "{} > {}", cb.heap_bytes(), budget.used());
+    assert!(
+        cb.heap_bytes() <= budget.used(),
+        "{} > {}",
+        cb.heap_bytes(),
+        budget.used()
+    );
 }
