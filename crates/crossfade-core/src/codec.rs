@@ -17,6 +17,12 @@ pub enum CodecId {
     PcmF32Be,
     PcmF64Be,
     Flac,
+    Vorbis,
+    Opus,
+    /// MPEG-1/2 Audio Layer III (layers I and II decode through the same codec).
+    Mp3,
+    Aac,
+    Alac,
 }
 
 impl CodecId {
@@ -36,6 +42,11 @@ impl CodecId {
             Self::PcmF32Be => "pcm_f32be",
             Self::PcmF64Be => "pcm_f64be",
             Self::Flac => "flac",
+            Self::Vorbis => "vorbis",
+            Self::Opus => "opus",
+            Self::Mp3 => "mp3",
+            Self::Aac => "aac",
+            Self::Alac => "alac",
         }
     }
 
@@ -54,6 +65,11 @@ impl CodecId {
             "pcm_f32be" => Self::PcmF32Be,
             "pcm_f64be" => Self::PcmF64Be,
             "flac" => Self::Flac,
+            "vorbis" => Self::Vorbis,
+            "opus" => Self::Opus,
+            "mp3" => Self::Mp3,
+            "aac" => Self::Aac,
+            "alac" => Self::Alac,
             _ => return None,
         })
     }
@@ -94,8 +110,15 @@ impl CodecId {
             Self::PcmS32Le | Self::PcmS32Be => SampleFormat::S32,
             Self::PcmF32Le | Self::PcmF32Be => SampleFormat::F32,
             Self::PcmF64Le | Self::PcmF64Be => SampleFormat::F64,
-            Self::Flac => return None,
+            Self::Flac | Self::Vorbis | Self::Opus | Self::Mp3 | Self::Aac | Self::Alac => {
+                return None;
+            }
         })
+    }
+
+    /// A perceptual codec: it has no bit depth, and its decoder emits `F32`.
+    pub fn is_lossy(self) -> bool {
+        matches!(self, Self::Vorbis | Self::Opus | Self::Mp3 | Self::Aac)
     }
 }
 
