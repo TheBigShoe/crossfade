@@ -19,4 +19,7 @@ pub use fetch::{
 };
 
 pub use manifest::{Archive, ArchiveFormat, Entry, Expect, Manifest, ManifestError, Source};
-pub use require::{RequireError, require, require_from, try_require, workspace_root};
+pub use require::{
+    RequireError, require, require_all, require_all_from, require_from, try_require,
+    try_require_all, workspace_root,
+};

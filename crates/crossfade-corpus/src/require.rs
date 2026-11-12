@@ -10,6 +10,8 @@ use crate::{Cache, Manifest, Problem};
 #[derive(Debug)]
 pub enum RequireError {
     UnknownId(String),
+    /// No listed id starts with the prefix (a typo would otherwise pass for "no files").
+    NoMatch(String),
     Unusable {
         id: String,
         path: PathBuf,
@@ -21,6 +23,9 @@ impl fmt::Display for RequireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownId(id) => write!(f, "corpus id `{id}` is not listed in corpus.toml"),
+            Self::NoMatch(prefix) => {
+                write!(f, "no corpus id in corpus.toml starts with `{prefix}`")
+            }
             Self::Unusable { id, path, problem } => write!(
                 f,
                 "corpus file `{id}` is unusable ({problem}) at {}; run `just corpus` to fetch the \
@@ -65,6 +70,36 @@ pub fn try_require(manifest: &Manifest, cache: &Cache, id: &str) -> Result<PathB
     Ok(path)
 }
 
+/// Every file whose id starts with `prefix`, as `(id, verified path)` in
+/// manifest order.
+pub fn try_require_all(
+    manifest: &Manifest,
+    cache: &Cache,
+    prefix: &str,
+) -> Result<Vec<(String, PathBuf)>, RequireError> {
+    let ids: Vec<&str> = manifest
+        .entries()
+        .iter()
+        .map(|e| e.id.as_str())
+        .filter(|id| id.starts_with(prefix))
+        .collect();
+    if ids.is_empty() {
+        return Err(RequireError::NoMatch(prefix.to_string()));
+    }
+    ids.into_iter()
+        .map(|id| Ok((id.to_string(), try_require(manifest, cache, id)?)))
+        .collect()
+}
+
+/// Like [`try_require_all`] but panics, like [`require_from`].
+pub fn require_all_from(
+    manifest: &Manifest,
+    cache: &Cache,
+    prefix: &str,
+) -> Vec<(String, PathBuf)> {
+    try_require_all(manifest, cache, prefix).unwrap_or_else(|e| panic!("{e}"))
+}
+
 /// Like [`try_require`] but panics: a missing corpus must fail the
 /// conformance tier, never skip it.
 pub fn require_from(manifest: &Manifest, cache: &Cache, id: &str) -> PathBuf {
@@ -79,6 +114,16 @@ pub fn require(id: &str) -> PathBuf {
         .unwrap_or_else(|e| panic!("{e}; run `just corpus` from a complete checkout"));
     let dir = Cache::dir_from_env(&root);
     require_from(&manifest, &Cache::new(dir), id)
+}
+
+/// Every corpus file under `prefix` (say `"opus/rfc8251/"`), verified, from
+/// the workspace's manifest and default cache. Panics when any is absent.
+pub fn require_all(prefix: &str) -> Vec<(String, PathBuf)> {
+    let root = workspace_root();
+    let manifest = Manifest::load(&root.join("corpus.toml"))
+        .unwrap_or_else(|e| panic!("{e}; run `just corpus` from a complete checkout"));
+    let dir = Cache::dir_from_env(&root);
+    require_all_from(&manifest, &Cache::new(dir), prefix)
 }
 
 #[cfg(test)]
