@@ -289,17 +289,17 @@ fn fake_first_packet(prefix: &[u8]) -> Vec<u8> {
 #[test]
 fn another_stream_in_the_same_file_is_skipped_wherever_it_sits() {
     let flac = stream_pages("stereo16", 1001, &[255]);
-    let vorbis = testutil::pages(
+    let theora = testutil::pages(
         77,
         0,
-        &[fake_first_packet(b"\x01vorbis"), vec![5; 600]],
+        &[fake_first_packet(b"\x80theora"), vec![5; 600]],
         &[1, 2],
     );
     for flac_first in [true, false] {
         let (a, b) = if flac_first {
-            (&flac, &vorbis)
+            (&flac, &theora)
         } else {
-            (&vorbis, &flac)
+            (&theora, &flac)
         };
         let mut mixed = vec![a[0].clone(), b[0].clone()];
         let (mut ra, mut rb) = (a[1..].iter(), b[1..].iter());
@@ -340,11 +340,82 @@ fn the_first_flac_stream_wins_when_there_are_two() {
 }
 
 #[test]
-fn a_stream_that_is_not_flac_is_refused_by_name() {
+fn vorbis_and_opus_are_recognised_and_handed_to_their_mappings() {
+    for (prefix, name) in [(&b"\x01vorbis"[..], "vorbis"), (b"OpusHead", "opus")] {
+        let pages = testutil::pages(1, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255]);
+        match open_bytes(testutil::bytes(&pages)) {
+            Err(Error::Unsupported { what }) => assert_eq!(
+                what,
+                format!("{name} in ogg is recognised, but reading it is not built yet")
+            ),
+            other => panic!("{name}: {:?}", other.err()),
+        }
+    }
+}
+
+/// The first stream, in page order, whose codec has a mapping is the one read.
+#[test]
+fn the_first_flac_vorbis_or_opus_stream_is_chosen() {
+    let first = |serial: u32, prefix: &[u8]| {
+        testutil::pages(serial, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255])
+    };
+    let flac = stream_pages("stereo16", 1001, &[255]);
+    let skeleton = first(1, b"fishead\0");
+    let theora = first(2, b"\x80theora");
+    let vorbis = first(3, b"\x01vorbis");
+    let opus = first(4, b"OpusHead");
+    let bos = |streams: &[&Vec<RawPage>]| {
+        let mut pages: Vec<RawPage> = streams.iter().map(|s| s[0].clone()).collect();
+        pages.extend(streams.iter().flat_map(|s| s[1..].iter().cloned()));
+        open_bytes(testutil::bytes(&pages)).map(|d| d.streams()[0].codec)
+    };
+    let refused = |name: &str| {
+        Err(Error::Unsupported {
+            what: format!("{name} in ogg is recognised, but reading it is not built yet"),
+        })
+    };
+    assert_eq!(bos(&[&skeleton, &vorbis, &flac]), refused("vorbis"));
+    assert_eq!(bos(&[&theora, &opus, &vorbis, &flac]), refused("opus"));
+    assert_eq!(bos(&[&skeleton, &theora, &flac, &opus]), Ok(CodecId::Flac));
+}
+
+#[test]
+fn the_chosen_stream_reaches_its_mapping_after_the_beginning_pages() {
+    let theora = testutil::pages(5, 0, &[fake_first_packet(b"\x80theora"), vec![9; 40]], &[1]);
+    let id = fake_first_packet(b"\x01vorbis");
+    let vorbis = testutil::pages(6, 0, &[id.clone(), vec![1; 300], vec![2; 7]], &[1, 2]);
+    let pages = [
+        theora[0].clone(),
+        vorbis[0].clone(),
+        theora[1].clone(),
+        vorbis[1].clone(),
+    ];
+    let (mapping, mut stream) =
+        choose(Box::new(Cursor::new(testutil::bytes(&pages))), &Limits::default()).unwrap();
+    assert_eq!(mapping, Mapping::Vorbis);
+    assert_eq!((stream.serial, &stream.id), (6, &id));
+    let mut p = Vec::new();
+    assert!(stream.packets.next_packet(&mut p).unwrap());
+    assert_eq!(p, [1; 300]);
+    assert!(stream.packets.next_packet(&mut p).unwrap());
+    assert_eq!(p, [2; 7]);
+    assert!(!stream.packets.next_packet(&mut p).unwrap());
+}
+
+#[test]
+fn a_vorbis_first_page_with_more_than_its_identification_packet_is_malformed() {
+    let packets = [fake_first_packet(b"\x01vorbis"), vec![1; 10]];
+    let pages = testutil::pages(1, 0, &packets, &[2]);
+    assert_eq!(
+        malformed(open_bytes(testutil::bytes(&pages)).map(|_| ())),
+        "ogg vorbis first page holds more than the identification packet"
+    );
+}
+
+#[test]
+fn a_stream_that_is_not_flac_vorbis_or_opus_is_refused_by_name() {
     for (prefix, name) in [
-        (&b"\x01vorbis"[..], "vorbis"),
-        (b"OpusHead", "opus"),
-        (b"\x80theora", "theora"),
+        (&b"\x80theora"[..], "theora"),
         (b"Speex   ", "speex"),
         (b"fishead\0", "skeleton"),
         (b"mystery!", "unknown"),
@@ -353,7 +424,7 @@ fn a_stream_that_is_not_flac_is_refused_by_name() {
         match open_bytes(testutil::bytes(&pages)) {
             Err(Error::Unsupported { what }) => assert_eq!(
                 what,
-                format!("ogg stream holds {name}; only flac in ogg can be read so far")
+                format!("ogg stream holds {name}; only flac, vorbis and opus in ogg can be read")
             ),
             other => panic!("{name}: {:?}", other.err()),
         }
