@@ -57,7 +57,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
 | `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
-| `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest, fetch/seed/verify into `.corpus-cache`, `require(id)` for tier-3 tests (not an engine crate) |
+| `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest (single files and `[[archive]]` members; `expect = "data"` for reference files), fetch/seed/verify into `.corpus-cache` (`--only <id prefix>`, repeatable), `require(id)` and `require_all(prefix)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
 
 Format rules worth knowing before touching a codec or container: decoders
@@ -178,7 +178,7 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 
 ```sh
 just ci        # fmt-check + clippy -D warnings + cargo test --workspace + just conformance
-just corpus    # once per clone: fetch the conformance files (needs curl and the network)
+just corpus    # once per clone: fetch every conformance file, FLAC/Opus/Vorbis/MP3/AAC (~550 MB; needs curl and the network); one codec: crossfade-corpus fetch --only flac/
 just conformance  # tier 3, FLAC corpus vs the frozen results (needs the corpus, ~3 s)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)
