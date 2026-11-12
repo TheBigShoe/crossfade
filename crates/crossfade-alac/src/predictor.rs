@@ -18,13 +18,44 @@ pub(crate) fn unpredict(
     chan_bits: u32,
     den_shift: u32,
 ) {
-        let _ = (residual, out, coefs, chan_bits, den_shift);
+    let num = residual.len().min(out.len());
+    if num == 0 {
+        return;
     }
+    let (residual, out) = (&residual[..num], &mut out[..num]);
+    out[0] = residual[0];
+    let order = coefs.len();
+    if order == 0 {
+        out.copy_from_slice(residual);
+        return;
+    }
+    if order == FIRST_DIFFERENCE {
+        out.copy_from_slice(residual);
+        integrate(out, chan_bits);
+        return;
+    }
+    for j in 1..=order.min(num - 1) {
+        out[j] = sign_extend(residual[j].wrapping_add(out[j - 1]), chan_bits);
+    }
+    // The fixed orders let the compiler unroll the taps; the arithmetic is the same.
+    match coefs {
+        [_, _, _, _] => filter(residual, out, coefs, 4, chan_bits, den_shift),
+        [_, _, _, _, _, _, _, _] => filter(residual, out, coefs, 8, chan_bits, den_shift),
+        _ => filter(residual, out, coefs, order, chan_bits, den_shift),
+    }
+}
 
 /// In place: each sample becomes itself plus the one before it, wrapped to `chan_bits`.
 pub(crate) fn integrate(buf: &mut [i32], chan_bits: u32) {
-        let _ = (buf, chan_bits);
+    let Some((&mut first, rest)) = buf.split_first_mut() else {
+        return;
+    };
+    let mut prev = first;
+    for v in rest {
+        prev = sign_extend(v.wrapping_add(prev), chan_bits);
+        *v = prev;
     }
+}
 
 #[inline(always)]
 fn filter(
