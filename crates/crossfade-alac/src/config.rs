@@ -37,16 +37,71 @@ impl Config {
     /// sample descriptions), and before it a `frma` atom (QuickTime's `wave` box). Bytes after
     /// the config (a `chan` atom in CAF) are ignored.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let _ = bytes; Err(Error::InvalidConfig("not built yet"))
+        let mut rest = bytes;
+        if rest.get(4..8) == Some(b"frma") {
+            rest = &rest[12.min(rest.len())..];
+        }
+        if rest.get(4..8) == Some(b"alac") {
+            rest = &rest[12.min(rest.len())..];
+        }
+        let b = rest
+            .get(..Self::LEN)
+            .ok_or(Error::InvalidConfig("shorter than 24 bytes"))?;
+        let u32_at = |i: usize| u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let config = Self {
+            frame_length: u32_at(0),
+            compatible_version: b[4],
+            bit_depth: b[5],
+            pb: b[6],
+            mb: b[7],
+            kb: b[8],
+            channels: b[9],
+            max_run: u16::from_be_bytes([b[10], b[11]]),
+            max_frame_bytes: u32_at(12),
+            avg_bit_rate: u32_at(16),
+            sample_rate: u32_at(20),
+        };
+        config.check()?;
+        Ok(config)
     }
 
     /// The 24 bytes `parse` reads.
     pub fn write(&self) -> [u8; Self::LEN] {
-        [0; Self::LEN]
+        let mut out = [0u8; Self::LEN];
+        out[..4].copy_from_slice(&self.frame_length.to_be_bytes());
+        out[4] = self.compatible_version;
+        out[5] = self.bit_depth;
+        out[6] = self.pb;
+        out[7] = self.mb;
+        out[8] = self.kb;
+        out[9] = self.channels;
+        out[10..12].copy_from_slice(&self.max_run.to_be_bytes());
+        out[12..16].copy_from_slice(&self.max_frame_bytes.to_be_bytes());
+        out[16..20].copy_from_slice(&self.avg_bit_rate.to_be_bytes());
+        out[20..].copy_from_slice(&self.sample_rate.to_be_bytes());
+        out
     }
 
     /// What a decoder needs to hold: the fields it reads, in range.
     pub fn check(&self) -> Result<()> {
+        if self.compatible_version != 0 {
+            return Err(Error::InvalidConfig("compatible version is not 0"));
+        }
+        if !(1..=MAX_FRAME_LENGTH).contains(&self.frame_length) {
+            return Err(Error::InvalidConfig(
+                "frame length is not between 1 and 1048576",
+            ));
+        }
+        if !matches!(self.bit_depth, 16 | 20 | 24 | 32) {
+            return Err(Error::InvalidConfig("bit depth is not 16, 20, 24 or 32"));
+        }
+        if !(1..=8).contains(&self.channels) {
+            return Err(Error::InvalidConfig("channel count is not between 1 and 8"));
+        }
+        // The coder takes `kb` bits of a remainder at most; 0 leaves it nothing to read.
+        if !(1..=31).contains(&self.kb) {
+            return Err(Error::InvalidConfig("kb is not between 1 and 31"));
+        }
         Ok(())
     }
 }
@@ -69,8 +124,19 @@ pub struct WaveLayout {
 /// mask of 0x60F into "L R C LFE Ls Rs" and 0x3F into "L R C LFE Rls Rrs"), Cs is back
 /// center and Lc/Rc are front left and right of center.
 pub fn wave_layout(channels: u8) -> Option<WaveLayout> {
-        let _ = channels; None
-    }
+    let (mask, from_alac): (u32, &'static [u8]) = match channels {
+        1 => (0x4, &[0]),
+        2 => (0x3, &[0, 1]),
+        3 => (0x7, &[1, 2, 0]),
+        4 => (0x107, &[1, 2, 0, 3]),
+        5 => (0x607, &[1, 2, 0, 3, 4]),
+        6 => (0x60F, &[1, 2, 0, 5, 3, 4]),
+        7 => (0x70F, &[1, 2, 0, 6, 5, 3, 4]),
+        8 => (0x6CF, &[3, 4, 0, 7, 1, 2, 5, 6]),
+        _ => return None,
+    };
+    Some(WaveLayout { mask, from_alac })
+}
 
 #[cfg(test)]
 mod tests {
