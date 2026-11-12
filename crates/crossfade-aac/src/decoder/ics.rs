@@ -158,14 +158,87 @@ impl Ics {
         if r.bit() {
             return Err(unsupported("gain control (AAC SSR) is not supported"));
         }
-        self.read_spectrum(r)?;
-        if let Some(p) = pulses {
-            p.apply(&mut self.quant)?;
+        match pulses {
+            // Pulses change the quantised values before inverse quantisation.
+            Some(p) => {
+                self.read_spectrum(r)?;
+                p.apply(&mut self.quant)?;
+                self.dequantise()?;
+            }
+            None => self.read_spectrum_dequantised(r)?,
         }
         if r.overrun() {
             return Err(malformed("channel stream runs past the end of its block"));
         }
-        self.dequantise()
+        Ok(())
+    }
+
+    /// Spectral data straight to the dequantised, de-interleaved spectrum: what
+    /// [`read_spectrum`](Self::read_spectrum) and [`dequantise`](Self::dequantise) do, in one
+    /// pass.
+    fn read_spectrum_dequantised(&mut self, r: &mut BitReader<'_>) -> Result<()> {
+        let books: &Books = books();
+        let pow43 = pow43();
+        let gains = gains();
+        let info = self.info;
+        self.spec.fill(0.0);
+        let mut window = 0;
+        for g in 0..info.num_groups {
+            let glen = info.group_len[g];
+            for b in 0..info.max_sfb {
+                let cb = self.band_cb[g][b];
+                if cb == ZERO_HCB || cb >= NOISE_HCB {
+                    continue;
+                }
+                let gain = gains[self.sf[g][b] as usize];
+                let (lo, hi) = (usize::from(info.swb[b]), usize::from(info.swb[b + 1]));
+                let book = &books.spectral[usize::from(cb) - 1];
+                let dim = book.shape.dim;
+                for w in 0..glen {
+                    let dst = (window + w) * 128 + lo;
+                    for out in self.spec[dst..dst + hi - lo].chunks_exact_mut(dim) {
+                        let sym = book.book.decode(r) as usize;
+                        let vals = &book.values[sym][..dim];
+                        let mut q = [0i32; 4];
+                        if book.shape.signed {
+                            for (q, &v) in q.iter_mut().zip(vals) {
+                                *q = i32::from(v);
+                            }
+                        } else {
+                            let nonzero = vals.iter().filter(|&&v| v != 0).count() as u32;
+                            // The sign bits of the nonzero values, first value first.
+                            let signs = r.read(nonzero);
+                            let mut left = nonzero;
+                            for (q, &v) in q.iter_mut().zip(vals) {
+                                *q = i32::from(v);
+                                if v != 0 {
+                                    left -= 1;
+                                    if (signs >> left) & 1 != 0 {
+                                        *q = -*q;
+                                    }
+                                }
+                            }
+                            if cb == ESC_HCB {
+                                for q in &mut q[..2] {
+                                    if q.abs() == 16 {
+                                        *q = q.signum() * escape(r)?;
+                                    }
+                                }
+                            }
+                        }
+                        for (o, &q) in out.iter_mut().zip(&q) {
+                            let m = pow43[q.unsigned_abs() as usize] * gain;
+                            *o = if q < 0 { -m } else { m };
+                        }
+                    }
+                }
+                if r.overrun() {
+                    return Err(malformed("spectral data runs past the end of the block"));
+                }
+            }
+            window += glen;
+        }
+        Ok(())
     }
 
     fn read_sections(&mut self, r: &mut BitReader<'_>) -> Result<()> {

@@ -48,13 +48,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut decoder = Decoder::new(&config)?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(output)?);
     let mut pcm = Vec::new();
+    let mut bytes = Vec::new();
     for (i, &(block, n)) in blocks.iter().enumerate() {
         decoder
             .decode_blocks(block, n, &mut pcm)
             .map_err(|e| format!("block {i}: {e}"))?;
-        for s in &pcm {
-            out.write_all(&s.to_le_bytes())?;
-        }
+        bytes.clear();
+        bytes.extend(pcm.iter().flat_map(|s| s.to_le_bytes()));
+        out.write_all(&bytes)?;
     }
     out.flush()?;
     eprintln!(

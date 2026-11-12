@@ -38,43 +38,70 @@ impl Imdct {
         }
     }
 
-    /// `out` (`2 * m` samples) from `spec` (`m` coefficients); `buf` is scratch of `m / 2`.
-    pub(crate) fn run(&self, spec: &[f32], out: &mut [f32], buf: &mut [(f32, f32)]) {
+    /// `out` (`2 * m` samples) from `spec` (`m` coefficients); `re` and `im` are scratch of
+    /// at least `m / 2`.
+    pub(crate) fn run(&self, spec: &[f32], out: &mut [f32], re: &mut [f32], im: &mut [f32]) {
         let m = self.m;
         let (q, h) = (m / 2, m / 2);
-        let buf = &mut buf[..q];
-        for (k, (b, &(c, s))) in buf.iter_mut().zip(&self.pre).enumerate() {
-            let (re, im) = (spec[2 * k], spec[m - 1 - 2 * k]);
-            *b = (re * c - im * s, re * s + im * c);
+        let (re, im) = (&mut re[..q], &mut im[..q]);
+        // Pre-twiddle of spec[2k] + i spec[m - 1 - 2k], written in bit-reversed order so the
+        // FFT needs no reordering pass.
+        let inputs = spec[..m]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(spec[..m].as_rchunks::<2>().1.iter().rev());
+        for ((x, y), (&(c, s), &r)) in inputs.zip(self.pre.iter().zip(&self.fft.rev)) {
+            let (a, b) = (x[0], y[1]);
+            let r = usize::from(r);
+            re[r] = a * c - b * s;
+            im[r] = a * s + b * c;
         }
-        self.fft.run(buf);
-        // u[2n] = Re, u[m - 1 - 2n] = -Im; then the fold:
-        // y[n] = u[n + m/2] (n < m/2), -u[3m/2 - 1 - n] (n < 3m/2), -u[n - 3m/2].
+        self.fft.run(re, im);
+        // Post-twiddle in place: re[n] = u[2n], im[n] = u[m - 1 - 2n].
+        for ((a, b), &(c, s)) in re.iter_mut().zip(im.iter_mut()).zip(&self.post) {
+            let (x, y) = (*a, *b);
+            *a = x * c - y * s;
+            *b = -(x * s + y * c);
+        }
+        // The fold y[n] = u[n + m/2] (n < m/2), -u[3m/2 - 1 - n] (n < 3m/2), -u[n - 3m/2],
+        // written pair by pair so no index needs a check.
+        let quarter = m / 4;
         let (first, rest) = out.split_at_mut(h);
         let (middle, last) = rest.split_at_mut(m);
-        for (n, (b, &(c, s))) in buf.iter().zip(&self.post).enumerate() {
-            let (re, im) = (b.0 * c - b.1 * s, b.0 * s + b.1 * c);
-            let even = re; // u[2n]
-            let odd = -im; // u[m - 1 - 2n]
-            // u[j] lands at y[j - m/2] when j >= m/2, at y[3m/2 - 1 - j] (negated) always,
-            // and at y[j + 3m/2] (negated) when j < m/2.
-            for (j, v) in [(2 * n, even), (m - 1 - 2 * n, odd)] {
-                middle[m - 1 - j] = -v;
-                if j >= h {
-                    first[j - h] = v;
-                } else {
-                    last[j] = -v;
-                }
-            }
+        let (even, odd) = (&*re, &*im);
+        for ((y, &e), &o) in middle
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(even.iter().rev())
+            .zip(odd)
+        {
+            y[0] = -o;
+            y[1] = -e;
+        }
+        let pairs = even[quarter..].iter().zip(odd[..quarter].iter().rev());
+        for (y, (&e, &o)) in first.as_chunks_mut::<2>().0.iter_mut().zip(pairs) {
+            y[0] = e;
+            y[1] = o;
+        }
+        let pairs = even[..quarter].iter().zip(odd[quarter..].iter().rev());
+        for (y, (&e, &o)) in last.as_chunks_mut::<2>().0.iter_mut().zip(pairs) {
+            y[0] = -e;
+            y[1] = -o;
         }
     }
 }
 
-/// Radix-2 complex FFT, forward (`e^(-2 pi i nk / n)`), in place.
+/// Radix-2 complex FFT, forward (`e^(-2 pi i nk / n)`), in place on split real and imaginary
+/// parts whose input is already in bit-reversed order. The first two stages need no
+/// multiplications; each later stage reads its twiddles in order, so its loop vectorises.
 struct Fft {
     n: usize,
     rev: Vec<u16>,
-    twiddle: Vec<(f32, f32)>,
+    /// Twiddles of the stages of length 8, 16, ..., n, one run of `len / 2` each.
+    tw_re: Vec<f32>,
+    tw_im: Vec<f32>,
 }
 
 impl Fft {
@@ -83,36 +110,74 @@ impl Fft {
         let rev = (0..n)
             .map(|i| (i.reverse_bits() >> (usize::BITS - bits)) as u16)
             .collect();
-        let twiddle = (0..n / 2)
-            .map(|k| {
-                let a = -2.0 * PI * k as f64 / n as f64;
-                (libm::cos(a) as f32, libm::sin(a) as f32)
-            })
-            .collect();
-        Self { n, rev, twiddle }
+        let (mut tw_re, mut tw_im) = (Vec::new(), Vec::new());
+        let mut len = 8;
+        while len <= n {
+            for k in 0..len / 2 {
+                let a = -2.0 * PI * k as f64 / len as f64;
+                tw_re.push(libm::cos(a) as f32);
+                tw_im.push(libm::sin(a) as f32);
+            }
+            len *= 2;
+        }
+        Self {
+            n,
+            rev,
+            tw_re,
+            tw_im,
+        }
     }
 
-    fn run(&self, x: &mut [(f32, f32)]) {
+    fn run(&self, re: &mut [f32], im: &mut [f32]) {
         let n = self.n;
-        for i in 0..n {
-            let j = usize::from(self.rev[i]);
-            if i < j {
-                x.swap(i, j);
-            }
+        // Stages of length 2 and 4 together: a radix-4 butterfly with twiddles 1 and -i.
+        for (r, i) in re
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(im.as_chunks_mut::<4>().0.iter_mut())
+        {
+            let (a0r, a0i, a1r, a1i) = (r[0] + r[1], i[0] + i[1], r[0] - r[1], i[0] - i[1]);
+            let (a2r, a2i, a3r, a3i) = (r[2] + r[3], i[2] + i[3], r[2] - r[3], i[2] - i[3]);
+            r[0] = a0r + a2r;
+            i[0] = a0i + a2i;
+            r[2] = a0r - a2r;
+            i[2] = a0i - a2i;
+            // (a3) * -i = (a3i, -a3r)
+            r[1] = a1r + a3i;
+            i[1] = a1i - a3r;
+            r[3] = a1r - a3i;
+            i[3] = a1i + a3r;
         }
-        let mut len = 2;
+        let mut len = 8;
+        let mut tw = 0;
         while len <= n {
             let half = len / 2;
-            let step = n / len;
-            for block in x.chunks_exact_mut(len) {
-                let (a, b) = block.split_at_mut(half);
-                for (k, (u, v)) in a.iter_mut().zip(b.iter_mut()).enumerate() {
-                    let (c, s) = self.twiddle[k * step];
-                    let t = (v.0 * c - v.1 * s, v.0 * s + v.1 * c);
-                    *v = (u.0 - t.0, u.1 - t.1);
-                    *u = (u.0 + t.0, u.1 + t.1);
+            let (wr, wi) = (&self.tw_re[tw..tw + half], &self.tw_im[tw..tw + half]);
+            for (r, i) in re.chunks_exact_mut(len).zip(im.chunks_exact_mut(len)) {
+                let (ar, br) = r.split_at_mut(half);
+                let (ai, bi) = i.split_at_mut(half);
+                // Four lanes at a time (half is a multiple of 4), so the lanes vectorise.
+                let lanes = ar
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(ai.as_chunks_mut::<4>().0.iter_mut())
+                    .zip(br.as_chunks_mut::<4>().0.iter_mut())
+                    .zip(bi.as_chunks_mut::<4>().0.iter_mut())
+                    .zip(wr.as_chunks::<4>().0.iter().zip(wi.as_chunks::<4>().0));
+                for ((((ar, ai), br), bi), (wr, wi)) in lanes {
+                    for k in 0..4 {
+                        let tr = br[k] * wr[k] - bi[k] * wi[k];
+                        let ti = br[k] * wi[k] + bi[k] * wr[k];
+                        br[k] = ar[k] - tr;
+                        bi[k] = ai[k] - ti;
+                        ar[k] += tr;
+                        ai[k] += ti;
+                    }
                 }
             }
+            tw += half;
             len *= 2;
         }
     }
@@ -207,7 +272,8 @@ impl Overlap {
 pub(crate) struct Scratch {
     time: Vec<f32>,
     short: Vec<f32>,
-    fft: Vec<(f32, f32)>,
+    re: Vec<f32>,
+    im: Vec<f32>,
 }
 
 impl Scratch {
@@ -215,7 +281,8 @@ impl Scratch {
         Self {
             time: vec![0.0; 2048],
             short: vec![0.0; 256],
-            fft: vec![(0.0, 0.0); 512],
+            re: vec![0.0; 512],
+            im: vec![0.0; 512],
         }
     }
 }
@@ -242,7 +309,8 @@ pub(crate) fn synthesize(
             t.short.run(
                 &spec[w * 128..(w + 1) * 128],
                 &mut scratch.short,
-                &mut scratch.fft,
+                &mut scratch.re,
+                &mut scratch.im,
             );
             let rise = if w == 0 { ws_prev } else { ws_cur };
             let at = 448 + 128 * w;
@@ -255,7 +323,7 @@ pub(crate) fn synthesize(
             }
         }
     } else {
-        t.long.run(spec, time, &mut scratch.fft);
+        t.long.run(spec, time, &mut scratch.re, &mut scratch.im);
         let (head, tail) = time.split_at_mut(1024);
         if sequence == LONG_STOP {
             head[..448].fill(0.0);
@@ -316,8 +384,8 @@ mod tests {
                 .collect();
             let imdct = Imdct::new(m, 2.0 / (2 * m) as f64);
             let mut out = vec![0.0; 2 * m];
-            let mut buf = vec![(0.0, 0.0); m / 2];
-            imdct.run(&spec, &mut out, &mut buf);
+            let (mut re, mut im) = (vec![0.0; m / 2], vec![0.0; m / 2]);
+            imdct.run(&spec, &mut out, &mut re, &mut im);
             let want = direct(&spec);
             let peak = want.iter().fold(0.0f64, |a, b| a.max(b.abs()));
             for (i, (&g, w)) in out.iter().zip(&want).enumerate() {
