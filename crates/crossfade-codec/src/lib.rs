@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod flac;
+pub mod mp3;
 pub mod pcm;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
@@ -41,6 +42,9 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Flac {
         return flac::decode::decoder_threads(stream, threads);
+    }
+    if stream.codec == CodecId::Mp3 {
+        return mp3::decoder(stream);
     }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),
