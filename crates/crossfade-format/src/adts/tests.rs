@@ -263,10 +263,12 @@ fn the_crc_is_skipped_with_the_header() {
     assert_eq!(got[2].data, [2; 10]);
 }
 
-/// A protected frame of `blocks`, each followed by a CRC, with its position table.
+/// A protected frame of `blocks` (when there are several, each followed by a CRC), with its
+/// position table.
 fn protected_frame(blocks: &[Vec<u8>]) -> Vec<u8> {
     let n = blocks.len();
-    let len = 7 + 2 * n + blocks.iter().map(|b| b.len() + 2).sum::<usize>();
+    let crc = if n > 1 { 2 } else { 0 };
+    let len = 7 + 2 * n + blocks.iter().map(|b| b.len() + crc).sum::<usize>();
     let mut f = header(len - 7, 2);
     f[1] = 0xF0; // protection_absent 0
     f[6] = 0xFC | (n as u8 - 1);
@@ -278,7 +280,7 @@ fn protected_frame(blocks: &[Vec<u8>]) -> Vec<u8> {
     f.extend([0xC0, 0xC0]);
     for b in blocks {
         f.extend(b);
-        f.extend([0xCC, 0xCC]);
+        f.extend(&[0xCC, 0xCC][..crc]);
     }
     f
 }

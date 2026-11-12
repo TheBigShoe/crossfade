@@ -1,5 +1,5 @@
-//! AAC in ADTS frames (`.aac`): every frame is a header (`crossfade_aac::adts`) and one raw
-//! data block, which is the packet.
+//! AAC in ADTS frames (`.aac`): every frame is a header (`crossfade_aac::adts`) and one to
+//! four raw data blocks; each block is a packet of 1024 frames.
 //!
 //! - The first header is confirmed by a second one of the same stream where its length says,
 //!   or by the input ending exactly there: an MPEG-2 sync word alone can be a FLAC frame header.
@@ -12,7 +12,8 @@
 //! - ADTS carries no priming information, so packets count 1024 frames each from pts 0 and
 //!   `StreamInfo::frames` (known when the source can seek and the frames were indexed once) is
 //!   every decoded frame, the encoder's priming and padding included.
-//! - Frames of more than one raw data block are refused by name.
+//! - A frame of several blocks is split at the positions its CRC-protected header gives; without
+//!   a CRC it cannot be split without decoding, and is refused by name.
 
 use crossfade_aac::adts::Header;
 use crossfade_aac::asc::ProgramConfig;
@@ -95,16 +96,22 @@ impl Input {
     }
 }
 
-/// One entry per `stride` frames: where frame `number` starts.
+/// One entry per `stride` frames: the number of the first block of a frame, and where the
+/// frame starts.
 struct Index {
     entries: Vec<(u64, u64)>,
     stride: u64,
     frames: u64,
+    blocks: u64,
 }
 
 impl Index {
-    fn push(&mut self, number: u64, offset: u64) {
-        if !number.is_multiple_of(self.stride) {
+    /// Notes the frame starting at `offset` with `blocks` blocks.
+    fn push(&mut self, offset: u64, blocks: u8) {
+        let (frame, block) = (self.frames, self.blocks);
+        self.frames += 1;
+        self.blocks += u64::from(blocks);
+        if !frame.is_multiple_of(self.stride) {
             return;
         }
         if self.entries.len() == MAX_INDEX {
@@ -114,11 +121,11 @@ impl Index {
                 i += 1;
                 (i - 1) % 2 == 0
             });
-            if !number.is_multiple_of(self.stride) {
+            if !frame.is_multiple_of(self.stride) {
                 return;
             }
         }
-        self.entries.push((number, offset));
+        self.entries.push((block, offset));
     }
 }
 
@@ -126,8 +133,11 @@ pub(crate) struct AdtsReader {
     input: Input,
     first: Header,
     streams: [StreamInfo; 1],
-    /// Frames handed out so far (or the frame the reader stands at after a seek).
+    /// Blocks handed out so far (or the block the reader stands at after a seek).
     next: u64,
+    /// The rest of a frame of several blocks: the frame, and its blocks' ranges still to go.
+    pending: Vec<u8>,
+    pending_blocks: Vec<(usize, usize)>,
     index: Option<Index>,
 }
 
@@ -154,8 +164,12 @@ impl AdtsReader {
         if !confirmed(&input, &first) {
             return Err(Error::UnrecognisedFormat);
         }
-        check_blocks(&first)?;
-        let layout = layout(&first, &input.available()[first.header_len()..len])?;
+        let first_block = first
+            .raw_data_blocks(&input.available()[..len])
+            .map_err(aac_error)?
+            .next()
+            .unwrap_or_default();
+        let layout = layout(&first, first_block)?;
         let audio = AudioSpec::new(first.sample_rate(), SampleFormat::F32, layout)?;
         let time_base = TimeBase::new(1, i64::from(first.sample_rate()))?;
         let mut stream = StreamInfo::new(0, CodecId::Aac, audio, time_base);
@@ -165,6 +179,8 @@ impl AdtsReader {
             first,
             streams: [stream],
             next: 0,
+            pending: Vec::new(),
+            pending_blocks: Vec::new(),
             index: None,
         };
         if seekable {
@@ -172,13 +188,13 @@ impl AdtsReader {
                 entries: Vec::new(),
                 stride: 1,
                 frames: 0,
+                blocks: 0,
             };
             while let Some(h) = reader.next_frame()? {
-                index.push(index.frames, reader.input.position());
-                index.frames += 1;
+                index.push(reader.input.position(), h.raw_data_blocks);
                 reader.input.consume(usize::from(h.frame_length));
             }
-            reader.streams[0].frames = Some(index.frames.saturating_mul(FRAME_LEN as u64));
+            reader.streams[0].frames = Some(index.blocks.saturating_mul(FRAME_LEN as u64));
             reader.index = Some(index);
             reader.input.seek_to(data_start)?;
         }
@@ -208,7 +224,9 @@ impl AdtsReader {
                     return Ok(None);
                 }
                 if skipped == 0 || confirmed(&self.input, &h) {
-                    check_blocks(&h)?;
+                    // Refuses what cannot be split before anything is handed out.
+                    h.raw_data_blocks(&self.input.available()[..len])
+                        .map_err(aac_error)?;
                     return Ok(Some(h));
                 }
             }
@@ -238,16 +256,16 @@ fn confirmed(input: &Input, h: &Header) -> bool {
     }
 }
 
-fn check_blocks(h: &Header) -> Result<(), Error> {
-    if h.raw_data_blocks > 1 {
-        return Err(Error::Unsupported {
-            what: format!(
-                "adts: frames holding {} raw data blocks are not supported",
-                h.raw_data_blocks
-            ),
-        });
+fn aac_error(e: crossfade_aac::Error) -> Error {
+    match e {
+        crossfade_aac::Error::Unsupported(what) => Error::Unsupported { what },
+        crossfade_aac::Error::UnexpectedEnd => Error::Malformed {
+            what: "adts: frame ends early".into(),
+        },
+        other => Error::Malformed {
+            what: other.to_string(),
+        },
     }
-    Ok(())
 }
 
 /// The layout of channel configurations 1 to 7 in storage (WAVE mask) order, which is the
@@ -283,20 +301,41 @@ impl Demuxer for AdtsReader {
     }
 
     fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
-        let Some(h) = self.next_frame()? else {
-            return Ok(false);
-        };
-        let len = usize::from(h.frame_length);
+        out.data.clear();
+        if self.pending_blocks.is_empty() {
+            let Some(h) = self.next_frame()? else {
+                return Ok(false);
+            };
+            let len = usize::from(h.frame_length);
+            let frame = &self.input.available()[..len];
+            let mut blocks = h.raw_data_blocks(frame).map_err(aac_error)?;
+            if h.raw_data_blocks == 1 {
+                out.data
+                    .extend_from_slice(blocks.next().unwrap_or_default());
+            } else {
+                self.pending.clear();
+                self.pending.extend_from_slice(frame);
+                // Kept in reverse, so the next block is popped off the end.
+                let base = frame.as_ptr() as usize;
+                self.pending_blocks.extend(
+                    blocks
+                        .map(|b| (b.as_ptr() as usize - base, b.len()))
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev(),
+                );
+            }
+            self.input.consume(len);
+        }
+        if let Some((start, n)) = self.pending_blocks.pop() {
+            out.data.extend_from_slice(&self.pending[start..start + n]);
+        }
         out.stream = 0;
         out.pts = i64::try_from(self.next)
             .ok()
             .and_then(|n| n.checked_mul(FRAME_LEN))
             .ok_or(Error::Overflow)?;
         out.duration = FRAME_LEN as u64;
-        out.data.clear();
-        out.data
-            .extend_from_slice(&self.input.available()[h.header_len()..len]);
-        self.input.consume(len);
         self.next += 1;
         Ok(true)
     }
@@ -307,7 +346,7 @@ impl Demuxer for AdtsReader {
                 what: "adts: the source cannot seek".into(),
             });
         };
-        let total = index.frames;
+        let total = index.blocks;
         // One packet of pre-roll: the overlap-add needs the previous frame.
         let wanted = (pts.max(0) / FRAME_LEN) as u64;
         let target = if wanted >= total {
@@ -315,20 +354,31 @@ impl Demuxer for AdtsReader {
         } else {
             wanted.saturating_sub(1)
         };
-        let (mut number, offset) = match index.entries.iter().rev().find(|e| e.0 <= target) {
-            Some(&e) => e,
-            None => return Ok(0),
+        let Some(&(mut block, offset)) = index.entries.iter().rev().find(|e| e.0 <= target) else {
+            return Ok(0);
         };
         self.input.seek_to(offset)?;
-        while number < target {
-            match self.next_frame()? {
-                Some(h) => self.input.consume(usize::from(h.frame_length)),
-                None => break,
+        self.pending_blocks.clear();
+        while block < target {
+            let Some(h) = self.next_frame()? else {
+                break;
+            };
+            let n = u64::from(h.raw_data_blocks);
+            if block + n > target {
+                // The target is inside this frame: read it and drop the blocks before.
+                self.next = block;
+                let mut p = Packet::default();
+                for _ in block..target {
+                    self.read_packet(&mut p)?;
+                }
+                block = target;
+                break;
             }
-            number += 1;
+            self.input.consume(usize::from(h.frame_length));
+            block += n;
         }
-        self.next = number;
-        Ok(number as i64 * FRAME_LEN)
+        self.next = block;
+        Ok(self.next as i64 * FRAME_LEN)
     }
 }
 

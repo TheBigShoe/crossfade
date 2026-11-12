@@ -197,11 +197,13 @@ fn two_headers_of_one_stream_agree_on_the_fixed_fields_only() {
     }
 }
 
-/// A protected frame of `blocks` (each followed by a 2-byte CRC), with its position table.
+/// A protected frame of `blocks` (when there are several, each followed by a 2-byte CRC),
+/// with its position table.
 fn protected_frame(blocks: &[&[u8]]) -> Vec<u8> {
     let n = blocks.len();
+    let crc = if n > 1 { 2 } else { 0 };
     let table = 2 * (n - 1) + 2;
-    let body: usize = blocks.iter().map(|b| b.len() + 2).sum();
+    let body: usize = blocks.iter().map(|b| b.len() + crc).sum();
     let h = Header {
         protection_absent: false,
         raw_data_blocks: n as u8,
@@ -217,7 +219,7 @@ fn protected_frame(blocks: &[&[u8]]) -> Vec<u8> {
     f.extend([0xC0, 0xC0]); // header CRC
     for b in blocks {
         f.extend(*b);
-        f.extend([0xCC, 0xCC]);
+        f.extend(&[0xCC, 0xCC][..crc]);
     }
     f
 }
