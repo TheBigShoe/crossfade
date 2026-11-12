@@ -73,6 +73,13 @@ struct FlacDemuxer {
     /// offset (value: number, top bit set for variable block size) and by number.
     ahead: BTreeMap<u64, u64>,
     ahead_num: BTreeSet<(u64, u64)>,
+    /// Source bytes before stream offset 0 (the marker and metadata).
+    data_offset: u64,
+    /// Stream offset of the first frame, once found.
+    audio_start: Option<u64>,
+    seektable: Vec<seek::SeekPoint>,
+    /// STREAMINFO's channels, depth and rate: a frame header found by scanning must agree.
+    format: (u8, u8, u32),
 }
 
 fn malformed(what: &str) -> Error {
@@ -157,6 +164,7 @@ struct Metadata {
     info: StreamInfoBlock,
     raw: [u8; StreamInfoBlock::LEN],
     tags: Tags,
+    seektable: Vec<seek::SeekPoint>,
 }
 
 fn read_metadata(
@@ -166,6 +174,7 @@ fn read_metadata(
 ) -> Result<Metadata, Error> {
     let mut first: Option<(StreamInfoBlock, [u8; StreamInfoBlock::LEN])> = None;
     let mut tags = None;
+    let mut seektable = None;
     loop {
         let mut head = [0u8; 4];
         fill_exact(source, pos, &mut head)?;
@@ -200,6 +209,15 @@ fn read_metadata(
                 skip(source, pos, len)?;
             }
             tags = Some(parsed);
+        } else if kind == 3 && seektable.is_none() {
+            // Only a hint for seeking: a table too big to hold is skipped, a bad one ignored.
+            let mut points = Vec::new();
+            if len <= limits.max_alloc_bytes as u64 {
+                points = seek::parse_seektable(&read_body(source, pos, len as usize)?);
+            } else {
+                skip(source, pos, len)?;
+            }
+            seektable = Some(points);
         } else {
             skip(source, pos, len)?;
         }
@@ -209,6 +227,7 @@ fn read_metadata(
                 info,
                 raw,
                 tags: tags.unwrap_or_default(),
+                seektable: seektable.unwrap_or_default(),
             });
         }
     }
@@ -532,6 +551,7 @@ impl Demuxer for FlacDemuxer {
                 return Ok(false);
             };
             self.first = Some((found.0.variable_block_size, found.0.block_size));
+            self.audio_start = Some(self.base);
             found
         } else {
             self.ensure(MAX_HEADER)?;
@@ -551,6 +571,10 @@ impl Demuxer for FlacDemuxer {
         self.consume(end);
         self.done = last;
         Ok(true)
+    }
+
+    fn seek(&mut self, pts: i64) -> Result<i64, Error> {
+        self.seek_frame(pts)
     }
 }
 
@@ -575,8 +599,19 @@ pub fn open(mut source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn
         scan: None,
         ahead: BTreeMap::new(),
         ahead_num: BTreeSet::new(),
+        data_offset: pos,
+        audio_start: None,
+        seektable: meta.seektable,
+        format: (
+            meta.info.channels,
+            meta.info.bits_per_sample,
+            meta.info.sample_rate,
+        ),
     }))
 }
+
+#[path = "seek.rs"]
+mod seek;
 
 #[cfg(test)]
 #[path = "demux_tests.rs"]

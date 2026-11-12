@@ -105,7 +105,7 @@ fn a_seek_reads_a_logarithmic_number_of_bytes() {
         let f = flac_file(&samples, 1, 16, blocks, table, true);
         let (source, counter) = Counting::new(f.bytes.clone());
         let (_, mut d) = open_demuxer(Box::new(source), &Limits::default()).unwrap();
-        let log2 = 64 - (f.bytes.len() as u64).leading_zeros() as u64;
+        let log2 = 64 - u64::from((f.bytes.len() as u64).leading_zeros());
         let bound = 8 * (f.max_frame as u64 + 8192) * log2;
         let mut rng = Lcg(3);
         let mut worst = 0;
