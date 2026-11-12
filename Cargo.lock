@@ -1501,6 +1501,7 @@ dependencies = [
 name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
+ "crossfade-aac",
  "crossfade-core",
  "crossfade-flac",
  "crossfade-testkit",
