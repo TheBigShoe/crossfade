@@ -13,11 +13,11 @@ fn encoded(frames: usize) -> Encoded {
         sample_rate: 44_100,
         channels: 2,
         bits_per_sample: 16,
-        level: 5,
+        level: 0,
         threads: 1,
     };
-    let block = 1152;
-    encode(config, &signal(1, 16, frames * block * 2, 2, 7), block)
+    // Level 0 encodes blocks of 1152 frames.
+    encode(config, &signal(1, 16, frames * 1152 * 2, 2, 7), 0)
 }
 
 fn frames_of(e: &Encoded) -> Vec<Vec<u8>> {
