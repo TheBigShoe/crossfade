@@ -18,5 +18,8 @@ crossfade-testkit.workspace = true
 proptest.workspace = true
 insta.workspace = true
 
+[features]
+aac = ["crossfade-graph/aac"]
+
 [lints]
 workspace = true

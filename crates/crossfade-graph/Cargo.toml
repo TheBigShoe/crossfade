@@ -24,6 +24,9 @@ crossfade-testkit.workspace = true
 criterion.workspace = true
 proptest.workspace = true
 
+[features]
+aac = ["crossfade-codec/aac"]
+
 [lints]
 workspace = true
 
