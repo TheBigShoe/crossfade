@@ -51,6 +51,7 @@ impl<'a> BitReader<'a> {
         self.pos = self.pos.saturating_add(n);
     }
 
+    #[cfg_attr(not(feature = "decoder"), allow(dead_code))]
     pub(crate) fn position(&self) -> usize {
         self.pos
     }
