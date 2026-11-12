@@ -152,8 +152,8 @@ fn fade_out_help_states_its_limit() {
 fn probing_an_mp3_mp4_or_aac_file_says_its_reader_is_not_built_yet() {
     let dir = std::env::temp_dir().join(format!("crossfade-cli-lossy-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let cases: [(&str, &[u8], &str); 4] = [
-        ("a.mp3", b"ID3\x04\0\0\0\0\0\x01x\xFF\xFB\x90\0", "mp3"),
+    // The MP3 reader is built: tests/mp3.rs probes a real file.
+    let cases: [(&str, &[u8], &str); 3] = [
         ("b.m4a", b"\0\0\0\x20ftypM4A \0\0\0\0", "mp4"),
         ("c.aac", b"\xFF\xF1\x50\x80\0\0", "adts"),
         ("d.opus", b"not ogg at all", ""),
