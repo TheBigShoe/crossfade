@@ -23,6 +23,8 @@ pub(crate) struct PacketReader {
     mid_packet: bool,
     /// The page with the end-of-stream flag has been loaded.
     last_page: bool,
+    /// See [`granule`](Self::granule).
+    granule: Option<i64>,
 }
 
 impl PacketReader {
@@ -37,7 +39,17 @@ impl PacketReader {
             off: 0,
             mid_packet: false,
             last_page: false,
+            granule: None,
         }
+    }
+
+    /// The granule position that applies to the packet [`next_packet`](Self::next_packet)
+    /// returned last: its page's, when that packet is the last one to end on the page and the
+    /// page's granule is not -1. Otherwise `None` (the codec counts on from an earlier value).
+    // For the Vorbis and Opus mappings, which count samples from it.
+    #[allow(dead_code)]
+    pub(crate) fn granule(&self) -> Option<i64> {
+        self.granule
     }
 
     /// Carries on after the stream's first page, which the caller consumed itself.
@@ -98,6 +110,7 @@ impl PacketReader {
     /// Clears `out` and fills it with the next packet; `Ok(false)` at the end of the stream.
     pub(crate) fn next_packet(&mut self, out: &mut Vec<u8>) -> Result<bool, Error> {
         out.clear();
+        self.granule = None;
         let mut started = false;
         loop {
             if self.seg >= self.pages.lacing().len() {
@@ -129,6 +142,11 @@ impl PacketReader {
             started = true;
             self.mid_packet = lace == 255;
             if lace < 255 {
+                let lacing = self.pages.lacing();
+                if lacing[self.seg..].iter().all(|&l| l == 255) {
+                    let g = self.pages.header().granule;
+                    self.granule = (g != -1).then_some(g);
+                }
                 return Ok(true);
             }
         }

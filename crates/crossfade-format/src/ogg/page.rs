@@ -14,8 +14,8 @@ const LAST: u8 = 0x04;
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PageHeader {
     pub(crate) flags: u8,
-    /// Timing comes from the frame headers; only the tests read this.
-    #[allow(dead_code)]
+    /// The position after the last packet that ends on the page, in the codec's units; -1 when
+    /// no packet ends here.
     pub(crate) granule: i64,
     pub(crate) serial: u32,
     pub(crate) sequence: u32,
