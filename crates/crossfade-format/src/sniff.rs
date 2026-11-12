@@ -172,6 +172,10 @@ mod tests {
             [0xFF, 0xE1, 0x50, 0x80], // 11-bit sync only, version 00, layer 00
             [0xFF, 0xF1, 0x74, 0x80], // sampling index 13, reserved
             [0xFF, 0xF1, 0x7C, 0x80], // 15, the escape ADTS cannot carry
+            // MPEG-2 profile 3 is reserved. A FLAC stream that starts at a frame header
+            // (sync 0xFFF8, block-size code 12) reads like this (conformance uncommon/10).
+            [0xFF, 0xF8, 0xC9, 0x08],
+            [0xFF, 0xF9, 0xC0, 0x80],
         ] {
             assert_eq!(mpeg_audio(&head), None, "{head:02X?}");
         }
