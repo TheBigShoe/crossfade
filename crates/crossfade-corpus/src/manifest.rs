@@ -286,6 +286,108 @@ mod tests {
         assert!(err(&entry("").replace("01 - a.flac", "")).contains("name"));
     }
 
+    const ARCHIVE: &str = "[[archive]]\nid = \"opus/rfc8251\"\n\
+         url = \"https://example.org/v.tar.gz\"\nbytes = 99\nsha256 = \"{HASH}\"\n\
+         licence = \"unstated\"\nformat = \"tar.gz\"\n";
+
+    fn archive() -> String {
+        ARCHIVE.replace("{HASH}", HASH)
+    }
+
+    fn member(extra: &str) -> String {
+        format!(
+            "[[file]]\nid = \"opus/rfc8251/testvector01.bit\"\nname = \"testvector01.bit\"\n\
+             archive = \"opus/rfc8251\"\nmember = \"opus_newvectors/testvector01.bit\"\n\
+             bytes = 10\nsha256 = \"{HASH}\"\nlicence = \"unstated\"\nexpect = \"data\"\n{extra}"
+        )
+    }
+
+    #[test]
+    fn expect_data_is_a_reference_file() {
+        let t = entry("").replace("\"decode\"", "\"data\"");
+        let m = Manifest::parse(&t).unwrap();
+        assert_eq!(m.entries()[0].expect, Expect::Data);
+        assert_eq!(Expect::Data.as_str(), "data");
+    }
+
+    #[test]
+    fn an_archive_and_a_member_parse() {
+        let m = Manifest::parse(&format!("{}{}", archive(), member(""))).unwrap();
+        let a = m.archive("opus/rfc8251").unwrap();
+        assert_eq!((a.bytes, a.format), (99, ArchiveFormat::TarGz));
+        assert_eq!(a.url, "https://example.org/v.tar.gz");
+        assert_eq!(m.archives().len(), 1);
+        let e = &m.entries()[0];
+        assert_eq!(
+            e.source,
+            Source::Archive {
+                archive: "opus/rfc8251".into(),
+                member: "opus_newvectors/testvector01.bit".into()
+            }
+        );
+        assert_eq!(e.url(), None);
+        assert_eq!(entry_url(&Manifest::parse(&entry("")).unwrap()), "https://example.org/a.flac");
+    }
+
+    fn entry_url(m: &Manifest) -> &str {
+        m.entries()[0].url().unwrap()
+    }
+
+    #[test]
+    fn a_member_of_an_unknown_archive_is_rejected() {
+        let e = err(&member(""));
+        assert!(e.contains("testvector01.bit") && e.contains("opus/rfc8251"), "{e}");
+    }
+
+    #[test]
+    fn url_and_archive_together_or_neither_are_rejected() {
+        let both = member("url = \"https://example.org/x\"\n");
+        let e = err(&format!("{}{both}", archive()));
+        assert!(e.contains("url") && e.contains("archive"), "{e}");
+        let neither = member("").replace("archive = \"opus/rfc8251\"\n", "");
+        let e = err(&format!("{}{neither}", archive()));
+        assert!(e.contains("member") || e.contains("url"), "{e}");
+        let no_member = member("").replace("member = \"opus_newvectors/testvector01.bit\"\n", "");
+        assert!(err(&format!("{}{no_member}", archive())).contains("member"));
+    }
+
+    #[test]
+    fn unsafe_member_names_are_rejected_at_parse() {
+        for bad in [
+            "../x.bit",
+            "a/../x.bit",
+            "/etc/passwd",
+            "a//x.bit",
+            "./x.bit",
+            "a\\x.bit",
+            "",
+        ] {
+            let t = member("").replace("opus_newvectors/testvector01.bit", bad);
+            let e = err(&format!("{}{t}", archive()));
+            assert!(e.contains("testvector01.bit") && e.contains("member"), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn archive_keys_are_validated() {
+        let dup = format!("{}{}", archive(), archive());
+        assert!(err(&dup).contains("duplicate"));
+        let bad_hash = archive().replace(HASH, "abc");
+        assert!(err(&bad_hash).contains("sha256"));
+        let http = archive().replace("https://", "http://");
+        assert!(err(&http).contains("https"));
+        let fmt = archive().replace("tar.gz", "zip");
+        assert!(err(&fmt).contains("zip"));
+        let none = archive().replace("bytes = 99\n", "");
+        assert!(err(&none).contains("bytes"));
+    }
+
+    #[test]
+    fn an_archive_id_may_not_collide_with_a_file_id() {
+        let e = err(&format!("{}{}", archive(), entry("").replace("flac/subset/01", "opus/rfc8251")));
+        assert!(e.contains("opus/rfc8251"), "{e}");
+    }
+
     #[test]
     fn load_reports_a_missing_file() {
         let e = Manifest::load(Path::new("/nonexistent/corpus.toml"));
