@@ -94,10 +94,7 @@ mod tests {
             .to_string(),
             "mp3: CRC mismatch (frame says BEEF, data gives 0001)"
         );
-        assert_eq!(
-            Error::Corrupt("x").to_string(),
-            "mp3: corrupt frame: x"
-        );
+        assert_eq!(Error::Corrupt("x").to_string(), "mp3: corrupt frame: x");
         let r = Error::Reservoir {
             needed: 300,
             available: 0,

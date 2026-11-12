@@ -17,7 +17,9 @@ fn lame_cbr() -> Vec<u8> {
     t.extend((0..100u8).map(|i| i * 2));
     t.extend(57u32.to_be_bytes());
     t.extend(b"LAME4.0 \0");
-    t.extend([0x01, 0xAA, 0, 0, 0, 0, 0x2E, 0x99, 0, 0, 0x14, 0x80, 0x24, 0x05, 0x7C]);
+    t.extend([
+        0x01, 0xAA, 0, 0, 0, 0, 0x2E, 0x99, 0, 0, 0x14, 0x80, 0x24, 0x05, 0x7C,
+    ]);
     f[36..36 + t.len()].copy_from_slice(&t);
     f
 }
@@ -42,7 +44,10 @@ fn xing_fields_are_each_optional() {
     f[17..21].copy_from_slice(&1u32.to_be_bytes());
     f[21..25].copy_from_slice(&1234u32.to_be_bytes());
     let info = InfoFrame::parse(&h, &f).unwrap();
-    assert_eq!((info.kind, info.frames, info.bytes), (InfoKind::Xing, Some(1234), None));
+    assert_eq!(
+        (info.kind, info.frames, info.bytes),
+        (InfoKind::Xing, Some(1234), None)
+    );
     assert_eq!((info.encoder, info.delay_padding), (None, None));
     // With a CRC the side information starts two bytes later.
     let h = header([0xFF, 0xF2, 0x50, 0xC4]);
@@ -62,7 +67,10 @@ fn vbri_sits_32_bytes_after_the_header() {
     f[46..50].copy_from_slice(&5000u32.to_be_bytes());
     f[50..54].copy_from_slice(&77u32.to_be_bytes());
     let info = InfoFrame::parse(&h, &f).unwrap();
-    assert_eq!((info.kind, info.frames, info.bytes), (InfoKind::Vbri, Some(77), Some(5000)));
+    assert_eq!(
+        (info.kind, info.frames, info.bytes),
+        (InfoKind::Vbri, Some(77), Some(5000))
+    );
 }
 
 #[test]
