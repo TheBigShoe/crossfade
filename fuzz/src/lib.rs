@@ -91,6 +91,34 @@ pub fn read_all(demux: &mut dyn Demuxer, data_len: usize) -> Result<u64, Error> 
     panic!("read loop did not end");
 }
 
+/// Seeks a few times to positions taken from the input's last bytes (most inside the stream,
+/// some anywhere), reading a few packets after each, then reads to the end. A seek may fail;
+/// nothing may panic or hang.
+pub fn seek_and_read(demux: &mut dyn Demuxer, data: &[u8]) {
+    let len = demux.streams()[0].frames.unwrap_or(1 << 20);
+    let tail = &data[data.len().saturating_sub(32)..];
+    let mut packet = Packet::default();
+    for (i, chunk) in tail.chunks(8).enumerate() {
+        let mut raw = [0u8; 8];
+        raw[..chunk.len()].copy_from_slice(chunk);
+        let raw = i64::from_le_bytes(raw);
+        let target = if i == 3 {
+            raw
+        } else {
+            (raw.unsigned_abs() % len.saturating_add(64)) as i64 - 16
+        };
+        if demux.seek(target).is_err() {
+            continue;
+        }
+        for _ in 0..4 {
+            if !matches!(demux.read_packet(&mut packet), Ok(true)) {
+                break;
+            }
+        }
+    }
+    let _ = read_all(demux, data.len());
+}
+
 /// Like [`read_all`] and also decodes every packet of stream 0 and drains the decoder.
 pub fn decode_all(demux: &mut dyn Demuxer, data_len: usize) -> Result<u64, Error> {
     let stream = demux.streams()[0].clone();
