@@ -198,6 +198,11 @@ mod tests {
             let src = FaultySource::new(Cursor::new(bytes.to_vec())).not_seekable();
             open_demuxer(Box::new(src), &Limits::default()).map(|(id, _)| id)
         };
+        // A lone ADTS header is not confirmed by a second one.
+        assert_eq!(
+            open(&[0xFF, 0xF1, 0x50, 0x80, 0, 0]).err(),
+            Some(Error::UnrecognisedFormat)
+        );
         // Every container has a reader now; each one's routing is also tested in
         // its own module. The FLAC reader got these: it ran out of input inside
         // STREAMINFO.
@@ -227,7 +232,6 @@ mod tests {
             (mp3, "mp3"),
             (tagged, "mp3"),
             (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
-            (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
         ] {
             assert_eq!(open(bytes), format!("reading {name} is not built yet"));
         }

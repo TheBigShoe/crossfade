@@ -11,6 +11,7 @@ crossfade-core.workspace = true
 # Demuxers split packets with the FLAC crate's frame-header parser, as libavformat uses
 # libavcodec's parsers.
 crossfade-flac.workspace = true
+crossfade-aac.workspace = true
 
 [lints]
 workspace = true
