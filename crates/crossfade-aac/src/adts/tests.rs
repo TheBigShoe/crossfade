@@ -233,10 +233,16 @@ fn a_frame_of_one_block_is_its_payload() {
     f.extend([1, 2, 3, 4, 5]);
     let h = Header::parse(&f).unwrap();
     let blocks: Vec<_> = h.raw_data_blocks(&f).unwrap().collect();
-    assert_eq!(blocks, [&[1, 2, 3, 4, 5][..]]);
+    assert_eq!(
+        blocks,
+        [RawDataBlock {
+            data: &[1, 2, 3, 4, 5],
+            blocks: 1
+        }]
+    );
     let crc = protected_frame(&[&[9, 9, 9]]);
     let h = Header::parse(&crc).unwrap();
-    let blocks: Vec<_> = h.raw_data_blocks(&crc).unwrap().collect();
+    let blocks: Vec<_> = h.raw_data_blocks(&crc).unwrap().map(|b| b.data).collect();
     assert_eq!(blocks, [&[9, 9, 9][..]]);
 }
 
@@ -248,7 +254,11 @@ fn a_protected_frame_of_several_blocks_splits_at_its_positions() {
         let h = Header::parse(&f).unwrap();
         assert_eq!(h.raw_data_blocks, n as u8);
         let blocks: Vec<_> = h.raw_data_blocks(&f).unwrap().collect();
-        assert_eq!(blocks, parts[..n]);
+        let want: Vec<_> = parts[..n]
+            .iter()
+            .map(|&data| RawDataBlock { data, blocks: 1 })
+            .collect();
+        assert_eq!(blocks, want);
     }
 }
 
@@ -277,18 +287,20 @@ fn positions_that_do_not_fit_the_frame_are_malformed() {
 }
 
 #[test]
-fn several_blocks_without_a_crc_cannot_be_split_and_are_refused_by_name() {
+fn several_blocks_without_a_crc_cannot_be_split_and_come_as_one() {
     let h = Header {
         raw_data_blocks: 3,
         frame_length: 20,
         ..lc_stereo_44k()
     };
     let mut f = pack(&h);
-    f.resize(20, 0);
+    f.resize(20, 7);
+    let blocks: Vec<_> = h.raw_data_blocks(&f).unwrap().collect();
     assert_eq!(
-        h.raw_data_blocks(&f).err(),
-        Some(Error::Unsupported(
-            "aac: adts: frames of 3 raw data blocks without a CRC are not supported".into()
-        ))
+        blocks,
+        [RawDataBlock {
+            data: &[7; 13],
+            blocks: 3
+        }]
     );
 }

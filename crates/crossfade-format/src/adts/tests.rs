@@ -328,26 +328,40 @@ fn a_protected_frame_of_several_blocks_gives_a_packet_per_block() {
 }
 
 #[test]
-fn several_blocks_without_a_crc_are_refused_by_name() {
-    let mut bytes = frames(3);
-    bytes[6] |= 1; // two blocks in the first frame
-    let want = Error::Unsupported {
-        what: "aac: adts: frames of 2 raw data blocks without a CRC are not supported".into(),
-    };
-    assert_eq!(open_bytes(bytes.clone()).err(), Some(want.clone()));
-    assert_eq!(open_pipe(bytes).err(), Some(want));
-    let mut later = frames(3);
-    let second = walk(&later)[0].len() + 7;
-    later[second + 6] |= 3;
-    let mut d = open_pipe(later).unwrap();
-    let mut p = Packet::default();
-    assert!(d.read_packet(&mut p).unwrap());
-    assert_eq!(
-        d.read_packet(&mut p),
-        Err(Error::Unsupported {
-            what: "aac: adts: frames of 4 raw data blocks without a CRC are not supported".into()
-        })
-    );
+fn several_blocks_without_a_crc_are_one_packet_as_long_as_all_of_them() {
+    // Frames of 1, 3, 1, 4, 1 blocks: packets at blocks 0, 1, 4, 5, 9.
+    let mut bytes = Vec::new();
+    for (i, n) in [1u8, 3, 1, 4, 1].into_iter().enumerate() {
+        let mut f = frame(10, i as u8);
+        f[6] |= n - 1;
+        bytes.extend(f);
+    }
+    for d in [open_bytes(bytes.clone()), open_pipe(bytes.clone())] {
+        let got: Vec<_> = packets(&mut *d.unwrap())
+            .into_iter()
+            .map(|p| (p.pts, p.duration, p.data))
+            .collect();
+        let want: Vec<_> = [(0, 1), (1, 3), (4, 1), (5, 4), (9, 1)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (at, n))| (at * 1024, n * 1024, vec![i as u8; 10]))
+            .collect();
+        assert_eq!(got, want);
+    }
+    let mut d = open_bytes(bytes).unwrap();
+    assert_eq!(d.streams()[0].frames, Some(10 * 1024));
+    // Inside a frame that cannot be split: its start, which is before the pre-roll block.
+    for (pts, landed) in [
+        (7 * 1024, 5),
+        (6 * 1024 + 5, 5),
+        (5 * 1024, 4),
+        (3 * 1024, 1),
+    ] {
+        assert_eq!(d.seek(pts), Ok(landed * 1024), "{pts}");
+        let mut p = Packet::default();
+        assert!(d.read_packet(&mut p).unwrap());
+        assert_eq!(p.pts, landed * 1024, "{pts}");
+    }
 }
 
 #[test]
