@@ -4,7 +4,9 @@ fn noise(n: usize, seed: u64) -> Vec<f32> {
     let mut s = seed;
     (0..n)
         .map(|_| {
-            s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            s = s
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             ((s >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
         })
         .collect()
@@ -42,7 +44,10 @@ fn the_fast_dct_iv_matches_its_definition_at_every_vorbis_block_size() {
             .iter()
             .zip(&z)
             .fold(0.0f64, |a, (w, g)| a.max((w - f64::from(*g)).abs()));
-        assert!(err <= 2e-6 * peak, "n {n}: error {err} against a peak of {peak}");
+        assert!(
+            err <= 2e-6 * peak,
+            "n {n}: error {err} against a peak of {peak}"
+        );
     }
 }
 
@@ -74,7 +79,10 @@ fn unfolding_the_dct_iv_gives_the_imdct_of_the_specification() {
         assert_eq!(y.len(), n);
         let peak = want.iter().fold(0.0f64, |a, v| a.max(v.abs()));
         for (i, (w, g)) in want.iter().zip(&y).enumerate() {
-            assert!((w - f64::from(*g)).abs() <= 2e-6 * peak, "n {n} i {i}: {w} vs {g}");
+            assert!(
+                (w - f64::from(*g)).abs() <= 2e-6 * peak,
+                "n {n} i {i}: {w} vs {g}"
+            );
         }
     }
 }
