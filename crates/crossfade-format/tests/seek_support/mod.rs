@@ -310,3 +310,27 @@ pub fn check_seek(d: &mut dyn Demuxer, all: &[Packet], target: i64, what: &str) 
         }
     }
 }
+
+/// 0, 1, the last frame, the end, past it, the same target twice, backwards after forwards and
+/// a spread of others.
+pub fn targets(end: i64, seed: u64) -> Vec<i64> {
+    let mut rng = Lcg(seed);
+    let mut t = vec![0, 1, end - 1, end, end + 1, -5];
+    for _ in 0..12 {
+        t.push(rng.below(end.max(1) as u64) as i64);
+    }
+    let again = t[8];
+    t.extend([again, again, end / 2, end / 3, 2, i64::MAX]);
+    t
+}
+
+pub fn check_all_targets(bytes: &[u8], what: &str) {
+    let all = drain(open_bytes(bytes).as_mut()).unwrap();
+    let end = all.last().map_or(0, |p| p.pts + p.duration as i64);
+    let mut d = open_bytes(bytes);
+    for t in targets(end, bytes.len() as u64) {
+        check_seek(d.as_mut(), &all, t, what);
+    }
+    // A seek before anything was read, too.
+    check_seek(open_bytes(bytes).as_mut(), &all, end / 2, what);
+}
