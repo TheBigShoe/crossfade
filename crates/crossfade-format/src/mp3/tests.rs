@@ -68,8 +68,14 @@ fn a_cbr_stream_gives_one_packet_per_frame_with_the_decoders_delay() {
         let is_pipe = !src.is_seekable();
         let mut d = open_bytes(src).unwrap();
         let s = &d.streams()[0];
-        assert_eq!((s.codec, s.audio.sample_rate(), s.audio.layout().channels()), (CodecId::Mp3, 44100, 2));
-        assert_eq!((s.audio.format(), s.time_base), (SampleFormat::F32, TimeBase::new(1, 44100).unwrap()));
+        assert_eq!(
+            (s.codec, s.audio.sample_rate(), s.audio.layout().channels()),
+            (CodecId::Mp3, 44100, 2)
+        );
+        assert_eq!(
+            (s.audio.format(), s.time_base),
+            (SampleFormat::F32, TimeBase::new(1, 44100).unwrap())
+        );
         assert!(s.extradata.is_empty());
         // Only a seekable input can count its frames without an info frame.
         assert_eq!(s.frames, if is_pipe { None } else { Some(10 * 1152 - 529) });
@@ -114,9 +120,16 @@ fn leading_zeros_and_junk_with_false_syncs_are_skipped() {
 
 #[test]
 fn leading_junk_is_bounded() {
-    let bytes = [&vec![0u8; MAX_LEADING_JUNK as usize + 10][..], &frames(H128, 3)].concat();
+    let bytes = [
+        &vec![0u8; MAX_LEADING_JUNK as usize + 10][..],
+        &frames(H128, 3),
+    ]
+    .concat();
     let e = open_bytes(pipe(&bytes)).err().unwrap();
-    assert!(matches!(e, Error::Malformed { ref what } if what.contains("no MPEG audio frame")), "{e:?}");
+    assert!(
+        matches!(e, Error::Malformed { ref what } if what.contains("no MPEG audio frame")),
+        "{e:?}"
+    );
 }
 
 #[test]
@@ -213,7 +226,10 @@ fn layer_one_and_two_are_named_and_refused() {
     let bytes = frames(l2, 3);
     match open_bytes(pipe(&bytes)).err().unwrap() {
         Error::Unsupported { what } => {
-            assert_eq!(what, "mp3: MPEG-1 layer II audio is not supported, only layer III");
+            assert_eq!(
+                what,
+                "mp3: MPEG-1 layer II audio is not supported, only layer III"
+            );
         }
         e => panic!("{e:?}"),
     }
@@ -382,16 +398,36 @@ fn tags_of(tag: &[u8]) -> Vec<(String, String)> {
 }
 
 fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 #[test]
 fn id3v23_utf16_text_comment_and_genre_reference() {
     let body = [
-        id3_frame(3, b"TIT2", 0, &[&[1][..], &utf16le_bom("Ünïcode title")].concat()),
+        id3_frame(
+            3,
+            b"TIT2",
+            0,
+            &[&[1][..], &utf16le_bom("Ünïcode title")].concat(),
+        ),
         id3_frame(3, b"TPE1", 0, b"\x00Artist\x00"),
         id3_frame(3, b"TCON", 0, b"\x00(17)"),
-        id3_frame(3, b"COMM", 0, &[&[1][..], b"eng", &utf16le_bom(""), &[0, 0], &utf16le_bom("A comment")].concat()),
+        id3_frame(
+            3,
+            b"COMM",
+            0,
+            &[
+                &[1][..],
+                b"eng",
+                &utf16le_bom(""),
+                &[0, 0],
+                &utf16le_bom("A comment"),
+            ]
+            .concat(),
+        ),
         id3_frame(3, b"COMM", 0, b"\x00engiTunNORM\x00 0000"),
         id3_frame(3, b"APIC", 0, &[0u8; 64]),
         id3_frame(3, b"TYER", 0, b"\x002001"),
@@ -418,7 +454,19 @@ fn id3v24_utf8_several_values_utf16be_and_long_syncsafe_frames() {
     let body = [
         id3_frame(4, b"TPE1", 0, b"\x03First\x00Second"),
         id3_frame(4, b"TALB", 0, &[&[3][..], long.as_bytes()].concat()),
-        id3_frame(4, b"TIT2", 0, &[&[2][..], &"Big end".encode_utf16().flat_map(u16::to_be_bytes).collect::<Vec<_>>()].concat()),
+        id3_frame(
+            4,
+            b"TIT2",
+            0,
+            &[
+                &[2][..],
+                &"Big end"
+                    .encode_utf16()
+                    .flat_map(u16::to_be_bytes)
+                    .collect::<Vec<_>>(),
+            ]
+            .concat(),
+        ),
         id3_frame(4, b"TCON", 0, b"\x0313\x00Synthwave"),
         id3_frame(4, b"TDRC", 0, b"\x032024-05-01"),
         id3_frame(4, b"TPE2", 0, b"\x03Band"),
@@ -447,10 +495,18 @@ fn id3v24_utf8_several_values_utf16be_and_long_syncsafe_frames() {
 #[test]
 fn id3v24_frame_unsynchronisation_data_length_and_an_extended_header() {
     // "\xFF\x00" in the frame stands for "\xFF"; the four data-length bytes come first.
-    let frame = id3_frame(4, b"TIT2", 0x0003, &[&[0, 0, 0, 3][..], b"\x00a\xFF\x00b"].concat());
+    let frame = id3_frame(
+        4,
+        b"TIT2",
+        0x0003,
+        &[&[0, 0, 0, 3][..], b"\x00a\xFF\x00b"].concat(),
+    );
     let ext = [0, 0, 0, 6, 1, 0];
     let body = [&ext[..], &frame].concat();
-    assert_eq!(tags_of(&id3_tag(4, 0x40, &body)), kv(&[("TITLE", "a\u{FF}b")]));
+    assert_eq!(
+        tags_of(&id3_tag(4, 0x40, &body)),
+        kv(&[("TITLE", "a\u{FF}b")])
+    );
 }
 
 #[test]
@@ -466,7 +522,10 @@ fn id3v23_whole_tag_unsynchronisation_and_extended_header() {
             unsync.push(0);
         }
     }
-    assert_eq!(tags_of(&id3_tag(3, 0xC0, &unsync)), kv(&[("TITLE", "\u{FF}title")]));
+    assert_eq!(
+        tags_of(&id3_tag(3, 0xC0, &unsync)),
+        kv(&[("TITLE", "\u{FF}title")])
+    );
 }
 
 #[test]
@@ -524,7 +583,11 @@ fn genre_forms() {
         ("(", "("),
     ] {
         let body = id3_frame(4, b"TCON", 0, &[&[3][..], raw.as_bytes()].concat());
-        assert_eq!(tags_of(&id3_tag(4, 0, &body)), kv(&[("GENRE", want)]), "{raw}");
+        assert_eq!(
+            tags_of(&id3_tag(4, 0, &body)),
+            kv(&[("GENRE", want)]),
+            "{raw}"
+        );
     }
 }
 
@@ -545,7 +608,9 @@ fn hostile_id3_tags_never_panic() {
     for _ in 0..2000 {
         let mut t = good.clone();
         for _ in 0..4 {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let i = (seed >> 33) as usize % t.len();
             t[i] = (seed >> 13) as u8;
         }

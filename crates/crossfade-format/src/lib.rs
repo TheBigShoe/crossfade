@@ -220,12 +220,8 @@ mod tests {
             let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
             unsupported(open_demuxer(Box::new(src), &Limits::default()))
         };
-        let mp3 = vec![0xFF, 0xFB, 0x90, 0x00, 0, 0];
-        let mut tagged = b"ID3\x03\0\0\0\0\0\x02xx".to_vec();
-        tagged.extend(&mp3);
+        // The MP3 reader is built; its routing is tested in its own module.
         for (bytes, name) in [
-            (mp3, "mp3"),
-            (tagged, "mp3"),
             (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
             (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
         ] {
