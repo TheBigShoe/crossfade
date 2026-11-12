@@ -154,6 +154,10 @@ impl PacketReader {
 }
 
 #[cfg(test)]
+#[path = "seek_tests.rs"]
+mod seek_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ogg::page::PageReader;
