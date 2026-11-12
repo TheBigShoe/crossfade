@@ -119,3 +119,20 @@ fn a_reader_on_a_pipe_cannot_seek() {
         );
     }
 }
+
+#[test]
+fn a_streaming_wav_ends_where_its_source_ends() {
+    let (mut file, audio) = pcm_file(FormatId::Wav, CodecId::PcmS16Le, 2, 3000);
+    // No tags after the audio: the data chunk runs to the end of the file.
+    let at = file.windows(4).position(|w| w == b"data").unwrap();
+    file.truncate(at + 8 + audio.len());
+    file[at + 4..at + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut d = open_bytes(&file);
+    assert_eq!(d.streams()[0].frames, None);
+    assert_eq!(d.seek(2999).unwrap(), 2999);
+    assert_eq!(rest(d.as_mut(), 2999), audio[2999 * 4..]);
+    assert_eq!(d.seek(5000).unwrap(), 3000);
+    assert!(!d.read_packet(&mut Packet::default()).unwrap());
+    assert_eq!(d.seek(1).unwrap(), 1);
+    assert_eq!(rest(d.as_mut(), 1), audio[4..]);
+}

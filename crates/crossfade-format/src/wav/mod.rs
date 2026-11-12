@@ -5,7 +5,7 @@ mod mux;
 
 // The AIFF reader streams with the same primitives.
 pub use demux::WavDemuxer;
-pub(crate) use demux::{fill, fill_exact, skip};
+pub(crate) use demux::{fill, fill_exact, origin, seek_to, skip};
 pub use mux::WavMuxer;
 
 /// Whole frames per packet; the last packet of a stream may be shorter.
