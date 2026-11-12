@@ -58,7 +58,7 @@ fn walk(bytes: &[u8]) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     let mut at = 0;
     while at + 7 <= bytes.len() {
-        let h = crossfade_aac::adts::Header::parse(&bytes[at..]).unwrap();
+        let h = Header::parse(&bytes[at..]).unwrap();
         let end = at + usize::from(h.frame_length);
         if end > bytes.len() {
             break;
@@ -102,7 +102,7 @@ fn every_fixture_opens_with_its_stream_and_every_frame_as_a_packet() {
             "{name}"
         );
         assert_eq!(s.frames, Some(count as u64 * 1024), "{name}");
-        let h = crossfade_aac::adts::Header::parse(&bytes).unwrap();
+        let h = Header::parse(&bytes).unwrap();
         assert_eq!(s.extradata, h.audio_specific_config(), "{name}");
         let got = packets(&mut *d);
         assert_eq!(got.len(), count, "{name}");
@@ -204,7 +204,8 @@ fn garbage_between_frames_is_skipped_and_counting_goes_on() {
 #[test]
 fn too_much_garbage_is_malformed() {
     let clean = frames(4);
-    let first = walk(&clean)[0].len() + 7;
+    // After the second frame: the first is confirmed by it.
+    let first = walk(&clean)[..2].iter().map(|p| p.len() + 7).sum::<usize>();
     let dirty = [
         &clean[..first],
         &vec![0u8; MAX_RESYNC + 1][..],
@@ -213,6 +214,7 @@ fn too_much_garbage_is_malformed() {
     .concat();
     let mut d = open_pipe(dirty.clone()).unwrap();
     let mut p = Packet::default();
+    assert!(d.read_packet(&mut p).unwrap());
     assert!(d.read_packet(&mut p).unwrap());
     assert_eq!(
         d.read_packet(&mut p),
@@ -248,7 +250,7 @@ fn the_crc_is_skipped_with_the_header() {
     for i in 0..3u8 {
         let mut h = header(12, 2);
         h[1] = 0xF0; // protection_absent 0
-        let len = 12 + 9;
+        let len = 9 + 10;
         h[3] = 2 << 6 | (len >> 11) as u8;
         h[4] = (len >> 3) as u8;
         h[5] = ((len & 7) as u8) << 5 | 0x1F;
@@ -335,9 +337,7 @@ fn channel_configuration_zero_takes_its_channels_from_the_first_blocks_pce() {
         bytes.extend(header(pce.len(), 0));
         bytes.extend(pce);
     }
-    let pc = crossfade_aac::asc::ProgramConfig::from_raw_data_block(&pce)
-        .unwrap()
-        .unwrap();
+    let pc = ProgramConfig::from_raw_data_block(&pce).unwrap().unwrap();
     assert_eq!(pc.channels(), 3, "{pc:?}");
     let d = open_bytes(bytes).unwrap();
     assert_eq!(
