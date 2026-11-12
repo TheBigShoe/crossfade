@@ -276,6 +276,9 @@ fn container_names_read_as_people_write_them() {
         ("flac", "FLAC"),
         ("aiff", "AIFF"),
         ("ogg", "Ogg"),
+        ("mp3", "MP3"),
+        ("mp4", "MP4"),
+        ("adts", "AAC (ADTS)"),
     ] {
         let mut d = mono_u8_unknown_length();
         d.format = raw_name.into();
@@ -283,6 +286,22 @@ fn container_names_read_as_people_write_them() {
         assert_eq!(raw(&d, "format"), raw_name);
     }
     assert_eq!(crossfade_app::inspector::format_name("future"), "future");
+}
+
+#[test]
+fn compressed_codec_names_read_as_people_write_them() {
+    use crossfade_app::inspector::codec_name;
+    for (raw_name, shown) in [
+        ("vorbis", "Vorbis"),
+        ("opus", "Opus"),
+        ("mp3", "MP3"),
+        ("aac", "AAC"),
+        ("alac", "ALAC"),
+        ("flac", "FLAC"),
+        ("future", "future"),
+    ] {
+        assert_eq!(codec_name(raw_name), shown);
+    }
 }
 
 #[test]
