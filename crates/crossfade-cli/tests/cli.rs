@@ -145,3 +145,36 @@ fn fade_out_help_states_its_limit() {
     let help = text(&run(&["convert", "--help"]).stdout);
     assert!(help.contains("--fade-out <TIME>   Fade out to silence over this long, ending at the end (at most 10 minutes)"), "{help}");
 }
+
+/// The new containers are recognised by their bytes, whatever the extension, and their readers
+/// say plainly that they are not built yet.
+#[test]
+fn probing_an_mp3_mp4_or_aac_file_says_its_reader_is_not_built_yet() {
+    let dir = std::env::temp_dir().join(format!("crossfade-cli-lossy-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases: [(&str, &[u8], &str); 4] = [
+        ("a.mp3", b"ID3\x04\0\0\0\0\0\x01x\xFF\xFB\x90\0", "mp3"),
+        ("b.m4a", b"\0\0\0\x20ftypM4A \0\0\0\0", "mp4"),
+        ("c.aac", b"\xFF\xF1\x50\x80\0\0", "adts"),
+        ("d.opus", b"not ogg at all", ""),
+    ];
+    for (name, bytes, reader) in cases {
+        std::fs::write(dir.join(name), bytes).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_crossfade"))
+            .args(["probe", name])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{name}");
+        let err = text(&out.stderr);
+        if reader.is_empty() {
+            assert!(err.contains("unrecognised format"), "{name}: {err}");
+        } else {
+            assert!(
+                err.contains(&format!("reading {reader} is not built yet")),
+                "{name}: {err}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
