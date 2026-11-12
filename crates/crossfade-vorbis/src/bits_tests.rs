@@ -14,7 +14,9 @@ fn bits_come_least_significant_first() {
 
 #[test]
 fn reads_up_to_32_bits_at_any_alignment() {
-    let data: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(37).wrapping_add(11)).collect();
+    let data: Vec<u8> = (0..16u8)
+        .map(|i| i.wrapping_mul(37).wrapping_add(11))
+        .collect();
     let mut all = 0u128;
     for (i, b) in data.iter().enumerate() {
         all |= u128::from(*b) << (8 * i);
@@ -22,10 +24,8 @@ fn reads_up_to_32_bits_at_any_alignment() {
     for start in 0..40u32 {
         for n in 0..=32u32 {
             let mut r = BitReader::new(&data);
-            r.read(start % 32).unwrap();
-            if start >= 32 {
-                r.read(start - 32).unwrap();
-            }
+            r.read(start.min(32)).unwrap();
+            r.read(start - start.min(32)).unwrap();
             let want = ((all >> start) & ((1u128 << n) - 1)) as u32;
             assert_eq!(r.read(n), Some(want), "start {start} n {n}");
         }

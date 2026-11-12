@@ -15,7 +15,7 @@ fn ident_bytes(channels: u8, rate: u32, bs: u8) -> Vec<u8> {
     b
 }
 
-fn malformed(r: Result<impl std::fmt::Debug, Error>) -> String {
+fn malformed(r: std::result::Result<impl std::fmt::Debug, Error>) -> String {
     match r {
         Err(Error::Malformed(what)) => what,
         other => panic!("expected Malformed, got {other:?}"),
@@ -84,7 +84,10 @@ fn comment_bytes(vendor: &[u8], entries: &[&[u8]]) -> Vec<u8> {
 
 #[test]
 fn a_comment_header_gives_the_vendor_and_key_value_pairs() {
-    let b = comment_bytes(b"Xiph.Org libVorbis I 20200704", &[b"TITLE=One", b"artist=Two=2", b"junk"]);
+    let b = comment_bytes(
+        b"Xiph.Org libVorbis I 20200704",
+        &[b"TITLE=One", b"artist=Two=2", b"junk"],
+    );
     let c = Comments::parse(&b, 1 << 20).unwrap();
     assert_eq!(c.vendor, "Xiph.Org libVorbis I 20200704");
     assert_eq!(c.entries, ["TITLE=One", "artist=Two=2", "junk"]);
@@ -143,8 +146,14 @@ fn comments_past_the_callers_byte_limit_are_refused() {
 
 #[test]
 fn header_kind_tells_the_three_headers_from_audio() {
-    assert_eq!(header_kind(&ident_bytes(1, 8000, 0x88)), Some(HeaderKind::Ident));
-    assert_eq!(header_kind(&comment_bytes(b"", &[])), Some(HeaderKind::Comment));
+    assert_eq!(
+        header_kind(&ident_bytes(1, 8000, 0x88)),
+        Some(HeaderKind::Ident)
+    );
+    assert_eq!(
+        header_kind(&comment_bytes(b"", &[])),
+        Some(HeaderKind::Comment)
+    );
     assert_eq!(header_kind(b"\x05vorbis\x00"), Some(HeaderKind::Setup));
     assert_eq!(header_kind(b"\x00"), None);
     assert_eq!(header_kind(b"\x05vorbix"), None);
