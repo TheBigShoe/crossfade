@@ -105,8 +105,14 @@ fn broken_headers_are_malformed_and_say_why() {
         (with(&|b| b[0] = 0xFE), "adts: no sync word"),
         (with(&|b| b[1] &= 0xEF), "adts: no sync word"),
         (with(&|b| b[1] |= 0x02), "adts: layer must be 0"),
-        (with(&|b| b[2] = b[2] & 0xC3 | 13 << 2), "adts: reserved sampling index 13"),
-        (with(&|b| b[2] = b[2] & 0xC3 | 15 << 2), "adts: reserved sampling index 15"),
+        (
+            with(&|b| b[2] = b[2] & 0xC3 | 13 << 2),
+            "adts: reserved sampling index 13",
+        ),
+        (
+            with(&|b| b[2] = b[2] & 0xC3 | 15 << 2),
+            "adts: reserved sampling index 15",
+        ),
         (
             with(&|b| {
                 b[1] |= 0x08;
@@ -115,7 +121,11 @@ fn broken_headers_are_malformed_and_say_why() {
             "adts: MPEG-2 profile 3 is reserved",
         ),
     ] {
-        assert_eq!(malformed_text(&bytes), format!("aac: {why}"), "{bytes:02X?}");
+        assert_eq!(
+            malformed_text(&bytes),
+            format!("aac: {why}"),
+            "{bytes:02X?}"
+        );
     }
     let short = Header {
         frame_length: 6,

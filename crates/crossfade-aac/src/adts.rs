@@ -1,6 +1,7 @@
 //! The ADTS frame header (ISO/IEC 13818-7 and 14496-3 1.A.2.2): seven bytes, nine with the
 //! CRC, in front of every frame of a `.aac` file.
 
+use crate::Error;
 use crate::error::{Result, malformed};
 
 /// The sampling rates of `sampling_frequency_index` 0 to 12 (14496-3 Table 1.18).
@@ -33,32 +34,87 @@ impl Header {
     pub const MIN_LEN: usize = 7;
 
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let _ = bytes;
-        Err(malformed("adts: not parsed yet"))
+        let Some(b) = bytes.get(..Self::MIN_LEN) else {
+            return Err(Error::UnexpectedEnd);
+        };
+        if b[0] != 0xFF || b[1] & 0xF0 != 0xF0 {
+            return Err(malformed("adts: no sync word"));
+        }
+        if b[1] & 0x06 != 0 {
+            return Err(malformed("adts: layer must be 0"));
+        }
+        let mpeg2 = b[1] & 0x08 != 0;
+        let protection_absent = b[1] & 0x01 != 0;
+        let profile = b[2] >> 6;
+        let sampling_index = (b[2] >> 2) & 0xF;
+        if sampling_index > 12 {
+            return Err(malformed(format!(
+                "adts: reserved sampling index {sampling_index}"
+            )));
+        }
+        if mpeg2 && profile == 3 {
+            return Err(malformed("adts: MPEG-2 profile 3 is reserved"));
+        }
+        let channel_configuration = (b[2] & 1) << 2 | b[3] >> 6;
+        let frame_length = u16::from(b[3] & 3) << 11 | u16::from(b[4]) << 3 | u16::from(b[5] >> 5);
+        let buffer_fullness = u16::from(b[5] & 0x1F) << 6 | u16::from(b[6] >> 2);
+        let header = Self {
+            mpeg2,
+            protection_absent,
+            profile,
+            sampling_index,
+            channel_configuration,
+            frame_length,
+            buffer_fullness,
+            raw_data_blocks: (b[6] & 3) + 1,
+        };
+        let len = header.header_len();
+        if usize::from(frame_length) < len {
+            return Err(malformed(format!(
+                "adts: frame length {frame_length} is shorter than its {len}-byte header"
+            )));
+        }
+        if bytes.len() < len {
+            return Err(Error::UnexpectedEnd);
+        }
+        Ok(header)
     }
 
+    /// Seven bytes, or nine with the CRC.
     pub fn header_len(&self) -> usize {
-        0
+        if self.protection_absent { 7 } else { 9 }
     }
 
+    /// The bytes after the header: the raw data block(s).
     pub fn payload_len(&self) -> usize {
-        0
+        usize::from(self.frame_length) - self.header_len()
     }
 
+    /// The MPEG-4 audio object type (2 is AAC LC; MPEG-2's profiles map the same way).
     pub fn object_type(&self) -> u8 {
-        0
+        self.profile + 1
     }
 
     pub fn sample_rate(&self) -> u32 {
-        0
+        SAMPLE_RATES[usize::from(self.sampling_index)]
     }
 
+    /// The two-byte AudioSpecificConfig carrying the same object type, rate and channels, so
+    /// one decoder path serves ADTS and MP4.
     pub fn audio_specific_config(&self) -> [u8; 2] {
-        [0; 2]
+        let v = u16::from(self.object_type()) << 11
+            | u16::from(self.sampling_index) << 7
+            | u16::from(self.channel_configuration) << 3;
+        v.to_be_bytes()
     }
 
-    pub fn same_stream(&self, _other: &Self) -> bool {
-        false
+    /// Whether `other` can be a header of the same stream: the fields that are fixed for a
+    /// stream (version, profile, rate, channels) agree.
+    pub fn same_stream(&self, other: &Self) -> bool {
+        self.mpeg2 == other.mpeg2
+            && self.profile == other.profile
+            && self.sampling_index == other.sampling_index
+            && self.channel_configuration == other.channel_configuration
     }
 }
 
