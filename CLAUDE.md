@@ -15,13 +15,13 @@ and a GPUI desktop app (`crossfade-gui`).
 2. **Commits:** `<type>: <what changed>`, types `feat fix refactor docs test
    chore style`. Stage files by name (never `git add .` or `-A`). End every
    message with the `Co-Authored-By:` trailer.
-3. **Pure Rust engine.** The engine crates (core, flac, loudness, resample, format, codec, dsp, graph)
+3. **Pure Rust engine.** The engine crates (core, flac, vorbis, loudness, resample, format, codec, dsp, graph)
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
 4. **Dependency direction:** core, flac, loudness, resample and the codec crates <- codec, dsp
    <- format <- graph <- app <- cli, ui. Standalone crates (`crossfade-flac` first, then
-   `crossfade-loudness`, and the codec crates to come, `crossfade-vorbis`, `crossfade-opus`,
+   `crossfade-loudness`, and the codec crates, `crossfade-vorbis` and, to come, `crossfade-opus`,
    `crossfade-mp3`, `crossfade-aac`, `crossfade-alac`, the same way) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
    adapters. `crossfade-resample` stands alone the same way (only `libm`). A demuxer needs a codec's frame-header parser to split packets (as
@@ -47,9 +47,10 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-core` | Time types, audio description (named layouts: `ChannelLayout::from_name`), codec ids (`CodecId`: PCM, FLAC, ALAC and the lossy Vorbis, Opus, MP3 and AAC, `is_lossy`), `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`, `Filter`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
 | `crossfade-format` | Containers (`FormatId`): WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (a mapping per codec: FLAC; Vorbis and Opus not built yet) and writer (FLAC inside), MP3, MP4 and ADTS recognised but their readers not built yet, tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking (through ID3v2 tags, whose bytes the MP3 reader receives), `create_muxer` writes |
 | `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out; `push_frame` decodes on threads), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic at any thread count), the `pool` its threads run on, its own `Error`. Other projects can use it alone |
+| `crossfade-vorbis` | Standalone Vorbis I decoding, only `libm` (the same bits on every platform): `Ident`, `Comments` and `Setup` parsing (every length and index checked, degenerate values refused, allocations charged to a caller's budget first), `Modes` (a packet's block size from its first bits) and `packet_frames`, the `Decoder` (packet in, interleaved `f32` out, `reset`), `speakers` (the channel table), `pack_headers`/`unpack_headers` (Xiph lacing), its own `Error`; a test bitstream `writer` behind a feature. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
-| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
+| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz) and from `crossfade-vorbis`'s decoder (headers from `extradata` in Xiph lacing, `F32` out in `vorbis::layout`'s order, undecodable packets skipped); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
 | `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
