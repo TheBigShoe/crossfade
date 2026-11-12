@@ -102,8 +102,57 @@ impl FrameHeader {
     /// Parses a header. Refuses a broken sync, the reserved version, the reserved layer, bitrate
     /// index 15 and sample-rate index 3.
     pub fn parse(bytes: &[u8; 4]) -> Result<Self, Error> {
-        let _ = (bytes, SAMPLE_RATES);
-        Err(Error::NotAHeader("not built"))
+        let [b0, b1, b2, b3] = *bytes;
+        if b0 != 0xFF || b1 & 0xE0 != 0xE0 {
+            return Err(Error::NotAHeader("no frame sync"));
+        }
+        let version = match (b1 >> 3) & 3 {
+            0 => Version::Mpeg25,
+            2 => Version::Mpeg2,
+            3 => Version::Mpeg1,
+            _ => return Err(Error::NotAHeader("reserved version")),
+        };
+        let layer = match (b1 >> 1) & 3 {
+            1 => Layer::III,
+            2 => Layer::II,
+            3 => Layer::I,
+            _ => return Err(Error::NotAHeader("reserved layer")),
+        };
+        let bitrate_index = b2 >> 4;
+        if bitrate_index == 15 {
+            return Err(Error::NotAHeader("reserved bitrate"));
+        }
+        let rate_index = usize::from((b2 >> 2) & 3);
+        let Some(&base) = SAMPLE_RATES.get(rate_index) else {
+            return Err(Error::NotAHeader("reserved sample rate"));
+        };
+        let sample_rate = match version {
+            Version::Mpeg1 => base,
+            Version::Mpeg2 => base / 2,
+            Version::Mpeg25 => base / 4,
+        };
+        // Emphasis 2 is reserved but harmless: decoders ignore emphasis, so it is kept.
+        let emphasis = b3 & 3;
+        let mode = match b3 >> 6 {
+            0 => ChannelMode::Stereo,
+            1 => ChannelMode::JointStereo,
+            2 => ChannelMode::DualChannel,
+            _ => ChannelMode::Mono,
+        };
+        Ok(Self {
+            version,
+            layer,
+            crc: b1 & 1 == 0,
+            bitrate_index,
+            sample_rate,
+            padding: b2 & 2 != 0,
+            private: b2 & 1 != 0,
+            mode,
+            mode_extension: (b3 >> 4) & 3,
+            copyright: b3 & 8 != 0,
+            original: b3 & 4 != 0,
+            emphasis,
+        })
     }
 
     pub fn channels(&self) -> u8 {

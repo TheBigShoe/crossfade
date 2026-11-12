@@ -46,7 +46,7 @@ fn every_version_and_rate_with_lengths() {
 
 #[test]
 fn layers_one_and_two_parse_for_naming() {
-    let l2 = parse([0xFF, 0xFD, 0x94, 0x00]).unwrap();
+    let l2 = parse([0xFF, 0xFD, 0x84, 0x00]).unwrap();
     assert_eq!((l2.layer, l2.bitrate(), l2.sample_rate), (Layer::II, 128_000, 48000));
     assert_eq!((l2.frame_len(), l2.samples_per_frame(), l2.side_info_len()), (Some(384), 1152, 0));
     let l1 = parse([0xFF, 0xFF, 0x92, 0x00]).unwrap();
