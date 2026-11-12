@@ -106,8 +106,8 @@ fn identify(head: &[u8]) -> Option<FormatId> {
 }
 
 /// What an MPEG audio frame header at the start of `head` says the stream is: 11 sync bits,
-/// then layer bits 00 for AAC in ADTS (whose sync is 12 bits, `0xFFF`, and whose sampling
-/// index is below 13), else MPEG layers I-III (`Mp3`) when the version is not the reserved 01,
+/// then layer bits 00 for AAC in ADTS (whose sync is 12 bits, `0xFFF`, whose sampling index is
+/// below 13, and whose profile is not MPEG-2's reserved 3), else MPEG layers I-III (`Mp3`) when the version is not the reserved 01,
 /// the bitrate index is not 1111 and the sample-rate index is not 11. The other fields of an
 /// ADTS header sit where MPEG's version, bitrate and rate are, so those checks are MPEG's only.
 pub(crate) fn mpeg_audio(head: &[u8]) -> Option<FormatId> {
@@ -118,7 +118,10 @@ pub(crate) fn mpeg_audio(head: &[u8]) -> Option<FormatId> {
         return None;
     }
     if (b1 >> 1) & 3 == 0 {
-        return (b1 & 0xF0 == 0xF0 && (b2 >> 2) & 0xF < 13).then_some(FormatId::Adts);
+        // MPEG-2 (id bit set) has no profile 3; MPEG-4's is LTP.
+        let reserved_profile = b1 & 0x08 != 0 && b2 >> 6 == 3;
+        let adts = b1 & 0xF0 == 0xF0 && (b2 >> 2) & 0xF < 13 && !reserved_profile;
+        return adts.then_some(FormatId::Adts);
     }
     let (version, bitrate, rate) = ((b1 >> 3) & 3, b2 >> 4, (b2 >> 2) & 3);
     (version != 1 && bitrate != 0xF && rate != 3).then_some(FormatId::Mp3)
