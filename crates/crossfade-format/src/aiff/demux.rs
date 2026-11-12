@@ -1,5 +1,5 @@
 use super::{FRAMES_PER_PACKET, TEXT_CAP, extended};
-use crate::wav::{fill, fill_exact, skip};
+use crate::wav::{fill, fill_exact, origin, seek_to, skip};
 use crossfade_core::{
     AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, MediaSource, Packet, StreamInfo,
     Tags, TimeBase, tag_keys,
@@ -17,6 +17,8 @@ pub struct AiffDemuxer {
     tags: Tags,
     bytes_per_frame: usize,
     frames_per_packet: usize,
+    /// Where the first frame is.
+    data_start: u64,
     next_frame: u64,
     frames_left: u64,
     /// A short file still yields the whole frames that were there; the error follows.
@@ -288,6 +290,7 @@ impl AiffDemuxer {
             tags,
             bytes_per_frame,
             frames_per_packet,
+            data_start: pos,
             next_frame: 0,
             frames_left: u64::from(comm.frames),
             pending_eof: None,
@@ -335,5 +338,19 @@ impl Demuxer for AiffDemuxer {
         self.next_frame += n;
         self.frames_left -= n;
         Ok(true)
+    }
+
+    /// Exact: PCM has no pre-roll.
+    fn seek(&mut self, pts: i64) -> Result<i64, Error> {
+        let origin = origin(self.source.as_mut(), self.pos)?;
+        let total = self.streams[0].frames.unwrap_or(0);
+        let target = u64::try_from(pts).unwrap_or(0).min(total);
+        let offset = self.data_start + target * self.bytes_per_frame as u64;
+        seek_to(self.source.as_mut(), origin, &mut self.pos, offset)?;
+        self.next_frame = target;
+        self.frames_left = total - target;
+        self.pending_eof = None;
+        self.done = false;
+        i64::try_from(target).map_err(|_| Error::Overflow)
     }
 }

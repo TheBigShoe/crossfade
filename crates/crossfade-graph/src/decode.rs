@@ -2,16 +2,14 @@
 //! app. No encoder, no muxer, nothing written.
 
 use crate::run::CancelToken;
-use crate::timeline::Timeline;
-use crossfade_codec::decoder_for_threads;
-use crossfade_core::{AudioFrame, Demuxer, Error, JobIo, Limits, Packet, SampleFormat, StreamInfo};
+use crate::session::DecodeSession;
+use crossfade_core::{AudioFrame, Error, JobIo, Limits, SampleFormat, StreamInfo};
 use crossfade_dsp::convert::convert_format;
-use crossfade_format::open_demuxer;
 
 /// Decodes the one audio stream of `path` and hands every frame on its timeline to `on_frame`
 /// (priming and padding trimmed, see `Timeline`), as `f64`, in order, with pts counting frames
-/// from 0. `cancel` is polled between packets; an error from
-/// `on_frame` stops the pass and is returned. Returns the stream.
+/// from 0. `cancel` is polled between frames; an error from `on_frame` stops the pass and is
+/// returned. Returns the stream.
 pub fn decode_frames(
     path: &str,
     io: &mut dyn JobIo,
@@ -22,69 +20,34 @@ pub fn decode_frames(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    let (_, demuxer) = open_demuxer(io.open_source(path)?, limits)?;
-    decode_demuxed(demuxer, path, limits, cancel, on_frame)
+    decode_session(DecodeSession::open(path, io, limits)?, cancel, on_frame)
 }
 
-/// [`decode_frames`] once `path` is open.
-pub(crate) fn decode_demuxed(
-    mut demuxer: Box<dyn Demuxer>,
-    path: &str,
-    limits: &Limits,
+/// [`decode_frames`] once the input is open.
+fn decode_session(
+    mut session: DecodeSession,
     cancel: &CancelToken,
     on_frame: &mut dyn FnMut(&StreamInfo, &AudioFrame) -> Result<(), Error>,
 ) -> Result<StreamInfo, Error> {
-    let [stream] = demuxer.streams() else {
-        return Err(Error::Unsupported {
-            what: format!(
-                "{} streams in {path} (exactly one is supported)",
-                demuxer.streams().len()
-            ),
-        });
-    };
-    let stream = stream.clone();
-    let mut decoder = decoder_for_threads(&stream, limits.max_threads)?;
-    let timeline = Timeline::new(&stream);
-    let mut packet = Packet::default();
+    let stream = session.stream().clone();
     let mut decoded = AudioFrame::new(&stream.audio);
     let mut working = AudioFrame::new(&stream.audio);
-    let mut deliver = |decoder: &mut dyn crossfade_core::Decoder| -> Result<(), Error> {
-        while decoder.receive_frame(&mut decoded)? {
-            if !timeline.trim(&mut decoded) {
-                continue;
-            }
-            convert_format(&decoded, SampleFormat::F64, &mut working)?;
-            on_frame(&stream, &working)?;
-        }
-        Ok(())
-    };
     loop {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        match demuxer.read_packet(&mut packet) {
-            Ok(true) => {
-                decoder.send_packet(&packet)?;
-                deliver(&mut *decoder)?;
-            }
-            Ok(false) => break,
-            Err(e) => {
-                // A frame read before this packet may hold an earlier error (see `Pipeline`).
-                decoder.flush()?;
-                deliver(&mut *decoder)?;
-                return Err(e);
-            }
+        if !session.next_frame(&mut decoded)? {
+            return Ok(stream);
         }
+        convert_format(&decoded, SampleFormat::F64, &mut working)?;
+        on_frame(&stream, &working)?;
     }
-    decoder.drain();
-    deliver(&mut *decoder)?;
-    Ok(stream)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Samples, TimeBase};
+    use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Demuxer, Packet, Samples, TimeBase};
     use std::collections::VecDeque;
 
     struct Scripted {
@@ -127,10 +90,8 @@ mod tests {
             .into(),
         });
         let mut seen = Vec::new();
-        decode_demuxed(
-            demuxer,
-            "scripted",
-            &Limits::default(),
+        decode_session(
+            DecodeSession::with_demuxer(demuxer, "scripted", &Limits::default()).unwrap(),
             &CancelToken::new(),
             &mut |_, f| {
                 let Samples::F64(v) = &f.samples else {
