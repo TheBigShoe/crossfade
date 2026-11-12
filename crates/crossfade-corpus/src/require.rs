@@ -154,6 +154,65 @@ mod tests {
         assert!(try_require(&m, &c, "flac/subset/01").is_ok());
     }
 
+    fn setup_many(tag: &str) -> (Manifest, Cache) {
+        let mut text = String::new();
+        for (id, name, data) in [
+            ("opus/rfc8251/b.bit", "b.bit", &b"bb"[..]),
+            ("opus/rfc8251/a.dec", "a.dec", b"aaa"),
+            ("vorbis/xiph/v.ogg", "v.ogg", b"v"),
+        ] {
+            let e = entry(id, name, data);
+            text += &format!(
+                "[[file]]\nid = \"{}\"\nname = \"{}\"\nurl = \"{}\"\nbytes = {}\nsha256 = \"{}\"\n\
+                 licence = \"x\"\nexpect = \"data\"\n",
+                e.id,
+                e.name,
+                e.url().unwrap(),
+                e.bytes,
+                e.sha256
+            );
+        }
+        (Manifest::parse(&text).unwrap(), Cache::new(temp_dir(tag)))
+    }
+
+    fn place_all(m: &Manifest, c: &Cache, data: &[(&str, &[u8])]) {
+        for (id, d) in data {
+            place(c, m.get(id).unwrap(), d);
+        }
+    }
+
+    #[test]
+    fn require_all_returns_every_file_under_a_prefix_in_manifest_order() {
+        let (m, c) = setup_many("reqall-ok");
+        place_all(
+            &m,
+            &c,
+            &[
+                ("opus/rfc8251/b.bit", b"bb"),
+                ("opus/rfc8251/a.dec", b"aaa"),
+            ],
+        );
+        let got = require_all_from(&m, &c, "opus/");
+        let ids: Vec<_> = got.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["opus/rfc8251/b.bit", "opus/rfc8251/a.dec"]);
+        assert_eq!(got[0].1, c.path(m.get("opus/rfc8251/b.bit").unwrap()));
+    }
+
+    #[test]
+    #[should_panic(expected = "opus/rfc8251/a.dec")]
+    fn require_all_fails_naming_the_first_missing_file() {
+        let (m, c) = setup_many("reqall-missing");
+        place_all(&m, &c, &[("opus/rfc8251/b.bit", b"bb")]);
+        require_all_from(&m, &c, "opus/");
+    }
+
+    #[test]
+    fn a_prefix_that_matches_nothing_is_an_error() {
+        let (m, c) = setup_many("reqall-none");
+        let msg = try_require_all(&m, &c, "mp3/").unwrap_err().to_string();
+        assert!(msg.contains("mp3/") && msg.contains("corpus.toml"), "{msg}");
+    }
+
     #[test]
     fn workspace_root_holds_the_committed_manifest() {
         assert!(workspace_root().join("corpus.toml").is_file());
