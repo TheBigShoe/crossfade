@@ -8,6 +8,8 @@ pub(crate) struct Replay {
     head: Vec<u8>,
     /// How much of `head` has been handed out; equal to `head.len()` once replaying is over.
     pos: usize,
+    /// Where `head` starts in the input: bytes before it went elsewhere (a tag).
+    base: u64,
     inner: Box<dyn MediaSource>,
 }
 
@@ -17,28 +19,58 @@ impl Replay {
         mut inner: Box<dyn MediaSource>,
         n: usize,
     ) -> Result<(Vec<u8>, Self), Error> {
-        let mut head = vec![0u8; n];
-        let mut got = 0;
-        while got < n {
-            match inner.read(&mut head[got..]) {
-                Ok(0) => break,
-                Ok(k) => got += k,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-        head.truncate(got);
-        let replay = Self {
-            head: head.clone(),
+        let mut head = Vec::new();
+        read_up_to(&mut *inner, &mut head, n)?;
+        Ok((head.clone(), Self::new(head, inner, 0)))
+    }
+
+    /// Hands out `head`, which starts at byte `base` of the input, then the rest of `inner`,
+    /// whose position is just past `head`.
+    pub(crate) fn new(head: Vec<u8>, inner: Box<dyn MediaSource>, base: u64) -> Self {
+        Self {
+            head,
             pos: 0,
+            base,
             inner,
-        };
-        Ok((head, replay))
+        }
     }
 
     fn replaying(&self) -> bool {
         self.pos < self.head.len()
     }
+}
+
+/// Appends to `head` until it holds `n` bytes or the input ends; reads at most 64 KiB at a
+/// time, so a length taken from the input allocates only what the input really has.
+pub(crate) fn read_up_to(
+    inner: &mut dyn MediaSource,
+    head: &mut Vec<u8>,
+    n: usize,
+) -> Result<(), Error> {
+    const CHUNK: usize = 64 << 10;
+    while head.len() < n {
+        let got = head.len();
+        head.resize(got + (n - got).min(CHUNK), 0);
+        let read = loop {
+            match inner.read(&mut head[got..]) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                other => break other,
+            }
+        };
+        match read {
+            Ok(k) => {
+                head.truncate(got + k);
+                if k == 0 {
+                    break;
+                }
+            }
+            Err(e) => {
+                head.truncate(got);
+                return Err(e.into());
+            }
+        }
+    }
+    Ok(())
 }
 
 impl MediaSource for Replay {
@@ -63,7 +95,8 @@ impl MediaSource for Replay {
         // where the reader logically is.
         let pos = match pos {
             SeekFrom::Current(d) if self.replaying() => {
-                let target = (self.pos as i64).checked_add(d).filter(|t| *t >= 0);
+                let here = self.base as i64 + self.pos as i64;
+                let target = here.checked_add(d).filter(|t| *t >= 0);
                 SeekFrom::Start(target.ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "seek before start")
                 })? as u64)
