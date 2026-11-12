@@ -4,11 +4,13 @@
 mod bits;
 mod codebook;
 mod error;
+mod floor;
 pub mod header;
+mod residue;
 mod setup;
 #[cfg(any(test, feature = "writer"))]
 pub mod writer;
 
 pub use error::{Error, Result};
-pub use setup::{Modes, Setup, packet_frames};
 pub use header::{Comments, HeaderKind, Ident, header_kind};
+pub use setup::{Modes, Setup, packet_frames};

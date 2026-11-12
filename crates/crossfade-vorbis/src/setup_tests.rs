@@ -272,13 +272,55 @@ fn a_cut_short_setup_is_refused_wherever_it_ends() {
 
 #[test]
 fn fields_that_must_be_zero_or_set_are_checked() {
-    assert!(refused_tweaked(Tweaks { kind: 3, ..AS_WRITTEN }).contains("not a setup header"));
-    assert!(refused_tweaked(Tweaks { time_value: 1, ..AS_WRITTEN }).contains("time"));
-    assert!(refused_tweaked(Tweaks { mapping_type: 1, ..AS_WRITTEN }).contains("mapping type"));
-    assert!(refused_tweaked(Tweaks { reserved: 2, ..AS_WRITTEN }).contains("reserved"));
-    assert!(refused_tweaked(Tweaks { window: 1, ..AS_WRITTEN }).contains("window"));
-    assert!(refused_tweaked(Tweaks { transform: 1, ..AS_WRITTEN }).contains("transform"));
-    assert!(refused_tweaked(Tweaks { framing: false, ..AS_WRITTEN }).contains("framing"));
+    assert!(
+        refused_tweaked(Tweaks {
+            kind: 3,
+            ..AS_WRITTEN
+        })
+        .contains("not a setup header")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            time_value: 1,
+            ..AS_WRITTEN
+        })
+        .contains("time")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            mapping_type: 1,
+            ..AS_WRITTEN
+        })
+        .contains("mapping type")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            reserved: 2,
+            ..AS_WRITTEN
+        })
+        .contains("reserved")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            window: 1,
+            ..AS_WRITTEN
+        })
+        .contains("window")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            transform: 1,
+            ..AS_WRITTEN
+        })
+        .contains("transform")
+    );
+    assert!(
+        refused_tweaked(Tweaks {
+            framing: false,
+            ..AS_WRITTEN
+        })
+        .contains("framing")
+    );
 }
 
 fn with(f: impl FnOnce(&mut w::Setup)) -> w::Setup {
@@ -385,15 +427,10 @@ fn bad_residues_are_refused() {
     );
     assert!(e.contains("begins after it ends"), "{e}");
     assert!(refused(&with(|s| s.residues[0].classbook = 4), 2).contains("codebook 4"));
-    assert!(
-        refused(&with(|s| s.residues[2].books[0][5] = Some(200)), 2).contains("codebook 200")
-    );
+    assert!(refused(&with(|s| s.residues[2].books[0][5] = Some(200)), 2).contains("codebook 200"));
     assert!(refused(&with(|s| s.residues[0].books[0][1] = Some(2)), 2).contains("no values"));
     // Two classifications need two entries in the one-entry class book.
-    let e = refused(
-        &with(|s| s.residues[0].books.push([None; 8])),
-        2,
-    );
+    let e = refused(&with(|s| s.residues[0].books.push([None; 8])), 2);
     assert!(e.contains("classifications"), "{e}");
 }
 
@@ -454,5 +491,8 @@ fn lewtons_terabyte_codebook_is_refused_before_anything_is_allocated() {
     b.put(15, 4);
     b.put(0, 1);
     let e = Setup::parse(&b.into_bytes(), &ident(2), 1 << 20).err();
-    assert!(matches!(e, Some(Error::Malformed(ref w)) if w.contains("too large")), "{e:?}");
+    assert!(
+        matches!(e, Some(Error::Malformed(ref w)) if w.contains("too large")),
+        "{e:?}"
+    );
 }
