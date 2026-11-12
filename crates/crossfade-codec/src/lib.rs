@@ -2,6 +2,7 @@
 //! reverse. Built on the types in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+pub mod alac;
 pub mod flac;
 pub mod pcm;
 
@@ -41,6 +42,9 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Flac {
         return flac::decode::decoder_threads(stream, threads);
+    }
+    if stream.codec == CodecId::Alac {
+        return alac::decoder(stream);
     }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),
