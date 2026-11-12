@@ -1,15 +1,89 @@
-//! Which container a byte stream holds, from its first bytes.
+//! Which container a byte stream holds, from its first bytes, read without seeking so a pipe
+//! works: the reader gets the bytes back in front of the rest.
 
 use crate::FormatId;
+use crate::replay::{Replay, read_up_to};
+use crossfade_core::{Error, Limits, MediaSource};
+
+/// What `sniff` found.
+pub(crate) struct Sniffed {
+    pub(crate) format: FormatId,
+    /// The ID3v2 tags in front of an MPEG or ADTS stream, back to back as read; `source` starts
+    /// after them. In front of FLAC they stay in `source`, whose reader skips them.
+    pub(crate) id3: Option<Vec<u8>>,
+    pub(crate) source: Replay,
+}
+
+/// Identifies the container. ID3v2 tags (one or more, each checked against the allocation
+/// limit before it is read) may precede FLAC or MPEG audio, or ADTS.
+pub(crate) fn sniff(mut inner: Box<dyn MediaSource>, limits: &Limits) -> Result<Sniffed, Error> {
+    let mut head = Vec::new();
+    read_up_to(&mut *inner, &mut head, SNIFF_LEN)?;
+    let mut tags = 0;
+    while head[tags..].starts_with(b"ID3") {
+        read_up_to(&mut *inner, &mut head, tags + ID3_HEADER)?;
+        let header = head
+            .get(tags..tags + ID3_HEADER)
+            .ok_or(Error::UnexpectedEof {
+                offset: head.len() as u64,
+            })?;
+        let end = usize::try_from(tags as u64 + id3v2_len(header)).map_err(|_| Error::Overflow)?;
+        limits.check_alloc(end)?;
+        read_up_to(&mut *inner, &mut head, end + SNIFF_LEN)?;
+        if head.len() < end {
+            return Err(Error::UnexpectedEof {
+                offset: head.len() as u64,
+            });
+        }
+        tags = end;
+    }
+    if tags == 0 {
+        let format = identify(&head).ok_or(Error::UnrecognisedFormat)?;
+        return Ok(Sniffed {
+            format,
+            id3: None,
+            source: Replay::new(head, inner, 0),
+        });
+    }
+    let format = match &head[tags..] {
+        [b'f', b'L', b'a', b'C', ..] => FormatId::Flac,
+        after => mpeg_audio(after).ok_or(Error::UnrecognisedFormat)?,
+    };
+    if format == FormatId::Flac {
+        return Ok(Sniffed {
+            format,
+            id3: None,
+            source: Replay::new(head, inner, 0),
+        });
+    }
+    let rest = head.split_off(tags);
+    Ok(Sniffed {
+        format,
+        id3: Some(head),
+        source: Replay::new(rest, inner, tags as u64),
+    })
+}
+
+const ID3_HEADER: usize = 10;
+
+/// A whole ID3v2 tag's length from its ten-byte header: the header, the syncsafe size, and ten
+/// more when the footer flag is set.
+fn id3v2_len(header: &[u8]) -> u64 {
+    let size = header[6..10]
+        .iter()
+        .fold(0u64, |acc, &b| acc << 7 | u64::from(b & 0x7F));
+    let footer = if header[5] & 0x10 != 0 { 10 } else { 0 };
+    ID3_HEADER as u64 + size + footer
+}
 
 /// The longest magic: `FORM` + size + `AIFF`.
 pub(crate) const SNIFF_LEN: usize = 12;
 
-pub(crate) fn identify(head: &[u8]) -> Option<FormatId> {
+/// The container whose magic `head` starts with (ID3v2 tags are `sniff`'s).
+fn identify(head: &[u8]) -> Option<FormatId> {
     match head {
         [b'R', b'I', b'F', b'F', ..] | [b'R', b'F', b'6', b'4', ..] => Some(FormatId::Wav),
-        // An ID3v2 tag may precede the stream marker; the FLAC reader skips it.
-        [b'f', b'L', b'a', b'C', ..] | [b'I', b'D', b'3', ..] => Some(FormatId::Flac),
+        [b'f', b'L', b'a', b'C', ..] => Some(FormatId::Flac),
         [
             b'F',
             b'O',
@@ -26,7 +100,8 @@ pub(crate) fn identify(head: &[u8]) -> Option<FormatId> {
             ..,
         ] => Some(FormatId::Aiff),
         [b'O', b'g', b'g', b'S', ..] => Some(FormatId::Ogg),
-        _ => None,
+        [_, _, _, _, b'f', b't', b'y', b'p', ..] => Some(FormatId::Mp4),
+        _ => mpeg_audio(head),
     }
 }
 
@@ -185,7 +260,14 @@ mod tests {
 
     #[test]
     fn anything_else_behind_a_tag_is_unrecognised() {
-        for after in [&b""[..], b"RIFF\0\0\0\0WAVE", b"OggS", b"fLa", &[0xFF, 0xFB], b"junk"] {
+        for after in [
+            &b""[..],
+            b"RIFF\0\0\0\0WAVE",
+            b"OggS",
+            b"fLa",
+            &[0xFF, 0xFB],
+            b"junk",
+        ] {
             let bytes = input(&[&id3(8, false), after]);
             assert_eq!(
                 sniffed(&bytes).err(),
@@ -201,9 +283,7 @@ mod tests {
         for cut in [3, 9, 10, 50, tag.len() - 1] {
             assert_eq!(
                 sniffed(&tag[..cut]).err(),
-                Some(Error::UnexpectedEof {
-                    offset: cut as u64
-                }),
+                Some(Error::UnexpectedEof { offset: cut as u64 }),
                 "{cut}"
             );
         }

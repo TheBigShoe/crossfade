@@ -2,8 +2,11 @@
 //! muxers that write them back. Built on the seams in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+pub mod adts;
 pub mod aiff;
 pub mod flac;
+pub mod mp3;
+pub mod mp4;
 pub mod ogg;
 mod replay;
 mod sniff;
@@ -11,7 +14,6 @@ pub mod vorbis_comment;
 pub mod wav;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
-use replay::Replay;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -61,16 +63,17 @@ pub fn open_demuxer(
     source: Box<dyn MediaSource>,
     limits: &Limits,
 ) -> Result<(FormatId, Box<dyn Demuxer>), Error> {
-    let (head, source) = Replay::sniff(source, sniff::SNIFF_LEN)?;
-    let format = sniff::identify(&head).ok_or(Error::UnrecognisedFormat)?;
-    let source: Box<dyn MediaSource> = Box::new(source);
+    let sniffed = sniff::sniff(source, limits)?;
+    let format = sniffed.format;
+    let source: Box<dyn MediaSource> = Box::new(sniffed.source);
     let demuxer: Box<dyn Demuxer> = match format {
         FormatId::Wav => Box::new(wav::WavDemuxer::new(source, limits)?),
         FormatId::Flac => flac::open(source, limits)?,
         FormatId::Aiff => aiff::open(source, limits)?,
         FormatId::Ogg => ogg::open(source, limits)?,
-        // Not sniffed yet.
-        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => return Err(Error::UnrecognisedFormat),
+        FormatId::Mp3 => mp3::open(source, sniffed.id3, limits)?,
+        FormatId::Mp4 => mp4::open(source, limits)?,
+        FormatId::Adts => adts::open(source, limits)?,
     };
     Ok((format, demuxer))
 }
@@ -149,7 +152,11 @@ mod tests {
             (FormatId::Wav, "wav", &["wav", "WAV", "Wave", "wave"][..]),
             (FormatId::Flac, "flac", &["flac", "FLAC"][..]),
             (FormatId::Aiff, "aiff", &["aiff", "aif", "aifc", "AIF"][..]),
-            (FormatId::Ogg, "ogg", &["ogg", "oga", "OGG", "opus", "Opus"][..]),
+            (
+                FormatId::Ogg,
+                "ogg",
+                &["ogg", "oga", "OGG", "opus", "Opus"][..],
+            ),
             (FormatId::Mp3, "mp3", &["mp3", "MP3"][..]),
             (FormatId::Mp4, "mp4", &["mp4", "m4a", "m4b", "M4A"][..]),
             (FormatId::Adts, "adts", &["aac", "adts", "AAC"][..]),
@@ -159,7 +166,9 @@ mod tests {
                 assert_eq!(FormatId::from_extension(ext), Some(id), "{ext}");
             }
         }
-        for ext in ["", "mp2", "wav ", ".wav", "wavx", "flc", "ogv", "m4v", "mov"] {
+        for ext in [
+            "", "mp2", "wav ", ".wav", "wavx", "flc", "ogv", "m4v", "mov",
+        ] {
             assert_eq!(FormatId::from_extension(ext), None, "{ext:?}");
         }
     }

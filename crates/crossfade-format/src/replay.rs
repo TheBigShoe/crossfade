@@ -14,16 +14,6 @@ pub(crate) struct Replay {
 }
 
 impl Replay {
-    /// Reads up to `n` bytes (fewer at end of input) and returns them with the replaying source.
-    pub(crate) fn sniff(
-        mut inner: Box<dyn MediaSource>,
-        n: usize,
-    ) -> Result<(Vec<u8>, Self), Error> {
-        let mut head = Vec::new();
-        read_up_to(&mut *inner, &mut head, n)?;
-        Ok((head.clone(), Self::new(head, inner, 0)))
-    }
-
     /// Hands out `head`, which starts at byte `base` of the input, then the rest of `inner`,
     /// whose position is just past `head`.
     pub(crate) fn new(head: Vec<u8>, inner: Box<dyn MediaSource>, base: u64) -> Self {
@@ -135,14 +125,24 @@ mod tests {
         }
     }
 
+    /// What sniffing does: up to `n` bytes, and a replay of them in front of the rest.
+    fn head_and_replay(
+        mut inner: Box<dyn MediaSource>,
+        n: usize,
+    ) -> Result<(Vec<u8>, Replay), Error> {
+        let mut head = Vec::new();
+        read_up_to(&mut *inner, &mut head, n)?;
+        Ok((head.clone(), Replay::new(head, inner, 0)))
+    }
+
     fn sniffed(src: impl MediaSource + 'static, n: usize) -> Replay {
-        Replay::sniff(Box::new(src), n).unwrap().1
+        head_and_replay(Box::new(src), n).unwrap().1
     }
 
     #[test]
     fn sniff_returns_the_head_and_replays_it_before_the_rest() {
         let data: Vec<u8> = (0..40).collect();
-        let (head, mut r) = Replay::sniff(Box::new(Cursor::new(data.clone())), 12).unwrap();
+        let (head, mut r) = head_and_replay(Box::new(Cursor::new(data.clone())), 12).unwrap();
         assert_eq!(head, &data[..12]);
         assert_eq!(drain(&mut r), data);
     }
@@ -150,10 +150,10 @@ mod tests {
     #[test]
     fn short_inputs_give_a_short_head_even_through_one_byte_reads() {
         let src = FaultySource::new(Cursor::new(vec![1u8, 2, 3])).max_read(1);
-        let (head, mut r) = Replay::sniff(Box::new(src), 12).unwrap();
+        let (head, mut r) = head_and_replay(Box::new(src), 12).unwrap();
         assert_eq!(head, [1, 2, 3]);
         assert_eq!(drain(&mut r), [1, 2, 3]);
-        let (head, mut r) = Replay::sniff(Box::new(Cursor::new(Vec::new())), 12).unwrap();
+        let (head, mut r) = head_and_replay(Box::new(Cursor::new(Vec::new())), 12).unwrap();
         assert!(head.is_empty());
         assert_eq!(drain(&mut r), []);
     }
@@ -204,7 +204,11 @@ mod tests {
         assert_eq!(r.seek(SeekFrom::Current(3)).unwrap(), 15);
         assert_eq!(r.read(&mut two).unwrap(), 2);
         assert_eq!(two, [15, 16]);
-        let mut r = Replay::new(vec![10, 11, 12, 13], Box::new(Cursor::new(vec![0u8; 40])), 10);
+        let mut r = Replay::new(
+            vec![10, 11, 12, 13],
+            Box::new(Cursor::new(vec![0u8; 40])),
+            10,
+        );
         assert!(r.seek(SeekFrom::Current(-11)).is_err());
         assert_eq!(r.seek(SeekFrom::Current(-10)).unwrap(), 0);
         let pipe = FaultySource::new(Cursor::new(vec![14u8, 15])).not_seekable();
