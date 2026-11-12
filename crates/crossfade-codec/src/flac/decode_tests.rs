@@ -588,3 +588,77 @@ fn the_engine_sees_the_same_frames_and_errors_at_any_thread_count() {
         );
     }
 }
+
+/// `before` sent (taking what is ready after each, or not, as `take_before` says), then a reset,
+/// then `after` to the end, as engine_run does.
+fn run_with_reset(
+    info: &StreamInfo,
+    before: &[Packet],
+    take_before: bool,
+    after: &[Packet],
+    threads: usize,
+) -> (Vec<(i64, Vec<i16>)>, Option<Error>) {
+    let mut d = decoder_threads(info, threads).unwrap();
+    let mut out = AudioFrame::new(&info.audio);
+    for p in before {
+        if d.send_packet(p).is_err() {
+            break;
+        }
+        while take_before && matches!(d.receive_frame(&mut out), Ok(true)) {}
+    }
+    d.reset();
+    let mut frames = Vec::new();
+    let mut take = |d: &mut Box<dyn Decoder>, frames: &mut Vec<(i64, Vec<i16>)>| loop {
+        match d.receive_frame(&mut out) {
+            Ok(true) => frames.push((out.pts, s16(&out))),
+            Ok(false) => return None,
+            Err(e) => return Some(e),
+        }
+    };
+    for p in after {
+        if let Err(e) = d.send_packet(p) {
+            return (frames, Some(e));
+        }
+        if let Some(e) = take(&mut d, &mut frames) {
+            return (frames, Some(e));
+        }
+    }
+    d.drain();
+    let e = take(&mut d, &mut frames);
+    (frames, e)
+}
+
+#[test]
+fn after_a_reset_the_frames_are_a_fresh_decoders_and_the_end_is_not_checked() {
+    let (info, packets) = encoded_stream(40, 300);
+    let (want, end) = engine_run(&info, &packets[25..], 1);
+    // A fresh decoder fed the tail alone finds the stream short at its end.
+    assert!(matches!(end, Some(Error::Malformed { .. })), "{end:?}");
+    assert_eq!(want.len(), 16);
+    assert_eq!(want[0].0, packets[25].pts);
+    for threads in [1, 2, 4, 0] {
+        for take_before in [true, false] {
+            assert_eq!(
+                run_with_reset(&info, &packets[..12], take_before, &packets[25..], threads),
+                (want.clone(), None),
+                "{threads} threads, taken {take_before}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_reset_forgets_a_failed_frame() {
+    let (info, packets) = encoded_stream(12, 0);
+    let mut broken = packets[..6].to_vec();
+    let mid = broken[3].data.len() / 2;
+    broken[3].data[mid] ^= 0x10;
+    let (want, _) = engine_run(&info, &packets[8..], 1);
+    for threads in [1, 4] {
+        assert_eq!(
+            run_with_reset(&info, &broken, false, &packets[8..], threads),
+            (want.clone(), None),
+            "{threads} threads"
+        );
+    }
+}

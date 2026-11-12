@@ -238,3 +238,19 @@ fn a_caller_frame_of_another_format_does_not_poison_the_decoder() {
         assert_eq!(frame.samples, Samples::S16(vec![1]));
     }
 }
+
+#[test]
+fn a_reset_drops_the_frame_not_yet_received() {
+    let info = stream(SampleFormat::S16, 1, 8000);
+    let mut d = PcmDecoder::new(&info).unwrap();
+    let mut out = AudioFrame::new(&info.audio);
+    d.reset();
+    assert_eq!(d.receive_frame(&mut out), Ok(false));
+    d.send_packet(&packet(0, &[1, 0, 2, 0])).unwrap();
+    d.reset();
+    assert_eq!(d.receive_frame(&mut out), Ok(false));
+    // Ready for a packet from anywhere, as a fresh decoder is.
+    d.send_packet(&packet(500, &[3, 0])).unwrap();
+    assert_eq!(d.receive_frame(&mut out), Ok(true));
+    assert_eq!((out.pts, &out.samples), (500, &Samples::S16(vec![3])));
+}
