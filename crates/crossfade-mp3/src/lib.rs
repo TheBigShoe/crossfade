@@ -23,11 +23,22 @@
 //! 2025 Robert B. Langer); the rest is written from ISO/IEC 11172-3 and 13818-3.
 #![forbid(unsafe_code)]
 
+mod bits;
 mod decoder;
 mod error;
 pub mod header;
+mod huffman;
+mod hybrid;
 pub mod info;
+mod lanes;
+mod requantize;
+mod scalefactors;
+mod sideinfo;
+mod stereo;
+mod synth;
+mod tables;
 
-pub use decoder::{Decoder, FrameInfo, MAX_FRAME_LEN, OUTPUT_LIMIT};
+pub use decoder::{Decoder, FrameInfo, MAX_FRAME_LEN};
 pub use error::Error;
 pub use header::{ChannelMode, FrameHeader, Layer, Version};
+pub use synth::OUTPUT_LIMIT;
