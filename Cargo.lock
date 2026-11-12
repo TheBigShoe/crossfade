@@ -1545,6 +1545,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-corpus",
  "crossfade-flac",
+ "crossfade-mp3",
  "crossfade-testkit",
  "proptest",
  "sha2 0.10.9",
