@@ -192,6 +192,10 @@ impl Decoder for PcmDecoder {
     }
 
     fn drain(&mut self) {}
+
+    fn reset(&mut self) {
+        self.has_pending = false;
+    }
 }
 
 #[derive(Debug)]

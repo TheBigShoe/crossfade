@@ -65,6 +65,12 @@ pub trait Decoder {
     fn flush(&mut self) -> Result<(), Error> {
         Ok(())
     }
+
+    /// Forgets all stream state (packets and frames pending, overlap history, a drain or a
+    /// failure in progress), as if freshly created for the same stream: the next packet may come
+    /// from anywhere in it (after [`Demuxer::seek`]). Required, so that no decoder can carry
+    /// history across a seek by forgetting to say what it holds.
+    fn reset(&mut self);
 }
 
 /// Frames in, packets out; same protocol as [`Decoder`]: call

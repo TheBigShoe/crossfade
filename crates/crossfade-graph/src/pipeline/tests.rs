@@ -75,6 +75,9 @@ impl Decoder for ScriptedDecoder {
         Ok(true)
     }
     fn drain(&mut self) {}
+    fn reset(&mut self) {
+        self.0 = None;
+    }
 }
 
 struct ScriptedEncoder {
@@ -346,6 +349,7 @@ impl Decoder for LaggingDecoder {
         Ok(false)
     }
     fn drain(&mut self) {}
+    fn reset(&mut self) {}
     fn flush(&mut self) -> Result<(), Error> {
         self.flushed = true;
         Err(Error::Malformed {
