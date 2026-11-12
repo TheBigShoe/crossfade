@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("usage: decode <in.aac|in.blk> <out.f32>".into());
     };
     let bytes = std::fs::read(input)?;
-    let mut blocks: Vec<&[u8]> = Vec::new();
+    let mut blocks: Vec<(&[u8], usize)> = Vec::new();
     let config;
     if input.ends_with(".blk") {
         let mut at = 0;
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             at += 4 + n;
         }
         config = AudioSpecificConfig::parse(items[0])?;
-        blocks.extend(&items[1..]);
+        blocks.extend(items[1..].iter().map(|&b| (b, 1)));
     } else {
         let first = Header::parse(&bytes)?;
         config = AudioSpecificConfig::parse(&first.audio_specific_config())?;
@@ -37,16 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if end > bytes.len() {
                 break;
             }
-            blocks.extend(h.raw_data_blocks(&bytes[at..end])?);
+            // Several blocks with no CRC to split them come as one, decoded back to back.
+            blocks.extend(
+                h.raw_data_blocks(&bytes[at..end])?
+                    .map(|b| (b.data, usize::from(b.blocks))),
+            );
             at = end;
         }
     }
     let mut decoder = Decoder::new(&config)?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(output)?);
     let mut pcm = Vec::new();
-    for (i, block) in blocks.iter().enumerate() {
+    for (i, &(block, n)) in blocks.iter().enumerate() {
         decoder
-            .decode(block, &mut pcm)
+            .decode_blocks(block, n, &mut pcm)
             .map_err(|e| format!("block {i}: {e}"))?;
         for s in &pcm {
             out.write_all(&s.to_le_bytes())?;

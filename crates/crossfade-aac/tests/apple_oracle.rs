@@ -154,3 +154,22 @@ fn decoding_after_a_reset_is_decoding_afresh() {
     }
     assert_eq!(first, again);
 }
+
+#[test]
+fn blocks_back_to_back_decode_as_they_do_one_at_a_time() {
+    let (mut d, blocks) = open("tone_44k_stereo");
+    let mut one = Vec::new();
+    let mut out = Vec::new();
+    for b in &blocks[..12] {
+        d.decode(b, &mut out).unwrap();
+        one.extend_from_slice(&out);
+    }
+    d.reset();
+    let mut joined = Vec::new();
+    for group in blocks[..12].chunks(4) {
+        let data = group.concat();
+        assert_eq!(d.decode_blocks(&data, group.len(), &mut out), Ok(4096));
+        joined.extend_from_slice(&out);
+    }
+    assert_eq!(one, joined);
+}

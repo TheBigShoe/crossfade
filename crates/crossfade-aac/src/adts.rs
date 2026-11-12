@@ -2,7 +2,7 @@
 //! CRC, in front of every frame of a `.aac` file.
 
 use crate::Error;
-use crate::error::{Result, malformed, unsupported};
+use crate::error::{Result, malformed};
 
 /// The sampling rates of `sampling_frequency_index` 0 to 12 (14496-3 Table 1.18).
 pub const SAMPLE_RATES: [u32; 13] = [
@@ -118,24 +118,37 @@ impl Header {
     }
 }
 
+/// Raw data blocks of a frame: one, or (when they cannot be split) several back to back, each
+/// starting on a byte boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawDataBlock<'a> {
+    pub data: &'a [u8],
+    /// How many blocks `data` holds.
+    pub blocks: u8,
+}
+
 /// The raw data blocks of a frame, in order (see [`Header::raw_data_blocks`]).
 pub struct RawDataBlocks<'a> {
     frame: &'a [u8],
     ranges: [(usize, usize); 4],
     count: usize,
+    blocks_each: u8,
     next: usize,
 }
 
 impl<'a> Iterator for RawDataBlocks<'a> {
-    type Item = &'a [u8];
+    type Item = RawDataBlock<'a>;
 
-    fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<RawDataBlock<'a>> {
         if self.next == self.count {
             return None;
         }
         let (start, end) = self.ranges[self.next];
         self.next += 1;
-        Some(&self.frame[start..end])
+        Some(RawDataBlock {
+            data: &self.frame[start..end],
+            blocks: self.blocks_each,
+        })
     }
 }
 
@@ -143,7 +156,7 @@ impl Header {
     /// The raw data blocks of `frame` (this header and the rest of the frame, at least
     /// `frame_length` bytes). With a CRC, a frame of several blocks gives their positions, and
     /// each block is followed by its own CRC, which is dropped; without one, a frame of several
-    /// blocks cannot be split without decoding it, and is refused.
+    /// blocks cannot be split without decoding it, and comes as one item holding them all.
     pub fn raw_data_blocks<'a>(&self, frame: &'a [u8]) -> Result<RawDataBlocks<'a>> {
         let len = usize::from(self.frame_length);
         if frame.len() < len {
@@ -153,17 +166,14 @@ impl Header {
             frame,
             ranges: [(0, 0); 4],
             count: usize::from(self.raw_data_blocks),
+            blocks_each: 1,
             next: 0,
         };
-        if blocks.count == 1 {
+        if blocks.count == 1 || self.protection_absent {
+            blocks.blocks_each = self.raw_data_blocks;
+            blocks.count = 1;
             blocks.ranges[0] = (self.header_len(), len);
             return Ok(blocks);
-        }
-        if self.protection_absent {
-            return Err(unsupported(format!(
-                "adts: frames of {} raw data blocks without a CRC are not supported",
-                blocks.count
-            )));
         }
         // Positions count from the first block, after the table and the header's CRC.
         let first = 7 + 2 * blocks.count;

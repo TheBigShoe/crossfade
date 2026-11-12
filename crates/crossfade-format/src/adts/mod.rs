@@ -13,7 +13,8 @@
 //!   `StreamInfo::frames` (known when the source can seek and the frames were indexed once) is
 //!   every decoded frame, the encoder's priming and padding included.
 //! - A frame of several blocks is split at the positions its CRC-protected header gives; without
-//!   a CRC it cannot be split without decoding, and is refused by name.
+//!   a CRC it cannot be split without decoding, and is one packet as long as all its blocks
+//!   (the decoder decodes them in turn), which a seek lands at the start of.
 
 use crossfade_aac::adts::Header;
 use crossfade_aac::asc::ProgramConfig;
@@ -138,6 +139,8 @@ pub(crate) struct AdtsReader {
     /// The rest of a frame of several blocks: the frame, and its blocks' ranges still to go.
     pending: Vec<u8>,
     pending_blocks: Vec<(usize, usize)>,
+    /// Blocks in the packet being handed out.
+    blocks_in_packet: u8,
     index: Option<Index>,
 }
 
@@ -168,7 +171,7 @@ impl AdtsReader {
             .raw_data_blocks(&input.available()[..len])
             .map_err(aac_error)?
             .next()
-            .unwrap_or_default();
+            .map_or(&[][..], |b| b.data);
         let layout = layout(&first, first_block)?;
         let audio = AudioSpec::new(first.sample_rate(), SampleFormat::F32, layout)?;
         let time_base = TimeBase::new(1, i64::from(first.sample_rate()))?;
@@ -181,6 +184,7 @@ impl AdtsReader {
             next: 0,
             pending: Vec::new(),
             pending_blocks: Vec::new(),
+            blocks_in_packet: 1,
             index: None,
         };
         if seekable {
@@ -308,35 +312,32 @@ impl Demuxer for AdtsReader {
             };
             let len = usize::from(h.frame_length);
             let frame = &self.input.available()[..len];
-            let mut blocks = h.raw_data_blocks(frame).map_err(aac_error)?;
-            if h.raw_data_blocks == 1 {
-                out.data
-                    .extend_from_slice(blocks.next().unwrap_or_default());
-            } else {
-                self.pending.clear();
-                self.pending.extend_from_slice(frame);
-                // Kept in reverse, so the next block is popped off the end.
-                let base = frame.as_ptr() as usize;
-                self.pending_blocks.extend(
-                    blocks
-                        .map(|b| (b.as_ptr() as usize - base, b.len()))
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev(),
-                );
+            let base = frame.as_ptr() as usize;
+            let blocks = h.raw_data_blocks(frame).map_err(aac_error)?;
+            self.pending.clear();
+            self.pending.extend_from_slice(frame);
+            let mut items = [(0, 0); 4];
+            let mut count = 0;
+            for b in blocks {
+                items[count] = (b.data.as_ptr() as usize - base, b.data.len());
+                self.blocks_in_packet = b.blocks;
+                count += 1;
             }
+            // Kept in reverse, so the next is popped off the end.
+            self.pending_blocks.extend(items[..count].iter().rev());
             self.input.consume(len);
         }
         if let Some((start, n)) = self.pending_blocks.pop() {
             out.data.extend_from_slice(&self.pending[start..start + n]);
         }
+        let blocks = u64::from(self.blocks_in_packet);
         out.stream = 0;
         out.pts = i64::try_from(self.next)
             .ok()
             .and_then(|n| n.checked_mul(FRAME_LEN))
             .ok_or(Error::Overflow)?;
-        out.duration = FRAME_LEN as u64;
-        self.next += 1;
+        out.duration = blocks * FRAME_LEN as u64;
+        self.next += blocks;
         Ok(true)
     }
 
@@ -364,6 +365,10 @@ impl Demuxer for AdtsReader {
                 break;
             };
             let n = u64::from(h.raw_data_blocks);
+            if block + n > target && h.protection_absent {
+                // A frame that cannot be split: from its start.
+                break;
+            }
             if block + n > target {
                 // The target is inside this frame: read it and drop the blocks before.
                 self.next = block;

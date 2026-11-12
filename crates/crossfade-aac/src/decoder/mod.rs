@@ -184,9 +184,35 @@ impl Decoder {
     }
 
     /// Decodes one raw data block into `out` (cleared first): [`FRAME_LEN`] interleaved frames
-    /// of [`channels`](Self::channels) samples. Returns the frame count.
+    /// of [`channels`](Self::channels) samples. Returns the frame count. Bytes after the
+    /// block's end are ignored.
     pub fn decode(&mut self, raw_data_block: &[u8], out: &mut Vec<f32>) -> Result<usize> {
-        let mut r = BitReader::new(raw_data_block);
+        self.decode_blocks(raw_data_block, 1, out)
+    }
+
+    /// Decodes `blocks` raw data blocks that follow one another in `data`, each starting on a
+    /// byte boundary (an ADTS frame of several blocks without a CRC, whose block boundaries
+    /// only decoding finds), into `out` (cleared first). Returns the frame count.
+    pub fn decode_blocks(
+        &mut self,
+        data: &[u8],
+        blocks: usize,
+        out: &mut Vec<f32>,
+    ) -> Result<usize> {
+        let mut r = BitReader::new(data);
+        out.clear();
+        for i in 0..blocks {
+            if i > 0 {
+                r.byte_align();
+            }
+            self.decode_block(&mut r, out)?;
+        }
+        Ok(blocks * FRAME_LEN)
+    }
+
+    /// Decodes the block at the reader, appending its frames to `out`.
+    fn decode_block(&mut self, r: &mut BitReader<'_>, out: &mut Vec<f32>) -> Result<()> {
+        let r = &mut *r;
         self.decoded.fill(false);
         let mut seen = [0usize; 3];
         loop {
@@ -200,7 +226,7 @@ impl Decoder {
                         Kind::Lfe
                     };
                     let slot = self.slot(kind, tag, &mut seen)?;
-                    self.left.read(&mut r, None, self.sampling_index)?;
+                    self.left.read(r, None, self.sampling_index)?;
                     if kind == Kind::Lfe && self.left.info.is_short() {
                         return Err(malformed("an LFE channel with short windows"));
                     }
@@ -211,7 +237,7 @@ impl Decoder {
                 ID_CPE => {
                     let tag = r.read(4) as u8;
                     let slot = self.slot(Kind::Pair, tag, &mut seen)?;
-                    self.read_pair(&mut r)?;
+                    self.read_pair(r)?;
                     self.keep(slot[0], true);
                     self.keep(slot[1], false);
                 }
@@ -231,7 +257,7 @@ impl Decoder {
                     r.skip(count * 8);
                 }
                 ID_PCE => {
-                    ProgramConfig::read(&mut r)?;
+                    ProgramConfig::read(r)?;
                 }
                 ID_FIL => {
                     let mut count = r.read(4) as usize;
@@ -257,8 +283,9 @@ impl Decoder {
                 return Err(malformed("raw data block ends inside an element"));
             }
         }
-        out.clear();
-        out.resize(FRAME_LEN * self.channels, 0.0);
+        let base = out.len();
+        out.resize(base + FRAME_LEN * self.channels, 0.0);
+        let out = &mut out[base..];
         for ch in 0..self.channels {
             let (spec, seq, shape) = &mut self.frame[ch];
             if !self.decoded[ch] {
@@ -278,7 +305,7 @@ impl Decoder {
                 *o = s;
             }
         }
-        Ok(FRAME_LEN)
+        Ok(())
     }
 
     /// Forgets all stream state, as if new.
