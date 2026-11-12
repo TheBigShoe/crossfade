@@ -274,6 +274,11 @@ impl Codebook {
         self.entries
     }
 
+    /// Whether any entry has a codeword: decoding from a book without reads nothing.
+    pub(crate) fn has_used_entries(&self) -> bool {
+        !self.entry_of.is_empty()
+    }
+
     /// Whether the book has vector values (lookup type 1 or 2).
     pub(crate) fn has_lookup(&self) -> bool {
         self.lookup
@@ -285,6 +290,7 @@ impl Codebook {
     }
 
     /// The bytes the book holds on the heap.
+    #[cfg(test)]
     pub(crate) fn heap_bytes(&self) -> usize {
         self.table.capacity() * 4
             + self.long_codes.capacity() * 4

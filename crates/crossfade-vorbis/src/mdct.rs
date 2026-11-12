@@ -121,7 +121,12 @@ impl Imdct {
 fn fft_in_place(re: &mut [f32], im: &mut [f32], tw_re: &[f32], tw_im: &[f32]) {
     let l = re.len();
     // Half size 1: twiddle 1.
-    for (r, i) in re.chunks_exact_mut(2).zip(im.chunks_exact_mut(2)) {
+    for (r, i) in re
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(im.as_chunks_mut::<2>().0)
+    {
         let (ar, ai, br, bi) = (r[0], i[0], r[1], i[1]);
         r[0] = ar + br;
         i[0] = ai + bi;
@@ -129,7 +134,12 @@ fn fft_in_place(re: &mut [f32], im: &mut [f32], tw_re: &[f32], tw_im: &[f32]) {
         i[1] = ai - bi;
     }
     // Half size 2: twiddles 1 and -i.
-    for (r, i) in re.chunks_exact_mut(4).zip(im.chunks_exact_mut(4)) {
+    for (r, i) in re
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(im.as_chunks_mut::<4>().0)
+    {
         let (a0r, a0i, b0r, b0i) = (r[0], i[0], r[2], i[2]);
         r[0] = a0r + b0r;
         i[0] = a0i + b0i;

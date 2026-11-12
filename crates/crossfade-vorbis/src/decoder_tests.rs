@@ -5,8 +5,7 @@
 
 use super::*;
 use crate::writer::{
-    self as w, BitWriter, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue,
-    float32_pack,
+    self as w, BitWriter, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue, float32_pack,
 };
 use std::f64::consts::PI;
 
@@ -34,8 +33,9 @@ fn imdct(x: &[f64]) -> Vec<f64> {
             continue;
         }
         for (t, yt) in y.iter_mut().enumerate() {
-            *yt += v
-                * libm::cos(2.0 * PI / n as f64 * (t as f64 + 0.5 + n as f64 / 4.0) * (k as f64 + 0.5));
+            *yt += v * libm::cos(
+                2.0 * PI / n as f64 * (t as f64 + 0.5 + n as f64 / 4.0) * (k as f64 + 0.5),
+            );
         }
     }
     y
@@ -47,11 +47,18 @@ fn model(blocks: &[Block]) -> Vec<f64> {
         return vec![];
     }
     let ch = blocks[0].spectra.len();
-    let mut centres = vec![blocks[0].n / 2];
+    // Room before the first centre for a long block that starts before a short one.
+    let origin = blocks.iter().map(|b| b.n).max().unwrap();
+    let mut centres = vec![origin];
     for b in 1..blocks.len() {
         centres.push(centres[b - 1] + blocks[b - 1].n / 4 + blocks[b].n / 4);
     }
-    let end = centres[blocks.len() - 1] + blocks[blocks.len() - 1].n / 2;
+    let end = blocks
+        .iter()
+        .zip(&centres)
+        .map(|(b, c)| c + b.n / 2)
+        .max()
+        .unwrap();
     let mut timeline = vec![vec![0.0f64; end]; ch];
     for (b, block) in blocks.iter().enumerate() {
         let n = block.n;
@@ -102,6 +109,7 @@ fn assert_close(got: &[f32], want: &[f64], what: &str) {
 }
 
 /// The specification's floor 1 line (section 9.2.6) for posts (x, y) already multiplied, to n.
+#[allow(clippy::needless_range_loop)]
 fn floor_line(posts: &[(usize, i32)], n: usize) -> Vec<f64> {
     let mut out = vec![0.0; n];
     let db = |y: i32| f64::from(crate::floor::INVERSE_DB[y as usize]);
@@ -196,7 +204,9 @@ fn lewton_pcm(s: &Stream) -> (Vec<f32>, usize) {
     let mut pwr = PreviousWindowRight::new();
     let mut out = vec![];
     for p in &s.packets {
-        if let Ok(d) = read_audio_packet_generic::<InterleavedSamples<f32>>(&id, &setup, p, &mut pwr) {
+        if let Ok(d) =
+            read_audio_packet_generic::<InterleavedSamples<f32>>(&id, &setup, p, &mut pwr)
+        {
             out.extend_from_slice(&d.samples);
         }
     }
@@ -219,7 +229,12 @@ fn lewton_pcm(s: &Stream) -> (Vec<f32>, usize) {
     (out, skip * usize::from(s.channels))
 }
 
+/// lewton is the oracle only for blocks of 256 and more: below that its IMDCT (stb_vorbis's
+/// algorithm) is wrong, which these tests found; the model covers the small sizes.
 fn assert_matches_lewton(s: &Stream, what: &str) {
+    if s.block_sizes[0] < 256 {
+        return;
+    }
     let ours = s.decode_all();
     let (theirs, skip) = lewton_pcm(s);
     let ours = &ours[skip.min(ours.len())..];
@@ -227,6 +242,10 @@ fn assert_matches_lewton(s: &Stream, what: &str) {
     assert!(n > 0, "{what}: nothing to compare");
     let peak = ours.iter().fold(1.0f32, |a, v| a.max(v.abs()));
     for i in 0..n {
+        // A clamped sample says nothing about the value under it.
+        if ours[i].abs() >= OUTPUT_LIMIT {
+            continue;
+        }
         assert!(
             (ours[i] - theirs[i]).abs() <= 1e-5 * peak,
             "{what}: sample {i}: ours {} lewton {}",
@@ -270,7 +289,10 @@ fn values_of(book: &Book, e: u32) -> Vec<f64> {
 struct Rng(u64);
 impl Rng {
     fn next(&mut self) -> u32 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         (self.0 >> 33) as u32
     }
     fn below(&mut self, n: u32) -> u32 {
@@ -320,7 +342,14 @@ fn put_residue(
 }
 
 /// Spreads residue entries into a vector the way residue `kind` lays them out.
-fn lay_out(kind: u16, book: &Book, entries: &[u32], begin: usize, psize: usize, len: usize) -> Vec<f64> {
+fn lay_out(
+    kind: u16,
+    book: &Book,
+    entries: &[u32],
+    begin: usize,
+    psize: usize,
+    len: usize,
+) -> Vec<f64> {
     let dims = usize::from(book.dims);
     let per = psize / dims;
     let mut v = vec![0.0; len];
@@ -328,7 +357,11 @@ fn lay_out(kind: u16, book: &Book, entries: &[u32], begin: usize, psize: usize, 
         let base = begin + p * psize;
         for (i, &e) in chunk.iter().enumerate() {
             for (k, x) in values_of(book, e).into_iter().enumerate() {
-                let at = if kind == 0 { base + i + k * per } else { base + i * dims + k };
+                let at = if kind == 0 {
+                    base + i + k * per
+                } else {
+                    base + i * dims + k
+                };
                 v[at] += x;
             }
         }
@@ -359,7 +392,11 @@ fn the_first_packet_yields_nothing_and_each_next_from_centre_to_centre() {
     }
     let mut d = s.decoder();
     let mut out = vec![];
-    let counts: Vec<usize> = s.packets.iter().map(|p| d.decode(p, &mut out).unwrap()).collect();
+    let counts: Vec<usize> = s
+        .packets
+        .iter()
+        .map(|p| d.decode(p, &mut out).unwrap())
+        .collect();
     assert_eq!(counts, [0, 576, 1024, 576, 128, 576, 576, 128]);
     assert_eq!(out.len(), counts.iter().sum::<usize>());
     assert!(out.iter().all(|&v| v == 0.0));
@@ -382,7 +419,8 @@ fn a_spectrum_through_floor_1_and_the_imdct_matches_the_specification() {
         for (i, &m) in seq.iter().enumerate() {
             let n = usize::from(sizes[usize::from(m)]);
             let mut wr = s.start(m, i.checked_sub(1).map(|j| seq[j]), seq.get(i + 1).copied());
-            let (y0, y1) = (rng.below(256), rng.below(256));
+            // Floors below 200 keep the sum of a thousand random lines well under the limit.
+            let (y0, y1) = (rng.below(200), rng.below(200));
             put_line_floor(&mut wr, y0, y1);
             let entries = put_residue(&mut wr, &book, 1, n / 2 / 8, 8, &mut rng);
             s.packets.push(wr.into_bytes());
@@ -436,7 +474,7 @@ fn residue_types_0_1_and_2_lay_out_their_vectors_as_specified() {
         let (begin, end, psize) = (8usize, 40usize, 8usize);
         let mut setup = w::simple_setup(kind, book.clone(), end as u32, psize as u32);
         setup.residues[0].begin = begin as u32;
-        let mut s = Stream::new(2, [64, 128], setup);
+        let mut s = Stream::new(2, [256, 512], setup);
         let seq = modes_of("SSLS");
         let mut rng = Rng(9 + u64::from(kind));
         let mut blocks = vec![];
@@ -498,7 +536,7 @@ fn coupled_channels_are_restored_from_magnitude_and_angle() {
     let book = values_book(4, 2);
     let mut setup = w::simple_setup(2, book.clone(), 128, 16);
     setup.mappings[0].coupling = vec![(0, 1)];
-    let mut s = Stream::new(2, [128, 256], setup);
+    let mut s = Stream::new(2, [256, 512], setup);
     let seq = modes_of("LSSL");
     let mut rng = Rng(77);
     let mut blocks = vec![];
@@ -536,7 +574,7 @@ fn an_unused_floor_silences_its_channel_and_skips_its_residue_unless_coupled() {
         if coupled {
             setup.mappings[0].coupling = vec![(0, 1)];
         }
-        let mut s = Stream::new(2, [128, 128], setup);
+        let mut s = Stream::new(2, [256, 256], setup);
         let mut rng = Rng(5);
         let mut blocks = vec![];
         for _ in 0..4 {
@@ -547,16 +585,19 @@ fn an_unused_floor_silences_its_channel_and_skips_its_residue_unless_coupled() {
             let vectors = if coupled { 2 } else { 1 };
             let entries = put_residue(&mut wr, &book, vectors, 8, 4, &mut rng);
             s.packets.push(wr.into_bytes());
-            let a = lay_out(1, &book, &entries[0], 0, 8, 64);
+            let a = lay_out(1, &book, &entries[0], 0, 8, 128);
             let left = if coupled {
-                let b = lay_out(1, &book, &entries[1], 0, 8, 64);
-                a.iter().zip(&b).map(|(&m, &an)| uncouple(m, an).0).collect()
+                let b = lay_out(1, &book, &entries[1], 0, 8, 128);
+                a.iter()
+                    .zip(&b)
+                    .map(|(&m, &an)| uncouple(m, an).0)
+                    .collect()
             } else {
                 a
             };
             blocks.push(Block {
-                n: 128,
-                spectra: vec![times(&left, &line_curve(190, 190, 64)), vec![0.0; 64]],
+                n: 256,
+                spectra: vec![times(&left, &line_curve(190, 190, 128)), vec![0.0; 128]],
             });
         }
         let out = s.decode_all();
@@ -586,7 +627,7 @@ fn submaps_route_each_channel_to_its_floor_and_residue() {
         coupling: vec![],
         mux: vec![1, 0, 1],
     };
-    let mut s = Stream::new(3, [64, 64], setup);
+    let mut s = Stream::new(3, [256, 256], setup);
     let mut rng = Rng(11);
     let mut blocks = vec![];
     for _ in 0..3 {
@@ -599,11 +640,20 @@ fn submaps_route_each_channel_to_its_floor_and_residue() {
         let e02 = put_residue(&mut wr, &book1, 2, 4, 4, &mut rng);
         s.packets.push(wr.into_bytes());
         blocks.push(Block {
-            n: 64,
+            n: 256,
             spectra: vec![
-                times(&lay_out(0, &book1, &e02[0], 0, 8, 32), &line_curve(100, 100, 32)),
-                times(&lay_out(1, &book0, &e1[0], 0, 4, 32), &line_curve(120, 120, 32)),
-                times(&lay_out(0, &book1, &e02[1], 0, 8, 32), &line_curve(140, 140, 32)),
+                times(
+                    &lay_out(0, &book1, &e02[0], 0, 8, 128),
+                    &line_curve(100, 100, 128),
+                ),
+                times(
+                    &lay_out(1, &book0, &e1[0], 0, 4, 128),
+                    &line_curve(120, 120, 128),
+                ),
+                times(
+                    &lay_out(0, &book1, &e02[1], 0, 8, 128),
+                    &line_curve(140, 140, 128),
+                ),
             ],
         });
     }
@@ -624,7 +674,7 @@ fn several_passes_and_classifications_add_up() {
         [Some(0), None, Some(3), None, None, None, None, None],
         [None, Some(2), None, None, None, None, None, None],
     ];
-    let mut s = Stream::new(1, [64, 64], setup);
+    let mut s = Stream::new(1, [256, 256], setup);
     let mut rng = Rng(3);
     let mut blocks = vec![];
     let words: Vec<_> = books.iter().map(Book::codewords).collect();
@@ -632,7 +682,7 @@ fn several_passes_and_classifications_add_up() {
         let mut wr = s.start(0, None, None);
         put_line_floor(&mut wr, 170, 170);
         let classes: Vec<u32> = (0..4).map(|_| rng.below(2)).collect();
-        let mut v = vec![0.0; 32];
+        let mut v = vec![0.0; 128];
         for pass in 0..3 {
             for (p, &c) in classes.iter().enumerate() {
                 if pass == 0 {
@@ -653,8 +703,8 @@ fn several_passes_and_classifications_add_up() {
         }
         s.packets.push(wr.into_bytes());
         blocks.push(Block {
-            n: 64,
-            spectra: vec![times(&v, &line_curve(170, 170, 32))],
+            n: 256,
+            spectra: vec![times(&v, &line_curve(170, 170, 128))],
         });
     }
     assert_close(&s.decode_all(), &model(&blocks), "passes");
@@ -705,7 +755,7 @@ fn floor_1_with_classes_subclasses_and_many_posts_matches_lewton() {
         setup.books.push(Book::flat(1)); // 3: masterbook, cval 0..1
         setup.books.push(Book::flat(3)); // 4: masterbook, cval 0..7
         setup.books.push(Book::flat(5)); // 5: Y values
-        let mut s = Stream::new(1, [128, 128], setup.clone());
+        let mut s = Stream::new(1, [256, 256], setup.clone());
         let mut rng = Rng(u64::from(multiplier));
         for _ in 0..6 {
             let mut wr = s.start(0, None, None);
@@ -718,7 +768,11 @@ fn floor_1_with_classes_subclasses_and_many_posts_matches_lewton() {
                 for _ in 0..c.dims {
                     let b = c.subbooks[(cval & ((1 << c.subclass_bits) - 1)) as usize];
                     cval >>= c.subclass_bits;
-                    let most = if b < 0 { 1 } else { setup.books[b as usize].lengths.len() as u32 };
+                    let most = if b < 0 {
+                        1
+                    } else {
+                        setup.books[b as usize].lengths.len() as u32
+                    };
                     ys.push(rng.below(most.min(range)));
                     at += 1;
                 }
@@ -736,21 +790,25 @@ fn floor_1_with_classes_subclasses_and_many_posts_matches_lewton() {
 #[test]
 fn floor_0_matches_lewton() {
     let book = values_book(3, 1);
-    // The LSP book: 16 entries of 2 dimensions with values from 0 to 1.5 in steps of 0.1.
+    // The LSP book: entry e is (0.25 + 0.125 (e % 4), 0.75 + 0.125 (e / 4)), so that the
+    // coefficients rise and stay below pi, as an encoder's do.
+    let mut v = vec![];
+    for e in 0..16u32 {
+        v.extend([e % 4, 4 + e / 4]);
+    }
     let mut lsp = Book {
         dims: 2,
         ..Book::flat(4)
-    };
-    let mut v = vec![];
-    for e in 0..16u32 {
-        v.extend([e % 4 + 1, e / 4 + 1]);
     }
-    lsp = lsp.with_values(0, &v);
-    if let w::Lookup::Values { delta, .. } = &mut lsp.lookup {
+    .with_values(0, &v);
+    if let w::Lookup::Values { minimum, delta, .. } = &mut lsp.lookup {
+        *minimum = float32_pack(0.25);
         *delta = float32_pack(0.125);
     }
-    // lewton panics on order 1 ((order - 3) / 2 underflows), so it is not compared here.
-    for (order, amp_bits) in [(4u8, 6u8), (5, 8), (3, 6), (2, 40)] {
+    // lewton panics on order 1 ((order - 3) / 2 underflows) and on 32 or more amplitude bits
+    // (an i32 shift), so neither is compared here; `floor_0_of_order_1_and_wide_amplitudes`
+    // checks them on their own.
+    for (order, amp_bits) in [(4u8, 6u8), (5, 8), (3, 6), (2, 20)] {
         let mut setup = w::simple_setup(1, book.clone(), 64, 8);
         setup.books.push(lsp.clone());
         setup.floors[0] = w::Floor::Zero(Floor0 {
@@ -758,27 +816,87 @@ fn floor_0_matches_lewton() {
             rate: 22_050,
             bark_map_size: 128,
             amplitude_bits: amp_bits,
-            amplitude_offset: 60,
+            amplitude_offset: 30,
             books: vec![2, 2],
         });
-        let mut s = Stream::new(1, [128, 256], setup);
+        let mut s = Stream::new(1, [256, 512], setup);
         let seq = modes_of("SLSLL");
         let mut rng = Rng(u64::from(order));
         let words = lsp.codewords();
         for (i, &m) in seq.iter().enumerate() {
             let mut wr = s.start(m, i.checked_sub(1).map(|j| seq[j]), seq.get(i + 1).copied());
-            let amp = 1 + u64::from(rng.below(30));
+            // Small amplitudes keep the curve's peaks, near the LSP roots, in range.
+            let amp = 1 + u64::from(rng.below(4));
             wr.put(amp, u32::from(amp_bits));
             wr.put(u64::from(rng.below(2)), 2);
             for _ in 0..usize::from(order).div_ceil(2) {
                 Book::encode_with(&words, &mut wr, rng.below(16));
             }
-            let n = usize::from(s.block_sizes[usize::from(m)]);
-            put_residue(&mut wr, &book, 1, 64.min(n / 2) / 8, 8, &mut rng);
+            put_residue(&mut wr, &book, 1, 8, 8, &mut rng);
             s.packets.push(wr.into_bytes());
         }
+        let out = s.decode_all();
+        let within = out
+            .iter()
+            .filter(|v| v.abs() < OUTPUT_LIMIT && **v != 0.0)
+            .count();
+        assert!(
+            within > out.len() / 2,
+            "order {order}: {within} of {}",
+            out.len()
+        );
         assert_matches_lewton(&s, &format!("order {order}"));
-        assert!(s.decode_all().iter().any(|&v| v != 0.0));
+    }
+}
+
+#[test]
+fn floor_0_of_order_1_and_wide_amplitudes() {
+    // Order 1 has no p terms and one q term: p = 1 - w^2, q = (cos c0 - w)^2. With amplitude
+    // a of b bits and offset o, each line is exp(0.11512925 (a o / (2^b - 1) / sqrt(p + q) - o)).
+    let book = values_book(1, 1);
+    let lsp = Book {
+        dims: 1,
+        ..Book::flat(1)
+    }
+    .with_values(1, &[0, 1]);
+    for amp_bits in [6u8, 63] {
+        let mut setup = w::simple_setup(1, book.clone(), 0, 1);
+        setup.books.push(lsp.clone());
+        setup.floors[0] = w::Floor::Zero(Floor0 {
+            order: 1,
+            rate: 8000,
+            bark_map_size: 64,
+            amplitude_bits: amp_bits,
+            amplitude_offset: 10,
+            books: vec![2],
+        });
+        let ident = Ident::parse(&w::ident(1, 8000, [256, 256])).unwrap();
+        let parsed = Setup::parse(&setup.write(1), &ident, usize::MAX).unwrap();
+        let Floor::Zero(f) = &parsed.floors[0] else {
+            unreachable!()
+        };
+        let mut wr = BitWriter::new();
+        let amp = (1u64 << (amp_bits - 1)) + 3;
+        wr.put(amp, u32::from(amp_bits));
+        wr.put(0, 1); // book number: ilog(1) bits
+        Book::encode_with(&lsp.codewords(), &mut wr, 1); // c0 = 2
+        let bytes = wr.into_bytes();
+        let mut coeffs = [0.0f32; 256];
+        let got_amp = f.decode(&parsed.codebooks, &mut BitReader::new(&bytes), &mut coeffs);
+        assert_eq!(got_amp, Some(amp));
+        assert_eq!(coeffs[0], 2.0);
+        let mut spectrum = vec![1.0f32; 128];
+        f.apply(false, amp, &coeffs, &mut spectrum);
+        for (i, &v) in spectrum.iter().enumerate() {
+            let w = f64::from(f.cos_omega[0][i]);
+            let (p, q) = (1.0 - w * w, (libm::cos(2.0) - w).powi(2));
+            let common = amp as f64 * 10.0 / ((1u128 << amp_bits) - 1) as f64;
+            let want = libm::exp(0.115_129_25 * (common / (p + q).sqrt() - 10.0));
+            assert!(
+                (f64::from(v) - want).abs() <= 1e-5 * want,
+                "{amp_bits} bits, line {i}: {v} vs {want}"
+            );
+        }
     }
 }
 
@@ -1011,5 +1129,8 @@ fn the_decoder_says_how_much_it_holds() {
     assert!(need >= 6 * 8192 * 4, "{need}");
     assert!(need < 2 << 20, "{need}");
     let other = Ident::parse(&w::ident(2, 44_100, [256, 8192])).unwrap();
-    assert!(matches!(Decoder::new(&other, setup), Err(Error::Malformed(_))));
+    assert!(matches!(
+        Decoder::new(&other, setup),
+        Err(Error::Malformed(_))
+    ));
 }

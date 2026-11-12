@@ -137,7 +137,7 @@ fn assemble(s: &w::Setup, channels: u8, t: Tweaks) -> Vec<u8> {
         let bytes = mb.into_bytes();
         // Replace the type (the first 16 bits), then copy the rest bit by bit.
         b.put(u64::from(t.mapping_type), 16);
-        let mut r = crate::bits::BitReader::new(&bytes);
+        let mut r = BitReader::new(&bytes);
         r.read(16).unwrap();
         let total = m_bits(m, channels) - 16;
         let mut copied = 0;

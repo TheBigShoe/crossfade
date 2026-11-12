@@ -17,7 +17,7 @@ fn dct4_naive(x: &[f32]) -> Vec<f64> {
     let m = x.len();
     // cos(pi/m (n+1/2)(k+1/2)) = cos(2 pi (2n+1)(2k+1) / (8m))
     let table: Vec<f64> = (0..8 * m)
-        .map(|j| libm::cos(2.0 * std::f64::consts::PI * j as f64 / (8 * m) as f64))
+        .map(|j| libm::cos(2.0 * PI * j as f64 / (8 * m) as f64))
         .collect();
     (0..m)
         .map(|n| {
@@ -63,7 +63,7 @@ fn unfolding_the_dct_iv_gives_the_imdct_of_the_specification() {
                     .map(|k| {
                         f64::from(x[k])
                             * libm::cos(
-                                2.0 * std::f64::consts::PI / n as f64
+                                2.0 * PI / n as f64
                                     * (i as f64 + 0.5 + n as f64 / 4.0)
                                     * (k as f64 + 0.5),
                             )

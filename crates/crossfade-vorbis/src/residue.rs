@@ -95,3 +95,223 @@ pub(crate) fn parse(
         partvals: partvals as u32,
     })
 }
+
+/// Work space for residue decoding, sized for the largest block.
+#[derive(Debug, Clone)]
+pub(crate) struct Scratch {
+    classes: Vec<u8>,
+    symbols: Vec<u32>,
+    interleaved: Vec<f32>,
+}
+
+impl Scratch {
+    /// For `channels` channels of up to `half` lines.
+    pub(crate) fn new(channels: usize, half: usize) -> Self {
+        Self {
+            classes: vec![0; channels * half],
+            symbols: vec![0; half],
+            interleaved: vec![0.0; channels * half],
+        }
+    }
+
+    pub(crate) fn bytes(channels: usize, half: usize) -> usize {
+        channels * half * 5 + half * 4
+    }
+}
+
+impl Residue {
+    /// Decodes this residue into the spectra of the channels in `chans` (each `stride` apart
+    /// in `spectra`, `half` lines long, zeroed by the caller), skipping those whose `coded`
+    /// flag is clear. The end of the packet (or a class past libvorbis's partvals) ends the
+    /// decode; what was read stays.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn decode(
+        &self,
+        books: &[Codebook],
+        r: &mut BitReader<'_>,
+        chans: &[usize],
+        coded: &[bool],
+        spectra: &mut [f32],
+        stride: usize,
+        half: usize,
+        scratch: &mut Scratch,
+    ) {
+        if self.kind < 2 {
+            self.run(books, r, chans.len(), half, spectra, scratch.split(), |j| {
+                let ch = chans[j];
+                coded[ch].then_some(ch * stride)
+            });
+            return;
+        }
+        if !chans.iter().any(|&c| coded[c]) {
+            return;
+        }
+        let n = chans.len();
+        let (classes, symbols, big) = (
+            &mut scratch.classes,
+            &mut scratch.symbols,
+            &mut scratch.interleaved[..n * half],
+        );
+        big.fill(0.0);
+        self.run(books, r, 1, n * half, big, (classes, symbols), |_| Some(0));
+        if n == 2 {
+            let (a, b) = (chans[0] * stride, chans[1] * stride);
+            for (i, pair) in big.as_chunks::<2>().0.iter().enumerate() {
+                spectra[a + i] = pair[0];
+                spectra[b + i] = pair[1];
+            }
+        } else {
+            for (j, &c) in chans.iter().enumerate() {
+                let dst = &mut spectra[c * stride..c * stride + half];
+                for (d, s) in dst.iter_mut().zip(big[j..].iter().step_by(n)) {
+                    *d = *s;
+                }
+            }
+        }
+    }
+
+    /// The decode of section 8.6.2 over `vectors` vectors of `len` lines, vector `j` at
+    /// `offset(j)` in `buf` (`None`: not coded), type 2 running as type 1 on one vector.
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        &self,
+        books: &[Codebook],
+        r: &mut BitReader<'_>,
+        vectors: usize,
+        len: usize,
+        buf: &mut [f32],
+        (classes, symbols): (&mut Vec<u8>, &mut Vec<u32>),
+        offset: impl Fn(usize) -> Option<usize>,
+    ) {
+        let begin = self.begin.min(len);
+        let end = self.end.min(len);
+        let psize = self.partition_size;
+        let parts = (end - begin) / psize;
+        if parts == 0 {
+            return;
+        }
+        let classbook = &books[usize::from(self.classbook)];
+        let per_word = classbook.dims();
+        let c = self.classifications;
+        let type0 = self.kind == 0;
+        for pass in 0..8 {
+            if self.books.iter().all(|row| row[pass].is_none()) && pass > 0 {
+                continue;
+            }
+            let mut p = 0;
+            while p < parts {
+                if pass == 0 {
+                    for j in 0..vectors {
+                        if offset(j).is_none() {
+                            continue;
+                        }
+                        let Some(mut t) = classbook.decode_entry(r) else {
+                            return;
+                        };
+                        if t >= self.partvals {
+                            return;
+                        }
+                        let keep = per_word.min(parts - p);
+                        let mut drop = per_word - keep;
+                        while drop > 0 && t != 0 {
+                            t /= c;
+                            drop -= 1;
+                        }
+                        let row = &mut classes[j * parts + p..j * parts + p + keep];
+                        for slot in row.iter_mut().rev() {
+                            *slot = (t % c) as u8;
+                            t /= c;
+                        }
+                    }
+                }
+                for _ in 0..per_word {
+                    if p >= parts {
+                        break;
+                    }
+                    for j in 0..vectors {
+                        let Some(base) = offset(j) else {
+                            continue;
+                        };
+                        let class = usize::from(classes[j * parts + p]);
+                        let Some(b) = self.books[class][pass] else {
+                            continue;
+                        };
+                        let at = base + begin + p * psize;
+                        let v = &mut buf[at..at + psize];
+                        let book = &books[usize::from(b)];
+                        let ok = if type0 {
+                            partition_type0(book, r, v, symbols)
+                        } else {
+                            partition_type1(book, r, v)
+                        };
+                        if !ok {
+                            return;
+                        }
+                    }
+                    p += 1;
+                }
+            }
+        }
+    }
+}
+
+impl Scratch {
+    fn split(&mut self) -> (&mut Vec<u8>, &mut Vec<u32>) {
+        (&mut self.classes, &mut self.symbols)
+    }
+}
+
+/// Interleaved vectors (section 8.6.3): all of a partition's entries are read before any is
+/// added, as libvorbis does, so a partition cut off by the end of the packet adds nothing.
+fn partition_type0(
+    book: &Codebook,
+    r: &mut BitReader<'_>,
+    v: &mut [f32],
+    symbols: &mut [u32],
+) -> bool {
+    if !book.has_used_entries() {
+        return true;
+    }
+    let dims = book.dims();
+    let step = v.len() / dims;
+    if step == 0 {
+        return true;
+    }
+    let symbols = &mut symbols[..step];
+    for s in symbols.iter_mut() {
+        match book.decode_symbol(r) {
+            Some(x) => *s = x,
+            None => return false,
+        }
+    }
+    let vq = book.vq();
+    for (k, lane) in v.chunks_exact_mut(step).take(dims).enumerate() {
+        for (x, &s) in lane.iter_mut().zip(symbols.iter()) {
+            *x += vq[s as usize * dims + k];
+        }
+    }
+    true
+}
+
+/// Consecutive vectors (section 8.6.4); the last one is cut at the end of the partition and
+/// entries read before the end of the packet stay, as libvorbis does.
+fn partition_type1(book: &Codebook, r: &mut BitReader<'_>, v: &mut [f32]) -> bool {
+    if !book.has_used_entries() {
+        return true;
+    }
+    let dims = book.dims();
+    let vq = book.vq();
+    let mut i = 0;
+    while i < v.len() {
+        let Some(s) = book.decode_symbol(r) else {
+            return false;
+        };
+        let row = &vq[s as usize * dims..s as usize * dims + dims];
+        let take = dims.min(v.len() - i);
+        for (x, &y) in v[i..i + take].iter_mut().zip(row) {
+            *x += y;
+        }
+        i += take;
+    }
+    true
+}
