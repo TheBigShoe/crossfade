@@ -1,8 +1,12 @@
 //! Apple Lossless (ALAC) decoding in pure Rust. No dependencies, no unsafe code.
 #![forbid(unsafe_code)]
 
+mod bits;
 pub mod config;
 mod error;
+mod rice;
+#[cfg(test)]
+mod testing;
 
 pub use config::{Config, WaveLayout, wave_layout};
 pub use error::{Error, Result};
