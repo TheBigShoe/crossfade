@@ -336,4 +336,59 @@ mod tests {
         let mut r = PacketReader::new(PageReader::new(Box::new(src)), 1, BIG);
         assert_eq!(all(&mut r).unwrap(), packets);
     }
+
+    /// Pages of `packets` whose granule counts the packets completed through each page, -1
+    /// where none completes.
+    fn counted(packets: &[Vec<u8>], per_page: &[usize]) -> Vec<RawPage> {
+        let mut pages = testutil::pages(5, 0, packets, per_page);
+        let mut done = 0i64;
+        for p in &mut pages {
+            let ends = p.lacing.iter().filter(|&&l| l < 255).count() as i64;
+            done += ends;
+            p.granule = if ends == 0 { -1 } else { done };
+        }
+        pages
+    }
+
+    proptest! {
+        #[test]
+        fn the_granule_belongs_to_the_last_packet_to_end_on_a_page(
+            sizes in proptest::collection::vec(0usize..700, 1..30),
+            per_page in proptest::collection::vec(1usize..7, 1..4),
+        ) {
+            let packets: Vec<Vec<u8>> =
+                sizes.iter().enumerate().map(|(i, &n)| pkt(n, i as u8)).collect();
+            let pages = counted(&packets, &per_page);
+            let mut r = reader(testutil::bytes(&pages), 5, BIG);
+            // The packets that end last on their page, by index (1-based count through them).
+            let mut last_on_page = std::collections::BTreeSet::new();
+            let mut done = 0;
+            for p in &pages {
+                done += p.lacing.iter().filter(|&&l| l < 255).count();
+                if p.granule != -1 {
+                    last_on_page.insert(done);
+                }
+            }
+            let mut buf = Vec::new();
+            let mut n = 0usize;
+            prop_assert_eq!(r.granule(), None);
+            while r.next_packet(&mut buf).unwrap() {
+                n += 1;
+                let want = last_on_page.contains(&n).then_some(n as i64);
+                prop_assert_eq!(r.granule(), want, "packet {}", n);
+            }
+        }
+    }
+
+    #[test]
+    fn a_granule_of_minus_one_gives_none() {
+        let mut pages = counted(&[pkt(10, 1), pkt(10, 2)], &[2]);
+        pages[0].granule = -1;
+        let mut r = reader(testutil::bytes(&pages), 5, BIG);
+        let mut buf = Vec::new();
+        assert!(r.next_packet(&mut buf).unwrap());
+        assert_eq!(r.granule(), None);
+        assert!(r.next_packet(&mut buf).unwrap());
+        assert_eq!(r.granule(), None);
+    }
 }
