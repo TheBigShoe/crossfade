@@ -81,7 +81,11 @@ fn sizes(b: &Boxes<'_>, limits: &Limits) -> Result<(u64, Sizes), Error> {
         4 | 8 | 16 => usize::from(field),
         f => return Err(malformed(format!("stz2 field size {f} is not 4, 8 or 16"))),
     };
-    let packed = c.bytes(n.checked_mul(bits).ok_or_else(|| malformed("stz2 is too big"))?.div_ceil(8))?;
+    let packed = c.bytes(
+        n.checked_mul(bits)
+            .ok_or_else(|| malformed("stz2 is too big"))?
+            .div_ceil(8),
+    )?;
     let mut ends = alloc(limits, n)?;
     let mut total = 0u64;
     for i in 0..n {
@@ -117,7 +121,9 @@ impl SampleTable {
         let (count, sizes) = sizes(b, limits)?;
         let chunks = chunks(b, limits)?;
 
-        let body = b.stsc.ok_or_else(|| malformed("no sample-to-chunk table"))?;
+        let body = b
+            .stsc
+            .ok_or_else(|| malformed("no sample-to-chunk table"))?;
         let mut c = Cursor::new(body, "stsc");
         c.version()?;
         let n = c.count(12)?;
@@ -186,7 +192,9 @@ impl SampleTable {
                 .ok_or_else(|| malformed("stts adds up past 2^64"))?;
         }
         if sample < count {
-            return Err(malformed("stts gives times for fewer samples than stsz lists"));
+            return Err(malformed(
+                "stts gives times for fewer samples than stsz lists",
+            ));
         }
         Ok(Self {
             count,
@@ -219,7 +227,10 @@ impl SampleTable {
 
     /// Byte offset and size of `sample` (below `count`).
     pub(super) fn locate(&self, sample: u64) -> Result<(u64, u64), Error> {
-        let run = &self.chunk_runs[self.chunk_runs.partition_point(|r| r.first_sample <= sample) - 1];
+        let run = &self.chunk_runs[self
+            .chunk_runs
+            .partition_point(|r| r.first_sample <= sample)
+            - 1];
         let in_run = sample - run.first_sample;
         let chunk = run.first_chunk + in_run / run.per_chunk;
         let first_in_chunk = sample - in_run % run.per_chunk;

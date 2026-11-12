@@ -79,7 +79,9 @@ pub(super) fn skip_to(source: &mut dyn MediaSource, pos: &mut u64, to: u64) -> R
     }
     let mut scratch = [0u8; 8192];
     while *pos < to {
-        let step = scratch.len().min(usize::try_from(to - *pos).unwrap_or(usize::MAX));
+        let step = scratch
+            .len()
+            .min(usize::try_from(to - *pos).unwrap_or(usize::MAX));
         fill_exact(source, pos, &mut scratch[..step])?;
     }
     Ok(())
@@ -125,7 +127,10 @@ pub(super) fn read_body(
 }
 
 /// The next top-level box header, `None` at a clean end of input.
-pub(super) fn next_top(source: &mut dyn MediaSource, pos: &mut u64) -> Result<Option<TopBox>, Error> {
+pub(super) fn next_top(
+    source: &mut dyn MediaSource,
+    pos: &mut u64,
+) -> Result<Option<TopBox>, Error> {
     let start = *pos;
     let mut head = [0u8; 8];
     match fill(source, pos, &mut head)? {

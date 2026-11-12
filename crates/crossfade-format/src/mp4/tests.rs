@@ -413,7 +413,10 @@ fn mp3_in_mp4() {
         let s = pipe(&f).streams()[0].clone();
         assert_eq!(s.codec, CodecId::Mp3);
         assert!(s.extradata.is_empty());
-        assert_eq!((s.audio.sample_rate(), s.audio.format()), (44100, SampleFormat::F32));
+        assert_eq!(
+            (s.audio.sample_rate(), s.audio.format()),
+            (44100, SampleFormat::F32)
+        );
         assert_eq!(s.audio.layout(), &ChannelLayout::stereo());
     }
 }
@@ -477,7 +480,11 @@ fn the_quicktime_wave_wrapping_is_accepted() {
     assert_eq!(pipe(&f).streams()[0].audio.format(), SampleFormat::S24);
     let wave = bx(
         b"wave",
-        &cat(&[&bx(b"frma", b"mp4a"), &bx(b"mp4a", &[0; 4]), &esds(0x40, &[0x12, 0x10])]),
+        &cat(&[
+            &bx(b"frma", b"mp4a"),
+            &bx(b"mp4a", &[0; 4]),
+            &esds(0x40, &[0x12, 0x10]),
+        ]),
     );
     let f = File {
         entry: sound_entry(b"mp4a", 2, 44100, &wave),
@@ -555,10 +562,7 @@ fn gapless_from_the_edit_list_or_itunsmpb_with_the_edit_list_first() {
         timeline(&aac_file(None, Some(free_form("iTunSMPB", b"00 zz")))),
         (0, Some(12288))
     );
-    assert_eq!(
-        timeline(&aac_file(Some((100, -1)), None)),
-        (0, Some(12288))
-    );
+    assert_eq!(timeline(&aac_file(Some((100, -1)), None)), (0, Some(12288)));
 }
 
 #[test]
@@ -592,12 +596,18 @@ fn a_media_timescale_other_than_the_rate_scales_rounding_down() {
 fn text_item(kind: &[u8; 4], value: &str) -> Vec<u8> {
     bx(
         kind,
-        &bx(b"data", &cat(&[&[0, 0, 0, 1, 0, 0, 0, 0], value.as_bytes()])),
+        &bx(
+            b"data",
+            &cat(&[&[0, 0, 0, 1, 0, 0, 0, 0], value.as_bytes()]),
+        ),
     )
 }
 
 fn binary_item(kind: &[u8; 4], value: &[u8]) -> Vec<u8> {
-    bx(kind, &bx(b"data", &cat(&[&[0, 0, 0, 0, 0, 0, 0, 0], value])))
+    bx(
+        kind,
+        &bx(b"data", &cat(&[&[0, 0, 0, 0, 0, 0, 0, 0], value])),
+    )
 }
 
 #[test]
@@ -619,7 +629,10 @@ fn ilst_items_map_onto_the_shared_tag_names() {
         &text_item(b"\xA9cmt", "Comment"),
         &text_item(b"\xA9wrt", "Composer"),
         &text_item(b"\xA9too", "afconvert"),
-        &bx(b"covr", &bx(b"data", &[0, 0, 0, 13, 0, 0, 0, 0, 0xFF, 0xD8])),
+        &bx(
+            b"covr",
+            &bx(b"data", &[0, 0, 0, 13, 0, 0, 0, 0, 0xFF, 0xD8]),
+        ),
         &bx(b"\xA9cmt", &bx(b"data", &utf16)),
         &free_form("REPLAYGAIN_TRACK_GAIN", b"-6.5 dB"),
         &smpb(0, 0, 10),

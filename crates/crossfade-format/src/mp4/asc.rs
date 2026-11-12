@@ -183,7 +183,12 @@ mod tests {
         let short = parse(&[0x12]).unwrap_err();
         assert!(short.to_string().contains("cut off"), "{short}");
         // Index 13 is reserved.
-        assert!(parse(&[0x16, 0x90]).unwrap_err().to_string().contains("reserved"));
+        assert!(
+            parse(&[0x16, 0x90])
+                .unwrap_err()
+                .to_string()
+                .contains("reserved")
+        );
         // An explicit rate of 0.
         assert!(parse(&[0x17, 0x80, 0x00, 0x00, 0x10]).is_err());
         let seven = parse(&[0x12, 0x38]).unwrap();
