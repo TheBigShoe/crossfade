@@ -10,7 +10,7 @@
 use super::{FlacDemuxer, MAX_HEADER, find_sync};
 use crate::wav::{origin, seek_to, source_len};
 use crossfade_core::{Demuxer, Error, Packet};
-use crossfade_flac::frame::{self, FrameHeader};
+use crossfade_flac::frame::FrameHeader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SeekPoint {
@@ -54,12 +54,11 @@ impl FlacDemuxer {
         if self.first.is_none() {
             // Nothing read yet: the first frame fixes the blocking strategy and where audio
             // starts.
-            let Some((h, ..)) = self.first_frame()? else {
+            let Some((mut h, end, last)) = self.first_frame()? else {
                 self.done = true;
                 return Ok(0);
             };
-            self.first = Some((h.variable_block_size, h.block_size));
-            self.audio_start = Some(self.base);
+            self.first_found(&mut h, end, last)?;
         }
         let start = self.audio_start.unwrap_or(0);
         let end = source_len(self.source.as_mut(), origin)?.saturating_sub(self.data_offset);
@@ -198,10 +197,7 @@ impl FlacDemuxer {
     fn confirm(&mut self, origin: u64, offset: u64) -> Result<Option<FrameHeader>, Error> {
         self.reposition(origin, offset)?;
         self.ensure(MAX_HEADER)?;
-        let Some(h) = frame::parse_header(&self.buf)
-            .ok()
-            .filter(|h| self.plausible(h))
-        else {
+        let Some(h) = self.header(&self.buf).ok().filter(|h| self.plausible(h)) else {
             return Ok(None);
         };
         let (end, last) = match self.frame_end(&h) {
@@ -218,7 +214,8 @@ impl FlacDemuxer {
         } else {
             h.number + 1
         };
-        let follows = frame::parse_header(&self.buf[end..])
+        let follows = self
+            .header(&self.buf[end..])
             .is_ok_and(|n| n.variable_block_size == h.variable_block_size && n.number == expected);
         Ok(follows.then_some(h))
     }
@@ -252,7 +249,9 @@ impl FlacDemuxer {
                 return Ok(None);
             }
             self.ensure(j + MAX_HEADER)?;
-            let fits = frame::parse_header(&self.buf[j..]).is_ok_and(|h| self.plausible(&h));
+            let fits = self
+                .header(&self.buf[j..])
+                .is_ok_and(|h| self.plausible(&h));
             if !fits {
                 i = j + 1;
                 continue;

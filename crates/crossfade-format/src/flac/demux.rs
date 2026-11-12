@@ -80,6 +80,9 @@ struct FlacDemuxer {
     seektable: Vec<seek::SeekPoint>,
     /// STREAMINFO's channels, depth and rate: a frame header found by scanning must agree.
     format: (u8, u8, u32),
+    /// An old variable block size stream (Flake 0.11): the fixed strategy bit, but frames
+    /// numbered by their first sample. Read as the variable strategy it is.
+    sample_numbered: bool,
 }
 
 fn malformed(what: &str) -> Error {
@@ -273,6 +276,36 @@ fn worst_case_frame(block_size: u32, channels: usize) -> usize {
 }
 
 impl FlacDemuxer {
+    /// A frame header, an old-format variable stream's read as variable (see
+    /// `sample_numbered`).
+    fn header(&self, data: &[u8]) -> Result<FrameHeader, HeaderError> {
+        let mut h = frame::parse_header(data)?;
+        h.variable_block_size |= self.sample_numbered;
+        Ok(h)
+    }
+
+    /// Sets the stream up from its first frame (at the start of `buf`, ending at `end`): the
+    /// blocking strategy and block size, where audio starts, and whether the frames are
+    /// numbered by sample under the fixed strategy bit: the second frame then carries the
+    /// first one's block size, not 1.
+    fn first_found(&mut self, h: &mut FrameHeader, end: usize, last: bool) -> Result<(), Error> {
+        if !h.variable_block_size && h.number == 0 && h.block_size > 1 && !last {
+            self.ensure(end + MAX_HEADER)?;
+            if let Ok(next) = frame::parse_header(&self.buf[end..])
+                && !next.variable_block_size
+                && next.number == u64::from(h.block_size)
+            {
+                self.sample_numbered = true;
+                h.variable_block_size = true;
+                // What the scan remembered is keyed by the fixed strategy's numbers.
+                self.reset_scan();
+            }
+        }
+        self.first = Some((h.variable_block_size, h.block_size));
+        self.audio_start = Some(self.base);
+        Ok(())
+    }
+
     /// Appends up to a chunk from the source; `false` at the end of input.
     fn read_more(&mut self) -> Result<bool, Error> {
         if self.eof {
@@ -404,7 +437,7 @@ impl FlacDemuxer {
                         continue;
                     }
                     self.ensure(j + MAX_HEADER)?;
-                    let next = frame::parse_header(&self.buf[j..]);
+                    let next = self.header(&self.buf[j..]);
                     sc.from = self.base + j as u64 + 1;
                     let Ok(next) = next else {
                         continue;
@@ -450,7 +483,7 @@ impl FlacDemuxer {
         // frame's on channels, depth or rate: with no later frame to confirm it, a stranger is
         // more likely audio that looks like a header.
         if let Some(f) = self.first_remembered(window, flag)
-            && let Ok(next) = frame::parse_header(&self.buf[f..])
+            && let Ok(next) = self.header(&self.buf[f..])
             && next.channels.channels() == h.channels.channels()
             && next.bits_per_sample == h.bits_per_sample
             && next.sample_rate == h.sample_rate
@@ -499,7 +532,7 @@ impl FlacDemuxer {
                     Err(malformed("no frame found after the metadata"))
                 };
             }
-            match frame::parse_header(&self.buf) {
+            match self.header(&self.buf) {
                 Ok(h) => match self.frame_end(&h) {
                     Ok((end, last)) => return Ok(Some((h, end, last))),
                     Err(e) if skipped == 0 => return Err(e),
@@ -546,16 +579,17 @@ impl Demuxer for FlacDemuxer {
             return Ok(false);
         }
         let (header, end, last) = if self.first.is_none() {
-            let Some(found) = self.first_frame()? else {
+            let Some((mut h, end, last)) = self.first_frame()? else {
                 self.done = true;
                 return Ok(false);
             };
-            self.first = Some((found.0.variable_block_size, found.0.block_size));
-            self.audio_start = Some(self.base);
-            found
+            self.first_found(&mut h, end, last)?;
+            (h, end, last)
         } else {
             self.ensure(MAX_HEADER)?;
-            let h = frame::parse_header(&self.buf).map_err(|_| malformed("lost frame sync"))?;
+            let h = self
+                .header(&self.buf)
+                .map_err(|_| malformed("lost frame sync"))?;
             let (end, last) = self.frame_end(&h)?;
             (h, end, last)
         };
@@ -607,6 +641,7 @@ pub fn open(mut source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn
             meta.info.bits_per_sample,
             meta.info.sample_rate,
         ),
+        sample_numbered: false,
     }))
 }
 

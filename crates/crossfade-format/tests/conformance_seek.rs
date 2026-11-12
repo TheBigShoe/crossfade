@@ -90,7 +90,7 @@ fn check(path: &Path) -> Result<usize, String> {
         None => {
             let mut n = 0u64;
             decode_rest(demux.as_mut(), decoder.as_mut(), &mut |f| {
-                n += f.frames() as u64
+                n += f.frames() as u64;
             })
             .map_err(err)?;
             demux = open(path).map_err(err)?;
