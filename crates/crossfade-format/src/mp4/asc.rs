@@ -1,9 +1,7 @@
 //! The first fields of an MPEG-4 AudioSpecificConfig (ISO/IEC 14496-3, 1.6.2.1): enough to
 //! describe the stream. `crossfade-aac`'s parser replaces this one when that crate lands.
 
-fn malformed(what: impl Into<String>) -> Error {
-    Error::Malformed { what: what.into() }
-}
+use super::boxes::malformed;
 use crossfade_core::{ChannelLayout, Error};
 
 /// Sampling frequencies by index (14496-3, table 1.18); 13 and 14 are reserved, 15 escapes.
@@ -66,12 +64,53 @@ impl Bits<'_> {
 /// 7.1 with front centre-left and centre-right. The surrounds are the side pair, as for ALAC,
 /// whose layouts copy AAC's.
 pub(super) fn layout(config: u8) -> Result<ChannelLayout, Error> {
-        let _ = config; Err(malformed("not built yet"))
-    }
+    let (mask, count) = match config {
+        1 => (0x4, 1),
+        2 => (0x3, 2),
+        3 => (0x7, 3),
+        4 => (0x107, 4),
+        5 => (0x607, 5),
+        6 => (0x60F, 6),
+        7 => (0x6CF, 8),
+        0 => {
+            return Err(Error::Unsupported {
+                what: "mp4: aac whose channels a program config element gives (channel \
+                       configuration 0) is not supported yet"
+                    .into(),
+            });
+        }
+        n => {
+            return Err(Error::Unsupported {
+                what: format!("mp4: aac channel configuration {n} is not supported"),
+            });
+        }
+    };
+    ChannelLayout::from_mask(mask, count).ok_or_else(|| malformed("bad channel layout"))
+}
 
 pub(super) fn parse(data: &[u8]) -> Result<AudioSpecificConfig, Error> {
-        let _ = (data, SBR, PS, RATES, Bits { data, pos: 0 }.read(0)); Err(malformed("not built yet"))
+    let mut b = Bits { data, pos: 0 };
+    let mut object_type = b.object_type()?;
+    let sample_rate = b.rate()?;
+    let channels = b.read(4)? as u8;
+    let (mut sbr, mut ps) = (false, false);
+    if object_type == SBR || object_type == PS {
+        sbr = true;
+        ps = object_type == PS;
+        let _extension_rate = b.rate()?;
+        object_type = b.object_type()?;
     }
+    if sample_rate == 0 {
+        return Err(malformed("AudioSpecificConfig gives a sampling rate of 0"));
+    }
+    Ok(AudioSpecificConfig {
+        object_type,
+        sample_rate,
+        layout: layout(channels)?,
+        sbr,
+        ps,
+    })
+}
 
 #[cfg(test)]
 mod tests {
