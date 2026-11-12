@@ -2,11 +2,13 @@
 #![forbid(unsafe_code)]
 
 mod bits;
+pub mod channels;
 mod codebook;
+mod decoder;
 mod error;
 mod floor;
-mod mdct;
 pub mod header;
+mod mdct;
 mod residue;
 mod setup;
 #[cfg(any(test, feature = "writer"))]
