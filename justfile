@@ -15,6 +15,16 @@ lint:
 test:
     cargo test --workspace
 
+# AAC is patent-encumbered, so its decoder is behind the off-by-default feature `aac`: these
+# lint and test what only that feature compiles (the decoder, the adapter, the CLI end to end).
+aac_features := "crossfade-aac/decoder,crossfade-codec/aac,crossfade-cli/aac"
+
+lint-aac:
+    cargo clippy -p crossfade-aac -p crossfade-codec -p crossfade-cli --all-targets --features {{aac_features}} -- -D warnings
+
+test-aac:
+    cargo test -p crossfade-aac -p crossfade-codec -p crossfade-cli --features {{aac_features}}
+
 # Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
 # crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
 # skips, without it. Release because the corpus is ~300 MB (about 3 s; debug takes ~40 s).
@@ -25,7 +35,7 @@ conformance:
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
     for t in aarch64-apple-ios aarch64-linux-android; do \
-        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-loudness -p crossfade-resample -p crossfade-dsp -p crossfade-graph; \
+        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-aac -p crossfade-loudness -p crossfade-resample -p crossfade-dsp -p crossfade-graph; \
     done
 
 # Speed baselines: in-memory conversion through the engine, then FLAC decode/encode with
@@ -50,8 +60,9 @@ deny:
 coverage_ignore := '(/main\.rs$|/examples/)'
 
 # Two runs: the workspace floor, then a stricter floor for core alone.
+# The workspace run builds the AAC decoder (`aac_features`) so that it is counted.
 coverage:
-    cargo llvm-cov --workspace --fail-under-lines 87 --ignore-filename-regex '{{coverage_ignore}}'
+    cargo llvm-cov --workspace --features {{aac_features}} --fail-under-lines 87 --ignore-filename-regex '{{coverage_ignore}}'
     cargo llvm-cov -p crossfade-core --fail-under-lines 90 --ignore-filename-regex '{{coverage_ignore}}'
 
 # Run the desktop app.
@@ -65,7 +76,7 @@ screenshots *names:
     @ls -lh target/screenshots/*.png
 
 # Dependencies run in order and the first failure stops the recipe.
-ci: fmt-check lint test conformance
+ci: fmt-check lint lint-aac test test-aac conformance
 
 # Needs cargo-fuzz. The default runs unsanitised on the pinned toolchain (RUSTC_BOOTSTRAP lets
 # it use libFuzzer's flags); with a nightly toolchain, `FUZZ_RUN="cargo +nightly fuzz run" just
