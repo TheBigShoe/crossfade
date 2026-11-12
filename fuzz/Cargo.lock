@@ -30,6 +30,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "crossfade-aac"
+version = "0.0.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
@@ -49,6 +56,8 @@ name = "crossfade-dsp"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-loudness",
+ "crossfade-resample",
  "libm",
 ]
 
@@ -60,6 +69,7 @@ version = "0.0.0"
 name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
+ "crossfade-aac",
  "crossfade-core",
  "crossfade-flac",
 ]
@@ -69,6 +79,7 @@ name = "crossfade-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "crossfade-aac",
  "crossfade-codec",
  "crossfade-core",
  "crossfade-flac",
