@@ -146,7 +146,12 @@ fn run_all(threads: usize) -> Vec<Result3> {
     let root = workspace_root();
     let manifest = Manifest::load(&root.join("corpus.toml")).expect("corpus.toml");
     let cache = Cache::new(Cache::dir_from_env(&root));
-    let entries = manifest.entries();
+    // The corpus holds other codecs' vectors too; this tier is the FLAC suite.
+    let entries: Vec<&Entry> = manifest
+        .entries()
+        .iter()
+        .filter(|e| e.id.starts_with("flac/"))
+        .collect();
     // Resolve (and verify) up front: a missing corpus fails the tier outright.
     let paths: Vec<_> = entries
         .iter()
@@ -172,7 +177,7 @@ fn run_all(threads: usize) -> Vec<Result3> {
         }
     });
     entries
-        .iter()
+        .into_iter()
         .cloned()
         .zip(slots)
         .map(|(e, s)| (e, s.into_inner().unwrap().expect("every entry ran")))
