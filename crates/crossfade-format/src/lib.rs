@@ -159,14 +159,17 @@ mod tests {
             (FormatId::Wav, "wav", &["wav", "WAV", "Wave", "wave"][..]),
             (FormatId::Flac, "flac", &["flac", "FLAC"][..]),
             (FormatId::Aiff, "aiff", &["aiff", "aif", "aifc", "AIF"][..]),
-            (FormatId::Ogg, "ogg", &["ogg", "oga", "OGG"][..]),
+            (FormatId::Ogg, "ogg", &["ogg", "oga", "OGG", "opus", "Opus"][..]),
+            (FormatId::Mp3, "mp3", &["mp3", "MP3"][..]),
+            (FormatId::Mp4, "mp4", &["mp4", "m4a", "m4b", "M4A"][..]),
+            (FormatId::Adts, "adts", &["aac", "adts", "AAC"][..]),
         ] {
             assert_eq!(id.name(), name);
             for ext in exts {
                 assert_eq!(FormatId::from_extension(ext), Some(id), "{ext}");
             }
         }
-        for ext in ["", "mp3", "wav ", ".wav", "wavx", "flc", "ogv"] {
+        for ext in ["", "mp2", "wav ", ".wav", "wavx", "flc", "ogv", "m4v", "mov"] {
             assert_eq!(FormatId::from_extension(ext), None, "{ext:?}");
         }
     }
