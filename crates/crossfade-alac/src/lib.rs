@@ -1,4 +1,4 @@
-//! Apple Lossless (ALAC) decoding in pure Rust. No dependencies, no unsafe code.
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
 mod bits;
