@@ -252,7 +252,7 @@ fn a_seek_reads_a_logarithmic_number_of_pages() {
         let target = (k * 7919) % 40_000;
         counter.swap(0, Ordering::Relaxed);
         let g = r.seek_granule(target, start).unwrap();
-        assert!(g.is_some_and(|g| g <= target), "{target}: {g:?}");
+        assert!(g.map_or(target < 50, |g| g <= target), "{target}: {g:?}");
         worst = worst.max(counter.swap(0, Ordering::Relaxed));
     }
     eprintln!("{len} byte file, pages up to {max_page} bytes: worst seek read {worst} bytes");

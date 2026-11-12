@@ -9,6 +9,17 @@ fn malformed(what: &str) -> Error {
     }
 }
 
+/// Below this many bytes between the brackets, a granule seek reads page by page.
+const LINEAR_SPAN: u64 = 32 * 1024;
+
+/// Where a packet begins: the offset of the page that holds its first segment, and the
+/// segment's index there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct PacketStart {
+    page: u64,
+    segment: usize,
+}
+
 pub(crate) struct PacketReader {
     pages: PageReader,
     serial: u32,
@@ -25,6 +36,8 @@ pub(crate) struct PacketReader {
     last_page: bool,
     /// See [`granule`](Self::granule).
     granule: Option<i64>,
+    /// See [`packet_start`](Self::packet_start).
+    start: PacketStart,
 }
 
 impl PacketReader {
@@ -40,7 +53,116 @@ impl PacketReader {
             mid_packet: false,
             last_page: false,
             granule: None,
+            start: PacketStart::default(),
         }
+    }
+
+    /// Where the packet [`next_packet`](Self::next_packet) returned last began: a mapping keeps
+    /// its first audio packet's as the floor for [`seek_granule`](Self::seek_granule).
+    pub(crate) fn packet_start(&self) -> PacketStart {
+        self.start
+    }
+
+    /// Positions the reader so that `next_packet` returns the first packet after the last
+    /// page of this stream, at or after `floor`'s page, whose granule is at most `target` (the
+    /// page must end a packet, and its granule must not be -1); returns that granule, the
+    /// position before the packet. The packet may begin on that page and go on into the next:
+    /// it is the one after the page's last completed packet, never part of one. With no such
+    /// page the reader goes back to `floor` and returns `None`.
+    ///
+    /// Bisects the input's bytes, then reads page by page over the last stretch: O(log n) page
+    /// reads. Pages of other streams are passed over and a page found by scanning counts only
+    /// if its CRC holds. Granules are taken to rise through the stream, as RFC 3533 requires.
+    /// `Unsupported` when the source cannot seek.
+    pub(crate) fn seek_granule(
+        &mut self,
+        target: i64,
+        floor: PacketStart,
+    ) -> Result<Option<i64>, Error> {
+        let len = self.pages.input_len()?;
+        let mut lo = floor.page;
+        let mut hi = len.max(lo);
+        let mut best = None;
+        while hi.saturating_sub(lo) > LINEAR_SPAN {
+            let mid = lo + (hi - lo) / 2;
+            match self.candidate(mid, hi)? {
+                Some((off, g, end)) if g <= target => {
+                    best = Some((off, g));
+                    lo = end;
+                }
+                _ => hi = mid,
+            }
+        }
+        let mut at = lo;
+        while let Some((off, g, end)) = self.candidate(at, u64::MAX)? {
+            if g > target {
+                break;
+            }
+            best = Some((off, g));
+            at = end;
+        }
+        match best {
+            Some((off, g)) => {
+                self.load_at(off)?;
+                let lacing = self.pages.lacing();
+                let after = lacing.iter().rposition(|&l| l < 255).map_or(0, |i| i + 1);
+                let seg = if off == floor.page {
+                    after.max(floor.segment)
+                } else {
+                    after
+                };
+                self.accept_loaded(seg)?;
+                Ok(Some(g))
+            }
+            None => {
+                self.load_at(floor.page)?;
+                self.accept_loaded(floor.segment)?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// The first page at or after `from`, starting before `limit`, that can end a seek: this
+    /// stream's, ending a packet, with a granule. Its offset, granule and end.
+    fn candidate(&mut self, from: u64, limit: u64) -> Result<Option<(u64, i64, u64)>, Error> {
+        let mut at = from;
+        while let Some(off) = self.pages.find_page(at, limit)? {
+            let h = *self.pages.header();
+            let end = off + self.pages.page_len() as u64;
+            if h.serial == self.serial
+                && h.granule != -1
+                && self.pages.lacing().iter().any(|&l| l < 255)
+            {
+                return Ok(Some((off, h.granule, end)));
+            }
+            at = end;
+        }
+        Ok(None)
+    }
+
+    fn load_at(&mut self, offset: u64) -> Result<(), Error> {
+        if !self.pages.load_at(offset)? {
+            return Err(Error::UnexpectedEof { offset });
+        }
+        Ok(())
+    }
+
+    /// Takes the page just loaded as this stream's current page, with `segment` the next to
+    /// read; a packet starts there.
+    fn accept_loaded(&mut self, segment: usize) -> Result<(), Error> {
+        let h = *self.pages.header();
+        if h.serial != self.serial {
+            return Err(malformed("ogg page changed under a seek"));
+        }
+        let lacing = self.pages.lacing();
+        self.seg = segment.min(lacing.len());
+        self.off = lacing[..self.seg].iter().map(|&l| usize::from(l)).sum();
+        self.next_sequence = Some(h.sequence.wrapping_add(1));
+        self.last_page = h.is_last();
+        self.pending = false;
+        self.mid_packet = false;
+        self.granule = None;
+        Ok(())
     }
 
     /// The granule position that applies to the packet [`next_packet`](Self::next_packet)
@@ -129,6 +251,12 @@ impl PacketReader {
                     return Ok(false);
                 }
                 continue;
+            }
+            if !started {
+                self.start = PacketStart {
+                    page: self.pages.header().offset,
+                    segment: self.seg,
+                };
             }
             let lace = usize::from(self.pages.lacing()[self.seg]);
             if out.len() + lace > self.max_packet {
