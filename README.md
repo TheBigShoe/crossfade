@@ -16,6 +16,7 @@ macOS so far.
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
 | Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
+| ADTS (`.aac`) | AAC-LC, with `--features aac` | no | Our own AAC-LC decoder, checked against the ISO conformance streams and Apple's decoder; mono to 7.1 and program configurations, 8 to 96 kHz, seeking. HE-AAC plays as its AAC-LC core; Main, LTP, SSR, coupling channels and 960-sample frames are refused by name. A default build refuses AAC and says why |
 
 Conversions between these are bit-exact, and a file's true bit depth (a 20-bit FLAC stays 20-bit, with the same STREAMINFO MD5) survives them unless `--sample-format` changes the format. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
@@ -145,6 +146,6 @@ and compares the results with a committed record.
 
 ## Licence
 
-MIT or Apache-2.0, at your option. Patent-encumbered codecs, when they
-arrive, will be source-only behind off-by-default features and never part of
-release binaries.
+MIT or Apache-2.0, at your option. Patent-encumbered codecs are source-only
+behind off-by-default features and never part of release binaries: AAC
+decoding needs `cargo build -p crossfade-cli --features aac`.
