@@ -30,6 +30,25 @@ pub(crate) fn identify(head: &[u8]) -> Option<FormatId> {
     }
 }
 
+/// What an MPEG audio frame header at the start of `head` says the stream is: 11 sync bits,
+/// then layer bits 00 for AAC in ADTS (whose sync is 12 bits, `0xFFF`, and whose sampling
+/// index is below 13), else MPEG layers I-III (`Mp3`) when the version is not the reserved 01,
+/// the bitrate index is not 1111 and the sample-rate index is not 11. The other fields of an
+/// ADTS header sit where MPEG's version, bitrate and rate are, so those checks are MPEG's only.
+pub(crate) fn mpeg_audio(head: &[u8]) -> Option<FormatId> {
+    let [0xFF, b1, b2, ..] = *head else {
+        return None;
+    };
+    if b1 & 0xE0 != 0xE0 {
+        return None;
+    }
+    if (b1 >> 1) & 3 == 0 {
+        return (b1 & 0xF0 == 0xF0 && (b2 >> 2) & 0xF < 13).then_some(FormatId::Adts);
+    }
+    let (version, bitrate, rate) = ((b1 >> 3) & 3, b2 >> 4, (b2 >> 2) & 3);
+    (version != 1 && bitrate != 0xF && rate != 3).then_some(FormatId::Mp3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
