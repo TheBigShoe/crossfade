@@ -62,7 +62,12 @@ pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
 fn reorder<T>(src: &[i32], from_alac: &[u8], dst: &mut Vec<T>, f: impl Fn(i32) -> T) {
     dst.clear();
     let n = from_alac.len();
-    if n == 1 || from_alac.iter().enumerate().all(|(i, &c)| usize::from(c) == i) {
+    if n == 1
+        || from_alac
+            .iter()
+            .enumerate()
+            .all(|(i, &c)| usize::from(c) == i)
+    {
         dst.extend(src.iter().map(|&s| f(s)));
         return;
     }
@@ -74,7 +79,29 @@ fn reorder<T>(src: &[i32], from_alac: &[u8], dst: &mut Vec<T>, f: impl Fn(i32) -
 
 impl Decoder for AlacDecoder {
     fn send_packet(&mut self, packet: &Packet) -> Result<(), Error> {
-        let _ = packet; Ok(())
+        self.inner
+            .decode(&packet.data, &mut self.decoded)
+            .map_err(engine_error)?;
+        let mut frame = match self.ready.take() {
+            // A buffer the caller swapped in is reused when it has the stream's shape.
+            Some(f)
+                if f.samples.format() == self.template.samples.format()
+                    && f.layout == self.template.layout =>
+            {
+                f
+            }
+            _ => self.template.clone(),
+        };
+        frame.pts = packet.pts;
+        frame.sample_rate = self.template.sample_rate;
+        let (src, order, shift) = (&self.decoded, self.from_alac, self.justify);
+        match &mut frame.samples {
+            Samples::S16(out) => reorder(src, order, out, |s| s as i16),
+            Samples::S24(out) | Samples::S32(out) => reorder(src, order, out, |s| s << shift),
+            _ => unreachable!("built with an integer format"),
+        }
+        self.ready = Some(frame);
+        Ok(())
     }
 
     fn receive_frame(&mut self, out: &mut AudioFrame) -> Result<bool, Error> {
@@ -144,7 +171,7 @@ mod tests {
     impl Bits {
         fn put(&mut self, n: u32, v: u64) {
             for i in (0..n).rev() {
-                if self.1 % 8 == 0 {
+                if self.1.is_multiple_of(8) {
                     self.0.push(0);
                 }
                 if (v >> i) & 1 != 0 {
@@ -215,7 +242,10 @@ mod tests {
             Some(&[FrontLeft, FrontRight, FrontCenter, Lfe, SideLeft, SideRight][..])
         );
         let f = decode(&s, &[packet(24, 6, 1, 0)]);
-        assert_eq!(f[0].samples, Samples::S24(vec![50, 150, -50, 450, 250, 350]));
+        assert_eq!(
+            f[0].samples,
+            Samples::S24(vec![50, 150, -50, 450, 250, 350])
+        );
         let f = decode(&stream(16, 2), &[packet(16, 2, 1, 0)]);
         assert_eq!(f[0].samples, Samples::S16(vec![-50, 50]));
     }
@@ -251,7 +281,10 @@ mod tests {
             data: vec![0x40],
             ..Packet::default()
         };
-        assert!(matches!(d.send_packet(&cce), Err(Error::Unsupported { .. })));
+        assert!(matches!(
+            d.send_packet(&cce),
+            Err(Error::Unsupported { .. })
+        ));
         let mut wrong = stream(16, 2);
         wrong.extradata = config(24, 2).write().to_vec();
         assert_eq!(
