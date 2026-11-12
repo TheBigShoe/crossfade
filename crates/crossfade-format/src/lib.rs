@@ -19,6 +19,12 @@ pub enum FormatId {
     Flac,
     Aiff,
     Ogg,
+    /// MPEG audio frames (layers I-III), optionally behind ID3v2 tags.
+    Mp3,
+    /// ISO base media (MP4, M4A, M4B).
+    Mp4,
+    /// AAC in ADTS frames.
+    Adts,
 }
 
 impl FormatId {
@@ -28,6 +34,9 @@ impl FormatId {
             Self::Flac => "flac",
             Self::Aiff => "aiff",
             Self::Ogg => "ogg",
+            Self::Mp3 => "mp3",
+            Self::Mp4 => "mp4",
+            Self::Adts => "adts",
         }
     }
 
@@ -36,7 +45,10 @@ impl FormatId {
             "wav" | "wave" => Some(Self::Wav),
             "flac" => Some(Self::Flac),
             "aiff" | "aif" | "aifc" => Some(Self::Aiff),
-            "ogg" | "oga" => Some(Self::Ogg),
+            "ogg" | "oga" | "opus" => Some(Self::Ogg),
+            "mp3" => Some(Self::Mp3),
+            "mp4" | "m4a" | "m4b" => Some(Self::Mp4),
+            "aac" | "adts" => Some(Self::Adts),
             _ => None,
         }
     }
@@ -84,6 +96,8 @@ pub fn open_demuxer(
         FormatId::Flac => flac::open(source, limits)?,
         FormatId::Aiff => aiff::open(source, limits)?,
         FormatId::Ogg => ogg::open(source, limits)?,
+        // Not sniffed yet.
+        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => return Err(Error::UnrecognisedFormat),
     };
     Ok((format, demuxer))
 }
@@ -100,6 +114,9 @@ pub fn create_muxer(
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => ogg::create(sink, stream, tags),
+        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => Err(Error::Unsupported {
+            what: format!("writing {} is not supported yet", format.name()),
+        }),
     }
 }
 
@@ -244,5 +261,11 @@ mod tests {
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
         assert!(unsupported(mk(FormatId::Ogg)).contains("ogg files can only hold flac"));
+        for f in [FormatId::Mp3, FormatId::Mp4, FormatId::Adts] {
+            assert_eq!(
+                unsupported(mk(f)),
+                format!("writing {} is not supported yet", f.name())
+            );
+        }
     }
 }
