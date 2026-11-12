@@ -3,7 +3,7 @@
 
 use crate::run::CancelToken;
 use crossfade_codec::decoder_for_threads;
-use crossfade_core::{AudioFrame, Error, JobIo, Limits, Packet, SampleFormat, StreamInfo};
+use crossfade_core::{AudioFrame, Demuxer, Error, JobIo, Limits, Packet, SampleFormat, StreamInfo};
 use crossfade_dsp::convert::convert_format;
 use crossfade_format::open_demuxer;
 
@@ -20,7 +20,18 @@ pub fn decode_frames(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    let (_, mut demuxer) = open_demuxer(io.open_source(path)?, limits)?;
+    let (_, demuxer) = open_demuxer(io.open_source(path)?, limits)?;
+    decode_demuxed(demuxer, path, limits, cancel, on_frame)
+}
+
+/// [`decode_frames`] once `path` is open.
+pub(crate) fn decode_demuxed(
+    mut demuxer: Box<dyn Demuxer>,
+    path: &str,
+    limits: &Limits,
+    cancel: &CancelToken,
+    on_frame: &mut dyn FnMut(&StreamInfo, &AudioFrame) -> Result<(), Error>,
+) -> Result<StreamInfo, Error> {
     let [stream] = demuxer.streams() else {
         return Err(Error::Unsupported {
             what: format!(
