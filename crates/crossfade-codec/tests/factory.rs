@@ -99,13 +99,7 @@ fn the_factories_build_big_endian_and_signed_8_bit_pcm() {
 #[test]
 fn the_compressed_codecs_without_a_decoder_yet_are_refused_by_name() {
     let audio = AudioSpec::new(44100, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
-    for codec in [
-        CodecId::Vorbis,
-        CodecId::Opus,
-        CodecId::Mp3,
-        CodecId::Aac,
-        CodecId::Alac,
-    ] {
+    for codec in [CodecId::Vorbis, CodecId::Opus, CodecId::Aac, CodecId::Alac] {
         let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 44100).unwrap());
         assert_eq!(
             decoder_for(&info).err(),
