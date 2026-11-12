@@ -19,7 +19,28 @@ impl Timeline {
     /// to where that part starts. `false` when nothing of it is left: drop it. A frame wholly on
     /// the timeline is not touched.
     pub fn trim(&self, frame: &mut AudioFrame) -> bool {
-        let _ = (self.end, frame);
+        let len = frame.frames() as i128;
+        let start = i128::from(frame.pts);
+        // In frames from the frame's first: where the timeline starts and where it ends.
+        let skip = (-start).clamp(0, len);
+        let keep = self
+            .end
+            .map_or(len, |end| (i128::from(end) - start).clamp(0, len));
+        if skip == 0 && keep == len {
+            return true;
+        }
+        if keep <= skip {
+            frame.samples.clear();
+            return false;
+        }
+        let channels = i128::from(frame.layout.channels());
+        cut(
+            &mut frame.samples,
+            (skip * channels) as usize,
+            (keep * channels) as usize,
+        );
+        // skip > 0 only for a negative pts, so this stays in range.
+        frame.pts += skip as i64;
         true
     }
 }
