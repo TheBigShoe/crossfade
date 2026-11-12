@@ -74,3 +74,70 @@ pub(crate) fn decode_demuxed(
     deliver(&mut *decoder)?;
     Ok(stream)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossfade_core::{AudioSpec, ChannelLayout, CodecId, Samples, TimeBase};
+    use std::collections::VecDeque;
+
+    struct Scripted {
+        streams: [StreamInfo; 1],
+        packets: VecDeque<Packet>,
+    }
+
+    impl Demuxer for Scripted {
+        fn streams(&self) -> &[StreamInfo] {
+            &self.streams
+        }
+        fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+            Ok(self.packets.pop_front().map(|p| *out = p).is_some())
+        }
+    }
+
+    /// Priming and padding never reach the analysis (loudness, waveforms): the real PCM
+    /// decoder stamps each frame with its packet's pts and the pass trims to the timeline.
+    #[test]
+    fn frames_are_trimmed_to_the_timeline() {
+        let audio = AudioSpec::new(8000, SampleFormat::S16, ChannelLayout::mono()).unwrap();
+        let stream = StreamInfo {
+            frames: Some(3),
+            ..StreamInfo::new(0, CodecId::PcmS16Le, audio, TimeBase::new(1, 8000).unwrap())
+        };
+        let at = |pts: i64, samples: &[i16]| Packet {
+            pts,
+            duration: samples.len() as u64,
+            data: samples.iter().flat_map(|s| s.to_le_bytes()).collect(),
+            ..Packet::default()
+        };
+        let demuxer = Box::new(Scripted {
+            streams: [stream],
+            packets: vec![
+                at(-4, &[1, 2]),
+                at(-2, &[3, 4, 5, 6]),
+                at(2, &[7, 8]),
+                at(4, &[9]),
+            ]
+            .into(),
+        });
+        let mut seen = Vec::new();
+        decode_demuxed(
+            demuxer,
+            "scripted",
+            &Limits::default(),
+            &CancelToken::new(),
+            &mut |_, f| {
+                let Samples::F64(v) = &f.samples else {
+                    panic!("f64 frames");
+                };
+                seen.push((
+                    f.pts,
+                    v.iter().map(|x| (x * 32768.0) as i16).collect::<Vec<_>>(),
+                ));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, [(0, vec![5, 6]), (2, vec![7])]);
+    }
+}
