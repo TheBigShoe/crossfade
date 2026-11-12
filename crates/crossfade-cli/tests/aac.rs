@@ -95,8 +95,10 @@ mod with_the_feature {
     }
 
     fn s16(data: &[u8]) -> Vec<i16> {
-        data.chunks_exact(2)
-            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        data.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| i16::from_le_bytes(c))
             .collect()
     }
 
@@ -128,8 +130,10 @@ mod with_the_feature {
         // ADTS has no priming information: every decoded frame is written.
         assert_eq!(float.len() / 8, 46 * 1024);
         let float: Vec<f32> = float
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| f32::from_le_bytes(c))
             .collect();
         let (tpdf, none) = (s16(&tpdf), s16(&none));
         assert_eq!((tpdf.len(), none.len()), (float.len(), float.len()));
