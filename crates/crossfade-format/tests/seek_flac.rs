@@ -121,3 +121,51 @@ fn a_dense_seektable_is_used() {
         );
     }
 }
+
+/// Old variable block size streams (Flake 0.11) keep the fixed blocking strategy bit but number
+/// frames by their first sample, as the variable strategy does.
+fn old_format(f: &seek_support::Flac) -> Vec<u8> {
+    use crossfade_flac::crc::crc16;
+    use crossfade_flac::frame::{FrameHeader, parse_header, write_header};
+    let frames_len: usize = f.frames.iter().map(|(_, n)| n).sum();
+    let mut out = f.bytes[..f.bytes.len() - frames_len].to_vec();
+    let mut at = out.len();
+    for &(sample, len) in &f.frames {
+        let frame = &f.bytes[at..at + len];
+        let h = parse_header(frame).unwrap();
+        let mut new = Vec::new();
+        write_header(
+            &FrameHeader {
+                variable_block_size: false,
+                number: sample,
+                ..h
+            },
+            &mut new,
+        );
+        new.extend(&frame[h.header_len..len - 2]);
+        let crc = crc16(&new);
+        new.extend(crc.to_be_bytes());
+        out.extend(new);
+        at += len;
+    }
+    out
+}
+
+#[test]
+fn an_old_format_variable_stream_is_numbered_by_sample() {
+    let samples = signal(30_011, 2, 16, 21);
+    let f = flac_file(
+        &samples,
+        2,
+        16,
+        Some(&[1152usize, 37, 4096, 576, 2000][..]),
+        Table::None,
+        true,
+    );
+    let bytes = old_format(&f);
+    let packets = seek_support::drain(open_bytes(&bytes).as_mut()).unwrap();
+    let starts: Vec<i64> = packets.iter().map(|p| p.pts).collect();
+    let want: Vec<i64> = f.frames.iter().map(|&(s, _)| s as i64).collect();
+    assert_eq!(starts, want);
+    check_all_targets(&bytes, "old format variable");
+}
