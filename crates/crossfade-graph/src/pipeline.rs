@@ -1,4 +1,5 @@
 use crate::job::{AudioSettings, Job};
+use crate::timeline::Timeline;
 use crate::two_pass::{Measuring, NullMuxer, Pass};
 use crate::validate::{output_format_for, resolve, resolve_join};
 use crossfade_codec::decoder_for_threads;
@@ -37,6 +38,8 @@ pub enum Step {
 struct Transcoder {
     /// The current input's.
     decoder: Box<dyn Decoder>,
+    /// The current input's: what of the decoder's output is meant to be heard.
+    timeline: Timeline,
     encoder: Box<dyn Encoder>,
     /// Between the join and the encoder when the job processes; `None` is the bit-exact path.
     chain: Option<Chain>,
@@ -198,6 +201,7 @@ impl Pipeline {
                 };
                 let engine = Engine::Transcode(Box::new(Transcoder {
                     decoder,
+                    timeline: Timeline::new(&streams[0]),
                     encoder: codecs.encoder,
                     chain: codecs.main,
                     conform,
@@ -246,6 +250,7 @@ impl Pipeline {
                 measuring = c.measuring;
                 Engine::Transcode(Box::new(Transcoder {
                     decoder: c.decoder,
+                    timeline: Timeline::new(stream),
                     encoder: c.encoder,
                     chain: c.chain,
                     conform: None,
@@ -387,6 +392,7 @@ impl Pipeline {
             return Err(unsupported("joining inputs decodes them"));
         };
         t.decoder = decoder_for_threads(&stream, next.decoder_threads)?;
+        t.timeline = Timeline::new(&stream);
         t.conform = conform_chain(&stream, next.conform.as_ref(), self.limits.max_threads)?;
         t.decoded = AudioFrame::new(&stream.audio);
         self.demuxer = demuxer;
@@ -472,7 +478,8 @@ fn restamp(frame: &mut AudioFrame, next_pts: &mut Option<i64>) {
 
 impl Transcoder {
     /// Decoder to encoder. The protocol wants every frame received before
-    /// the next send, so this loops until the decoder is dry. Returns the frames decoded.
+    /// the next send, so this loops until the decoder is dry. Returns the frames decoded that
+    /// lie on the timeline, the only ones that go on.
     fn pump_frames(
         &mut self,
         packet: &mut Packet,
@@ -481,6 +488,9 @@ impl Transcoder {
     ) -> Result<u64, Error> {
         let mut frames = 0;
         while self.decoder.receive_frame(&mut self.decoded)? {
+            if !self.timeline.trim(&mut self.decoded) {
+                continue;
+            }
             frames += self.decoded.frames() as u64;
             if let Some(conform) = &mut self.conform {
                 conform.send_frame(&self.decoded)?;
