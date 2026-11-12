@@ -5,8 +5,10 @@ mod bits;
 mod codebook;
 mod error;
 pub mod header;
+mod setup;
 #[cfg(any(test, feature = "writer"))]
 pub mod writer;
 
 pub use error::{Error, Result};
+pub use setup::{Modes, Setup, packet_frames};
 pub use header::{Comments, HeaderKind, Ident, header_kind};

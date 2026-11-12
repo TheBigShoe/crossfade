@@ -355,7 +355,7 @@ pub enum Floor {
 }
 
 impl Floor {
-    fn write(&self, w: &mut BitWriter) {
+    pub fn write(&self, w: &mut BitWriter) {
         match self {
             Floor::Zero(f) => {
                 w.put(0, 16);
@@ -408,7 +408,7 @@ pub struct Residue {
 }
 
 impl Residue {
-    fn write(&self, w: &mut BitWriter) {
+    pub fn write(&self, w: &mut BitWriter) {
         w.put(u64::from(self.kind), 16);
         w.put(u64::from(self.begin), 24);
         w.put(u64::from(self.end), 24);
@@ -446,7 +446,7 @@ pub struct Mapping {
 }
 
 impl Mapping {
-    fn write(&self, w: &mut BitWriter, channels: u8) {
+    pub fn write(&self, w: &mut BitWriter, channels: u8) {
         w.put(0, 16);
         let many = self.submaps.len() > 1;
         w.put_bit(many);
