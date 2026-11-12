@@ -2,13 +2,15 @@
 //! app. No encoder, no muxer, nothing written.
 
 use crate::run::CancelToken;
+use crate::timeline::Timeline;
 use crossfade_codec::decoder_for_threads;
 use crossfade_core::{AudioFrame, Demuxer, Error, JobIo, Limits, Packet, SampleFormat, StreamInfo};
 use crossfade_dsp::convert::convert_format;
 use crossfade_format::open_demuxer;
 
-/// Decodes the one audio stream of `path` and hands every frame to `on_frame`, as `f64`, in
-/// order, with pts counting frames from 0. `cancel` is polled between packets; an error from
+/// Decodes the one audio stream of `path` and hands every frame on its timeline to `on_frame`
+/// (priming and padding trimmed, see `Timeline`), as `f64`, in order, with pts counting frames
+/// from 0. `cancel` is polled between packets; an error from
 /// `on_frame` stops the pass and is returned. Returns the stream.
 pub fn decode_frames(
     path: &str,
@@ -42,11 +44,15 @@ pub(crate) fn decode_demuxed(
     };
     let stream = stream.clone();
     let mut decoder = decoder_for_threads(&stream, limits.max_threads)?;
+    let timeline = Timeline::new(&stream);
     let mut packet = Packet::default();
     let mut decoded = AudioFrame::new(&stream.audio);
     let mut working = AudioFrame::new(&stream.audio);
     let mut deliver = |decoder: &mut dyn crossfade_core::Decoder| -> Result<(), Error> {
         while decoder.receive_frame(&mut decoded)? {
+            if !timeline.trim(&mut decoded) {
+                continue;
+            }
             convert_format(&decoded, SampleFormat::F64, &mut working)?;
             on_frame(&stream, &working)?;
         }
