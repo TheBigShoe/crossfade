@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::{Cache, Downloader, Event, Manifest, Outcome, Problem, Summary, fetch, seed};
+use crate::{Cache, Downloader, Event, Manifest, Outcome, Problem, Received, Summary, fetch, seed};
 
 const USAGE: &str = "usage: crossfade-corpus [--manifest <path>] [--dir <path>] \
 <fetch [--only <id-prefix>] | verify | list | seed --from <dir> | path <id>>";
@@ -203,9 +203,10 @@ mod tests {
     struct Fake(Vec<(String, Vec<u8>)>);
 
     impl Downloader for Fake {
-        fn download(&mut self, url: &str, dest: &Path) -> Result<(), String> {
+        fn download(&mut self, url: &str, dest: &Path, _max: u64) -> Result<Received, String> {
             let (_, body) = self.0.iter().find(|(u, _)| u == url).ok_or("404")?;
-            std::fs::write(dest, body).map_err(|e| e.to_string())
+            std::fs::write(dest, body).map_err(|e| e.to_string())?;
+            Ok(Received::default())
         }
     }
 
@@ -285,6 +286,72 @@ mod tests {
             out.contains("1 present and valid") && out.contains("1 missing"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn only_may_be_repeated_and_applies_to_verify_list_and_seed() {
+        let s = setup("cli-only-many");
+        run_cli(&s, &["fetch", "--only", "flac/subset"], &mut net(&s));
+        let (code, out, _) = run_cli(&s, &["verify", "--only", "flac/subset"], &mut net(&s));
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            out.contains("1 present and valid") && out.contains("0 missing"),
+            "{out}"
+        );
+        let (code, out, _) = run_cli(
+            &s,
+            &["verify", "--only", "flac/subset", "--only", "flac/faulty"],
+            &mut net(&s),
+        );
+        assert_eq!(code, 1);
+        assert!(out.contains("1 missing"), "{out}");
+        let (_, out, _) = run_cli(&s, &["list", "--only", "flac/faulty"], &mut net(&s));
+        assert!(
+            out.contains("flac/faulty/01") && !out.contains("flac/subset/01"),
+            "{out}"
+        );
+        let from = s.root.join("mirror");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("b.flac"), b"bbbb").unwrap();
+        let (code, _, err) = run_cli(
+            &s,
+            &[
+                "seed",
+                "--from",
+                from.to_str().unwrap(),
+                "--only",
+                "flac/faulty",
+            ],
+            &mut Fake(vec![]),
+        );
+        assert_eq!(code, 0, "{err}");
+    }
+
+    #[test]
+    fn fetch_logs_the_archive_it_downloads() {
+        let s = setup("cli-archive");
+        let tgz = crate::testutil::tar_gz(&[("v/a.bit", b"aaa")]);
+        let m = crate::testutil::archive_manifest(&tgz, &[("v/a.bit", b"aaa")]);
+        let mut text = String::new();
+        text += &format!(
+            "[[archive]]\nid = \"opus/rfc8251\"\nurl = \"{}\"\nbytes = {}\nsha256 = \"{}\"\n\
+             licence = \"x\"\nformat = \"tar.gz\"\n",
+            crate::testutil::ARCHIVE_URL,
+            m.archives()[0].bytes,
+            m.archives()[0].sha256
+        );
+        let e = &m.entries()[0];
+        text += &format!(
+            "[[file]]\nid = \"{}\"\nname = \"{}\"\narchive = \"opus/rfc8251\"\nmember = \"v/a.bit\"\n\
+             bytes = 3\nsha256 = \"{}\"\nlicence = \"x\"\nexpect = \"data\"\n",
+            e.id, e.name, e.sha256
+        );
+        std::fs::write(&s.defaults.manifest, text).unwrap();
+        let mut dl = Fake(vec![(crate::testutil::ARCHIVE_URL.to_string(), tgz)]);
+        let (code, _, err) = run_cli(&s, &["fetch"], &mut dl);
+        assert_eq!(code, 0, "{err}");
+        assert!(err.contains("archive opus/rfc8251"), "{err}");
+        assert_eq!(run_cli(&s, &["verify"], &mut dl).0, 0);
     }
 
     #[test]
