@@ -16,6 +16,7 @@ macOS so far.
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
 | Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
+| MP3 | yes | no | MPEG-1, 2 and 2.5 Layer III with our own decoder, full accuracy on the ISO conformance streams; gapless from LAME's info frame, exact seeking, ID3v2 and ID3v1 tags. Layers I and II are named and refused |
 
 Conversions between these are bit-exact, and a file's true bit depth (a 20-bit FLAC stays 20-bit, with the same STREAMINFO MD5) survives them unless `--sample-format` changes the format. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
