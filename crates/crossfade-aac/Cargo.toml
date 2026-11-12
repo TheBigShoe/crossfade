@@ -19,3 +19,7 @@ workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+
+[[test]]
+name = "apple_oracle"
+required-features = ["decoder"]

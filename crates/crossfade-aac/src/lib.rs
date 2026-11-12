@@ -7,6 +7,10 @@
 pub mod adts;
 pub mod asc;
 mod bits;
+#[cfg(feature = "decoder")]
+pub mod decoder;
 mod error;
 
+#[cfg(feature = "decoder")]
+pub use decoder::Decoder;
 pub use error::{Error, Result};
