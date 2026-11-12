@@ -1,9 +1,15 @@
 //! ALAC decoder adapter: one packet in, one frame out, channels moved from ALAC's order into
 //! the stream layout's (WAVE) order and samples left-justified in the stream's container
 //! format (20-bit audio sits in the top of `S24`). The decoding lives in `crossfade-alac`.
-//! Packets are independent, so a reset only forgets a frame not yet received.
+//!
+//! Packets are independent, so with threads a batch of them decodes on several at once
+//! (`std::thread::scope`, one `crossfade_alac::Decoder` each) and the frames come out in
+//! order, a batch late; the frames and the errors are the same at any thread count: when a
+//! packet fails, every frame before it comes out, then its error, and nothing after. A reset
+//! forgets what is queued.
 
 use crossfade_core::{AudioFrame, Decoder, Error, Packet, SampleFormat, Samples, StreamInfo};
+use std::collections::VecDeque;
 
 fn engine_error(e: crossfade_alac::Error) -> Error {
     match e {
@@ -18,23 +24,86 @@ fn engine_error(e: crossfade_alac::Error) -> Error {
     }
 }
 
-struct AlacDecoder {
+/// At most this many threads: decoding outruns the rest of a conversion well before.
+const MAX_THREADS: usize = 4;
+/// Packets per thread in a batch: enough work (about 2 ms) to pay for starting a thread.
+const PACKETS_PER_THREAD: usize = 16;
+
+/// One thread's part of a batch: its decoder, its packets, and where their frames and results go.
+type Share<'a> = (
+    (&'a mut Worker, &'a [Packet]),
+    (&'a mut [AudioFrame], &'a mut [Result<(), Error>]),
+);
+
+/// One decoder and its scratch, per thread.
+struct Worker {
     inner: crossfade_alac::Decoder,
+    decoded: Vec<i32>,
+}
+
+/// What every frame looks like.
+struct Shape {
     /// For each channel in the frame's order, the ALAC channel it comes from.
     from_alac: &'static [u8],
     /// Left shift into the container.
     justify: u32,
     template: AudioFrame,
-    decoded: Vec<i32>,
-    ready: Option<AudioFrame>,
 }
 
-/// Not threaded yet.
-pub fn decoder_threads(stream: &StreamInfo, _threads: usize) -> Result<Box<dyn Decoder>, Error> {
-    decoder(stream)
+impl Shape {
+    fn fill(&self, decoded: &[i32], pts: i64, frame: &mut AudioFrame) {
+        if frame.samples.format() != self.template.samples.format()
+            || frame.layout != self.template.layout
+        {
+            *frame = self.template.clone();
+        }
+        frame.pts = pts;
+        frame.sample_rate = self.template.sample_rate;
+        let (order, shift) = (self.from_alac, self.justify);
+        match &mut frame.samples {
+            Samples::S16(out) => reorder(decoded, order, out, |s| s as i16),
+            Samples::S24(out) | Samples::S32(out) => reorder(decoded, order, out, |s| s << shift),
+            _ => unreachable!("the template has an integer format"),
+        }
+    }
+}
+
+impl Worker {
+    fn decode(
+        &mut self,
+        shape: &Shape,
+        packet: &Packet,
+        frame: &mut AudioFrame,
+    ) -> Result<(), Error> {
+        self.inner
+            .decode(&packet.data, &mut self.decoded)
+            .map_err(engine_error)?;
+        shape.fill(&self.decoded, packet.pts, frame);
+        Ok(())
+    }
+}
+
+struct AlacDecoder {
+    workers: Vec<Worker>,
+    shape: Shape,
+    /// Packets sent and not decoded yet, oldest first.
+    queued: Vec<Packet>,
+    spare_packets: Vec<Packet>,
+    ready: VecDeque<AudioFrame>,
+    spare: Vec<AudioFrame>,
+    /// A packet failed: nothing after it is decoded.
+    failed: bool,
+    /// The failure, held back until the frames before it have been received.
+    held: Option<Error>,
+    draining: bool,
 }
 
 pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
+    decoder_threads(stream, 1)
+}
+
+/// As [`decoder`], on up to `threads` threads (0: the machine's parallelism, at most four).
+pub fn decoder_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dyn Decoder>, Error> {
     let config = crossfade_alac::Config::parse(&stream.extradata).map_err(engine_error)?;
     let layout = crossfade_alac::wave_layout(config.channels).ok_or_else(|| Error::Malformed {
         what: "alac: no layout for the channel count".into(),
@@ -53,13 +122,33 @@ pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
             what: "alac: stream description disagrees with its config".into(),
         });
     }
+    let threads = match threads {
+        0 => crate::auto_thread_count(),
+        n => n,
+    }
+    .clamp(1, MAX_THREADS);
+    let workers = (0..threads)
+        .map(|_| {
+            Ok(Worker {
+                inner: crossfade_alac::Decoder::new(config).map_err(engine_error)?,
+                decoded: Vec::new(),
+            })
+        })
+        .collect::<Result<_, Error>>()?;
     Ok(Box::new(AlacDecoder {
-        inner: crossfade_alac::Decoder::new(config).map_err(engine_error)?,
-        from_alac: layout.from_alac,
-        justify: width - u32::from(config.bit_depth),
-        template: AudioFrame::new(audio),
-        decoded: Vec::new(),
-        ready: None,
+        workers,
+        shape: Shape {
+            from_alac: layout.from_alac,
+            justify: width - u32::from(config.bit_depth),
+            template: AudioFrame::new(audio),
+        },
+        queued: Vec::new(),
+        spare_packets: Vec::new(),
+        ready: VecDeque::new(),
+        spare: Vec::new(),
+        failed: false,
+        held: None,
+        draining: false,
     }))
 }
 
@@ -82,51 +171,125 @@ fn reorder<T>(src: &[i32], from_alac: &[u8], dst: &mut Vec<T>, f: impl Fn(i32) -
     }
 }
 
+impl AlacDecoder {
+    fn batch(&self) -> usize {
+        match self.workers.len() {
+            1 => 1,
+            n => n * PACKETS_PER_THREAD,
+        }
+    }
+
+    /// Decodes every queued packet, in order, onto the ready frames.
+    fn run(&mut self) -> Result<(), Error> {
+        let n = self.queued.len();
+        if n == 0 {
+            return Ok(());
+        }
+        let mut frames: Vec<AudioFrame> = (0..n)
+            .map(|_| {
+                self.spare
+                    .pop()
+                    .unwrap_or_else(|| self.shape.template.clone())
+            })
+            .collect();
+        let mut results: Vec<Result<(), Error>> = vec![Ok(()); n];
+        let per = n.div_ceil(self.workers.len());
+        let shape = &self.shape;
+        let jobs = self
+            .workers
+            .iter_mut()
+            .zip(self.queued.chunks(per))
+            .zip(frames.chunks_mut(per).zip(results.chunks_mut(per)));
+        let work = |((w, packets), (frames, results)): Share<'_>| {
+            for ((p, f), r) in packets.iter().zip(frames).zip(results) {
+                *r = w.decode(shape, p, f);
+                if r.is_err() {
+                    // Later packets of this share are never reported; skip them.
+                    break;
+                }
+            }
+        };
+        if per == n {
+            jobs.for_each(work);
+        } else {
+            std::thread::scope(|s| {
+                let mut jobs = jobs;
+                let first = jobs.next();
+                for job in jobs {
+                    s.spawn(move || work(job));
+                }
+                if let Some(job) = first {
+                    work(job);
+                }
+            });
+        }
+        self.spare_packets.append(&mut self.queued);
+        let mut outcome = Ok(());
+        for (frame, result) in frames.into_iter().zip(results) {
+            if self.failed {
+                self.spare.push(frame);
+                continue;
+            }
+            match result {
+                Ok(()) => self.ready.push_back(frame),
+                Err(e) => {
+                    self.failed = true;
+                    self.spare.push(frame);
+                    if self.ready.is_empty() {
+                        outcome = Err(e);
+                    } else {
+                        self.held = Some(e);
+                    }
+                }
+            }
+        }
+        outcome
+    }
+}
+
 impl Decoder for AlacDecoder {
     fn send_packet(&mut self, packet: &Packet) -> Result<(), Error> {
-        self.inner
-            .decode(&packet.data, &mut self.decoded)
-            .map_err(engine_error)?;
-        let mut frame = match self.ready.take() {
-            // A buffer the caller swapped in is reused when it has the stream's shape.
-            Some(f)
-                if f.samples.format() == self.template.samples.format()
-                    && f.layout == self.template.layout =>
-            {
-                f
-            }
-            _ => self.template.clone(),
-        };
-        frame.pts = packet.pts;
-        frame.sample_rate = self.template.sample_rate;
-        let (src, order, shift) = (&self.decoded, self.from_alac, self.justify);
-        match &mut frame.samples {
-            Samples::S16(out) => reorder(src, order, out, |s| s as i16),
-            Samples::S24(out) | Samples::S32(out) => reorder(src, order, out, |s| s << shift),
-            _ => unreachable!("built with an integer format"),
+        if self.failed {
+            return Ok(());
         }
-        self.ready = Some(frame);
+        let mut p = self.spare_packets.pop().unwrap_or_default();
+        p.clone_from(packet);
+        self.queued.push(p);
+        if self.queued.len() >= self.batch() {
+            self.run()?;
+        }
         Ok(())
     }
 
     fn receive_frame(&mut self, out: &mut AudioFrame) -> Result<bool, Error> {
-        match self.ready.as_mut() {
-            Some(frame) if !frame.samples.is_empty() => {
-                std::mem::swap(out, frame);
-                // `out`'s old buffers come back as the next frame's.
-                frame.samples.clear();
-                Ok(true)
-            }
-            _ => Ok(false),
+        if self.ready.is_empty() && self.draining {
+            self.run()?;
+        }
+        if let Some(mut frame) = self.ready.pop_front() {
+            std::mem::swap(out, &mut frame);
+            self.spare.push(frame);
+            return Ok(true);
+        }
+        match self.held.take() {
+            Some(e) => Err(e),
+            None => Ok(false),
         }
     }
 
-    fn drain(&mut self) {}
+    fn drain(&mut self) {
+        self.draining = true;
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        self.run()
+    }
 
     fn reset(&mut self) {
-        if let Some(frame) = self.ready.as_mut() {
-            frame.samples.clear();
-        }
+        self.spare_packets.append(&mut self.queued);
+        self.spare.extend(self.ready.drain(..));
+        self.failed = false;
+        self.held = None;
+        self.draining = false;
     }
 }
 
