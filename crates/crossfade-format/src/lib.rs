@@ -6,6 +6,7 @@ pub mod aiff;
 pub mod flac;
 pub mod ogg;
 mod replay;
+mod sniff;
 pub mod vorbis_comment;
 pub mod wav;
 
@@ -54,42 +55,14 @@ impl FormatId {
     }
 }
 
-/// The longest magic: `FORM` + size + `AIFF`.
-const SNIFF_LEN: usize = 12;
-
-fn sniff(head: &[u8]) -> Option<FormatId> {
-    match head {
-        [b'R', b'I', b'F', b'F', ..] | [b'R', b'F', b'6', b'4', ..] => Some(FormatId::Wav),
-        // An ID3v2 tag may precede the stream marker; the FLAC reader skips it.
-        [b'f', b'L', b'a', b'C', ..] | [b'I', b'D', b'3', ..] => Some(FormatId::Flac),
-        [
-            b'F',
-            b'O',
-            b'R',
-            b'M',
-            _,
-            _,
-            _,
-            _,
-            b'A',
-            b'I',
-            b'F',
-            b'F' | b'C',
-            ..,
-        ] => Some(FormatId::Aiff),
-        [b'O', b'g', b'g', b'S', ..] => Some(FormatId::Ogg),
-        _ => None,
-    }
-}
-
 /// Identifies the container from its first bytes without seeking, so a pipe works: the
 /// chosen demuxer gets those bytes back in front of the rest.
 pub fn open_demuxer(
     source: Box<dyn MediaSource>,
     limits: &Limits,
 ) -> Result<(FormatId, Box<dyn Demuxer>), Error> {
-    let (head, source) = Replay::sniff(source, SNIFF_LEN)?;
-    let format = sniff(&head).ok_or(Error::UnrecognisedFormat)?;
+    let (head, source) = Replay::sniff(source, sniff::SNIFF_LEN)?;
+    let format = sniff::identify(&head).ok_or(Error::UnrecognisedFormat)?;
     let source: Box<dyn MediaSource> = Box::new(source);
     let demuxer: Box<dyn Demuxer> = match format {
         FormatId::Wav => Box::new(wav::WavDemuxer::new(source, limits)?),
