@@ -8,6 +8,8 @@ mod decoder;
 mod error;
 mod floor;
 pub mod header;
+#[cfg(test)]
+mod hostile_tests;
 mod mdct;
 mod residue;
 mod setup;
