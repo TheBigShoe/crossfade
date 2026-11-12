@@ -123,14 +123,19 @@ cargo build --release -p crossfade-ui    # the desktop app
 ## Tests
 
 ```sh
-just corpus   # once per clone: fetch the FLAC conformance files (about 300 MB)
+just corpus   # once per clone: fetch the conformance files (about 550 MB; ~600 MB on disk)
 just ci       # formatting, lints, tests, and the conformance tier
 ```
 
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and compares the results with a committed record.
+and compares the results with a committed record. The corpus also holds the
+official Opus (RFC 8251), Vorbis (Xiph), MP3 and AAC (ISO/IEC 14496-26) test
+vectors for the decoders to come; none is committed, `corpus.toml` only lists
+where each one lives. `just corpus` takes them all; to fetch one codec, run
+`cargo run --release -p crossfade-corpus -- fetch --only flac/` (the flag
+repeats, and `verify`, `list` and `seed` take it too).
 
 ## Design
 

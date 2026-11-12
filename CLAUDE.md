@@ -52,13 +52,13 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder and `crossfade-alac`'s decoder (`alac`: ALAC order to WAVE order, 20-bit left-justified in `S24`, independent packets decoded in batches on up to four scoped threads) to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
-| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
+| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `DecodeSession` (one input decoded frame by frame on its timeline, with exact `seek`), `decode_frames` (a decode-only pass for analysis, read through a session) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
 | `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
-| `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest, fetch/seed/verify into `.corpus-cache`, `require(id)` for tier-3 tests (not an engine crate) |
+| `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest (single files and `[[archive]]` members; `expect = "data"` for reference files), fetch/seed/verify into `.corpus-cache` (`--only <id prefix>`, repeatable), `require(id)` and `require_all(prefix)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
 
 Format rules worth knowing before touching a codec or container: decoders
@@ -92,6 +92,15 @@ README giving the command that made each (5 MB budget for the repository).
   `Decoder::reset`, which every decoder must implement (no default): it forgets all stream
   state, as if new. Frames decoded before `pts` are the caller's to discard. A reset FLAC
   decoder no longer checks the whole-stream MD5.
+- **Seeking in Ogg and through the engine.** An Ogg mapping seeks with
+  `PacketReader::seek_granule(target, floor)`: it lands on the packet after the last page of its
+  stream (from `floor`, the mapping's first audio packet, kept from `packet_start()`) whose
+  granule is at most `target`, returns that granule (`None`: back at `floor`), bisects in
+  O(log n) page reads, and checks every page found by scanning by its CRC; `granule()` says
+  which granule applies to the packet just read. A mapping asks for a target early enough for
+  its pre-roll and reads on from the landing. `crossfade_graph::DecodeSession` is the one exact seek for a front end: it seeks the
+  reader, resets the decoder and drops what lies before the target; seek-then-decode equals
+  decode-then-slice (the tests, and the tier-3 `conformance_seek`).
 - **Lossy output default.** A lossy codec (`CodecId::is_lossy`) has no bit depth; its decoder
   emits interleaved `F32`. With no `--sample-format`, `output_sample_format` writes it as `S16`
   to every container, with the note "<codec> has no bit depth: writing 16-bit; choose
@@ -179,7 +188,7 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 
 ```sh
 just ci        # fmt-check + clippy -D warnings + cargo test --workspace + just conformance
-just corpus    # once per clone: fetch the conformance files (needs curl and the network)
+just corpus    # once per clone: fetch every conformance file, FLAC/Opus/Vorbis/MP3/AAC (~550 MB; needs curl and the network); one codec: crossfade-corpus fetch --only flac/
 just conformance  # tier 3, FLAC corpus vs the frozen results (needs the corpus, ~3 s)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)

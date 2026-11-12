@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::Entry;
+use crate::{Archive, Entry};
 
 /// Why a cached file cannot be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,24 +95,46 @@ impl Cache {
     pub fn verify(&self, entry: &Entry) -> Result<(), Problem> {
         verify_file(entry, &self.path(entry))
     }
+
+    /// Where a fetched archive waits while its members are extracted. Outside
+    /// every entry's directory (`.archives` is no codec).
+    pub fn archive_path(&self, archive: &Archive) -> PathBuf {
+        self.dir
+            .join(".archives")
+            .join(format!("{}.{}", archive.id, archive.format.extension()))
+    }
+
+    pub(crate) fn temp_archive_path(&self, archive: &Archive) -> PathBuf {
+        let mut p = self.archive_path(archive).into_os_string();
+        p.push(".part");
+        PathBuf::from(p)
+    }
+
+    pub fn verify_archive(&self, archive: &Archive) -> Result<(), Problem> {
+        verify_path(&self.archive_path(archive), archive.bytes, &archive.sha256)
+    }
 }
 
 pub(crate) fn verify_file(entry: &Entry, path: &Path) -> Result<(), Problem> {
+    verify_path(path, entry.bytes, &entry.sha256)
+}
+
+pub(crate) fn verify_path(path: &Path, bytes: u64, sha256: &str) -> Result<(), Problem> {
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Problem::Missing),
         Err(e) => return Err(Problem::Unreadable(e.to_string())),
     };
-    if meta.len() != entry.bytes {
+    if meta.len() != bytes {
         return Err(Problem::WrongSize {
-            expected: entry.bytes,
+            expected: bytes,
             actual: meta.len(),
         });
     }
     let actual = sha256_file(path).map_err(|e| Problem::Unreadable(e.to_string()))?;
-    if actual != entry.sha256 {
+    if actual != sha256 {
         return Err(Problem::WrongHash {
-            expected: entry.sha256.clone(),
+            expected: sha256.to_string(),
             actual,
         });
     }

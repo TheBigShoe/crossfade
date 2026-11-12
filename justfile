@@ -21,6 +21,7 @@ test:
 # After a deliberate decoder change: CROSSFADE_BLESS=1 just conformance
 conformance:
     cargo test --release -p crossfade-format --test conformance_flac -- --ignored
+    cargo test --release -p crossfade-format --test conformance_seek -- --ignored
 
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
