@@ -11,6 +11,22 @@ pub trait Demuxer {
     fn tags(&self) -> &Tags {
         &NO_TAGS
     }
+
+    /// Moves the reader so that playback can start at `pts`, in stream 0's time base.
+    ///
+    /// Feeding the packets read next to a freshly reset [`Decoder`] (see [`Decoder::reset`])
+    /// gives correct output from `pts` onwards: the reader lands early enough to cover the
+    /// codec's pre-roll, and the frames decoded before `pts` are the caller's to discard.
+    /// Returns the pts of the packet `read_packet` gives next, which is at most `pts`.
+    ///
+    /// A `pts` before the start seeks to the start. A `pts` at or past the end leaves the
+    /// reader at the end (the next `read_packet` returns `Ok(false)`) and returns the end's
+    /// pts. A source that cannot seek, and the default, give `Error::Unsupported`.
+    fn seek(&mut self, _pts: i64) -> Result<i64, Error> {
+        Err(Error::Unsupported {
+            what: "this reader cannot seek".into(),
+        })
+    }
 }
 
 /// Writes packets into a container.
