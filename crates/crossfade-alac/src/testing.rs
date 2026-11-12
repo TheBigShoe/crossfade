@@ -12,12 +12,14 @@ pub(crate) struct BitWriter {
 }
 
 impl BitWriter {
+    /// The low `n` bits of `v`, high first; past 64 bits, zeros (or ones for `u64::MAX`).
     pub(crate) fn put(&mut self, n: u32, v: u64) {
         for i in (0..n).rev() {
+            let bit = if i < 64 { (v >> i) & 1 } else { v >> 63 };
             if self.bits.is_multiple_of(8) {
                 self.bytes.push(0);
             }
-            if (v >> i) & 1 != 0 {
+            if bit != 0 {
                 *self.bytes.last_mut().unwrap() |= 0x80 >> (self.bits % 8);
             }
             self.bits += 1;
