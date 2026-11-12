@@ -5,6 +5,7 @@ mod bits;
 mod codebook;
 mod error;
 mod floor;
+mod mdct;
 pub mod header;
 mod residue;
 mod setup;
