@@ -40,7 +40,10 @@ pub(crate) fn sniff(mut inner: Box<dyn MediaSource>, limits: &Limits) -> Result<
     if tags == 0 {
         let format = match identify(&head) {
             Some(f) => f,
-            None => return Err(Error::UnrecognisedFormat),
+            None => {
+                read_up_to(&mut *inner, &mut head, JUNK_WINDOW)?;
+                mpeg_after_junk(&head).ok_or(Error::UnrecognisedFormat)?
+            }
         };
         return Ok(Sniffed {
             format,
@@ -52,7 +55,10 @@ pub(crate) fn sniff(mut inner: Box<dyn MediaSource>, limits: &Limits) -> Result<
         [b'f', b'L', b'a', b'C', ..] => FormatId::Flac,
         after => match mpeg_audio(after) {
             Some(f) => f,
-            None => return Err(Error::UnrecognisedFormat),
+            None => {
+                read_up_to(&mut *inner, &mut head, tags + JUNK_WINDOW)?;
+                mpeg_after_junk(&head[tags..]).ok_or(Error::UnrecognisedFormat)?
+            }
         },
     };
     if format == FormatId::Flac {
@@ -92,6 +98,34 @@ pub(crate) const MAX_MPEG_JUNK: usize = 64 << 10;
 
 /// Room for a frame candidate at the end of the junk window, and the header confirming it.
 const JUNK_WINDOW: usize = MAX_MPEG_JUNK + crossfade_mp3::MAX_FRAME_LEN + 4;
+
+/// MPEG audio starting within the first `MAX_MPEG_JUNK` bytes of `head`: a Layer I-III frame
+/// header with another of the same stream where its frame ends. One header alone is not enough
+/// (it is two bytes of chance in any binary); free-format frames, whose length the header does
+/// not give, are not looked for.
+fn mpeg_after_junk(head: &[u8]) -> Option<FormatId> {
+    let last = head.len().checked_sub(4)?.min(MAX_MPEG_JUNK);
+    (0..=last)
+        .filter(|&k| head[k] == 0xFF)
+        .any(|k| confirmed_frame(&head[k..]))
+        .then_some(FormatId::Mp3)
+}
+
+fn confirmed_frame(b: &[u8]) -> bool {
+    let header = |b: &[u8]| {
+        b.first_chunk::<4>()
+            .and_then(|h| crossfade_mp3::FrameHeader::parse(h).ok())
+    };
+    let Some(h) = header(b) else {
+        return false;
+    };
+    let Some(len) = h.frame_len() else {
+        return false;
+    };
+    b.get(len..)
+        .and_then(header)
+        .is_some_and(|n| h.same_stream(&n))
+}
 
 /// The container whose magic `head` starts with (ID3v2 tags are `sniff`'s).
 fn identify(head: &[u8]) -> Option<FormatId> {
