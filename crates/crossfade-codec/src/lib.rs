@@ -4,6 +4,7 @@
 
 pub mod flac;
 pub mod pcm;
+pub mod vorbis;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
 

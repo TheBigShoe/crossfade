@@ -1496,6 +1496,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-flac",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "proptest",
 ]
 
