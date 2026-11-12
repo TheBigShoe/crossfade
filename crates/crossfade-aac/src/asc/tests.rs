@@ -9,7 +9,7 @@ struct Bits {
 impl Bits {
     fn put(mut self, n: u32, v: u32) -> Self {
         for i in (0..n).rev() {
-            if self.used % 8 == 0 {
+            if self.used.is_multiple_of(8) {
                 self.out.push(0);
             }
             let bit = (v >> i) & 1;
