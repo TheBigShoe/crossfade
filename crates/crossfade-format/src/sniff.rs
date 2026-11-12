@@ -38,7 +38,10 @@ pub(crate) fn sniff(mut inner: Box<dyn MediaSource>, limits: &Limits) -> Result<
         tags = end;
     }
     if tags == 0 {
-        let format = identify(&head).ok_or(Error::UnrecognisedFormat)?;
+        let format = match identify(&head) {
+            Some(f) => f,
+            None => return Err(Error::UnrecognisedFormat),
+        };
         return Ok(Sniffed {
             format,
             id3: None,
@@ -47,7 +50,10 @@ pub(crate) fn sniff(mut inner: Box<dyn MediaSource>, limits: &Limits) -> Result<
     }
     let format = match &head[tags..] {
         [b'f', b'L', b'a', b'C', ..] => FormatId::Flac,
-        after => mpeg_audio(after).ok_or(Error::UnrecognisedFormat)?,
+        after => match mpeg_audio(after) {
+            Some(f) => f,
+            None => return Err(Error::UnrecognisedFormat),
+        },
     };
     if format == FormatId::Flac {
         return Ok(Sniffed {
@@ -78,6 +84,14 @@ fn id3v2_len(header: &[u8]) -> u64 {
 
 /// The longest magic: `FORM` + size + `AIFF`.
 pub(crate) const SNIFF_LEN: usize = 12;
+
+/// How far into the input (after any ID3v2 tags) MPEG audio may start and still be found,
+/// past junk or zero padding. Only an input no magic identifies is read this far; the MP3
+/// reader uses the same bound.
+pub(crate) const MAX_MPEG_JUNK: usize = 64 << 10;
+
+/// Room for a frame candidate at the end of the junk window, and the header confirming it.
+const JUNK_WINDOW: usize = MAX_MPEG_JUNK + crossfade_mp3::MAX_FRAME_LEN + 4;
 
 /// The container whose magic `head` starts with (ID3v2 tags are `sniff`'s).
 fn identify(head: &[u8]) -> Option<FormatId> {
@@ -334,6 +348,104 @@ mod tests {
         assert!(!s.source.is_seekable());
         assert_eq!((s.format, s.id3.as_ref()), (FormatId::Mp3, Some(&tag)));
         assert_eq!(rest(&mut s), audio);
+    }
+
+    /// Two MPEG-1 Layer III frames (417 bytes each) whose bodies hold no sync byte.
+    fn two_frames() -> Vec<u8> {
+        let mut f = [MP3.to_vec(), vec![0x11; 413]].concat();
+        f[3] = 0x64;
+        [f.clone(), f].concat()
+    }
+
+    #[test]
+    fn mpeg_audio_after_leading_junk_is_found_when_a_second_frame_confirms_it() {
+        for junk in [
+            vec![0u8; 215],
+            b"leading text".to_vec(),
+            vec![0xFF; 3],
+            vec![0; MAX_MPEG_JUNK],
+        ] {
+            let bytes = input(&[&junk, &two_frames()]);
+            let mut s = sniffed(&bytes).unwrap();
+            assert_eq!((s.format, &s.id3), (FormatId::Mp3, &None), "{}", junk.len());
+            assert_eq!(rest(&mut s), bytes);
+        }
+        // Behind an ID3v2 tag too, with the tag kept apart as before.
+        let tag = id3(40, false);
+        let audio = input(&[&[0u8; 100], &two_frames()]);
+        let mut s = sniffed(&input(&[&tag, &audio])).unwrap();
+        assert_eq!((s.format, s.id3.as_ref()), (FormatId::Mp3, Some(&tag)));
+        assert_eq!(rest(&mut s), audio);
+    }
+
+    #[test]
+    fn junk_past_the_bound_or_an_unconfirmed_header_is_not_mpeg_audio() {
+        let one = &two_frames()[..417];
+        for bytes in [
+            input(&[&vec![0u8; MAX_MPEG_JUNK + 1], &two_frames()]),
+            // A lone header, its frame followed by something else.
+            input(&[b"junk", one, b"more junk that is no header"]),
+            // A free-format header cannot be confirmed by sniffing.
+            input(&[
+                b"junk",
+                &[0xFF, 0xFB, 0x00, 0x64],
+                &[0x11; 600],
+                &[0xFF, 0xFB, 0x00, 0x64],
+            ]),
+            // Frames of two different streams back to back.
+            input(&[b"j", one, &[0xFF, 0xFB, 0x94, 0x64]]),
+        ] {
+            assert_eq!(
+                sniffed(&bytes).err(),
+                Some(Error::UnrecognisedFormat),
+                "{}",
+                bytes.len()
+            );
+        }
+    }
+
+    #[test]
+    fn containers_whose_data_looks_like_mpeg_frames_keep_their_magic() {
+        let frames = two_frames();
+        let mut wav = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        wav.extend(&frames);
+        let mut flac = b"fLaC\0\0\0\x22".to_vec();
+        flac.extend(&frames);
+        let mut aiff = b"FORM\0\0\0\0AIFF".to_vec();
+        aiff.extend(&frames);
+        let mut ogg = b"OggS\0\x02".to_vec();
+        ogg.extend(&frames);
+        for (bytes, want) in [
+            (wav, FormatId::Wav),
+            (flac.clone(), FormatId::Flac),
+            (aiff, FormatId::Aiff),
+            (ogg, FormatId::Ogg),
+            // FLAC behind a tag still goes to the FLAC reader whole.
+            (input(&[&id3(10, false), &flac]), FormatId::Flac),
+        ] {
+            assert_eq!(sniffed(&bytes).unwrap().format, want);
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_input_is_read_no_further_than_the_junk_window() {
+        let big = vec![0x42u8; 10 * JUNK_WINDOW];
+        let src = FaultySource::new(Cursor::new(big)).not_seekable();
+        let mut inner: Box<dyn MediaSource> = Box::new(src);
+        let mut head = Vec::new();
+        read_up_to(&mut *inner, &mut head, SNIFF_LEN).unwrap();
+        assert_eq!(identify(&head), None);
+        assert_eq!(
+            sniff(
+                Box::new(FaultySource::new(Cursor::new(vec![
+                    0x42u8;
+                    10 * JUNK_WINDOW
+                ]))),
+                &Limits::default()
+            )
+            .err(),
+            Some(Error::UnrecognisedFormat)
+        );
     }
 
     #[test]

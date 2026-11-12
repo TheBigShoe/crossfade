@@ -24,8 +24,9 @@ use std::io::SeekFrom;
 /// the polyphase synthesis's alignment (the figure gapless players use).
 pub const DECODER_DELAY: i64 = 529;
 
-/// How far into the audio the first frame may start (junk or zero padding before it).
-pub const MAX_LEADING_JUNK: u64 = 1 << 20;
+/// How far into the audio the first frame may start (junk or zero padding before it): the
+/// bound sniffing uses too.
+pub const MAX_LEADING_JUNK: u64 = 64 << 10;
 
 /// Bytes of main data a Layer III frame can reach back into earlier frames: 511 in MPEG-1,
 /// 255 in MPEG-2 and 2.5. Seeking starts early enough to have this much before any frame it

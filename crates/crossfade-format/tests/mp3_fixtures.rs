@@ -282,3 +282,16 @@ fn an_id3v2_4_tag_with_utf16_in_front_of_a_file() {
     assert_eq!(tagged.tags.get("TITLE"), Some("Ünïcødé"));
     assert_eq!(raw(&tagged), raw(&plain));
 }
+#[test]
+fn leading_junk_before_the_first_frame() {
+    let plain = raw(&decode(&bytes("cbr128"), true));
+    for junk in [
+        vec![0u8; 215],
+        b"\xFF\xFB\x90junk that is not a frame".to_vec(),
+    ] {
+        for seekable in [true, false] {
+            let d = decode(&[junk.clone(), bytes("cbr128")].concat(), seekable);
+            assert_eq!(raw(&d), plain, "{junk:02X?}");
+        }
+    }
+}
