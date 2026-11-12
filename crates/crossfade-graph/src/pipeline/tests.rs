@@ -501,3 +501,44 @@ fn reading_stops_once_the_chain_ignores_further_input() {
         ["packet:[0, 0, 0, 0]", "packet:[1, 0, 1, 0]", "finish"]
     );
 }
+
+/// Priming (negative pts) and padding (past the stream's frames) never reach the encoder: the
+/// pipeline trims what the real PCM decoder stamps with each packet's pts.
+#[test]
+fn decoded_frames_are_trimmed_to_the_timeline_before_encoding() {
+    let (log, seen) = (Log::default(), Rc::default());
+    let at = |pts: i64, data: &[u8]| Packet {
+        pts,
+        duration: (data.len() / 2) as u64,
+        data: data.to_vec(),
+        ..Packet::default()
+    };
+    let d: Box<dyn Demuxer> = Box::new(ScriptedDemuxer {
+        streams: vec![StreamInfo {
+            frames: Some(3),
+            ..stream(CodecId::PcmS16Le)
+        }],
+        tags: Tags::new(),
+        packets: vec![
+            at(-4, &[1, 0, 2, 0]),
+            at(-2, &[3, 0, 4, 0, 5, 0, 6, 0]),
+            at(2, &[7, 0, 8, 0]),
+            at(4, &[9, 0]),
+        ]
+        .into(),
+    });
+    let mut p = build(FormatId::Wav, d, &settings(None), &log, &seen).unwrap();
+    let steps = run_to_end(&mut p);
+    assert_eq!(
+        *log.borrow(),
+        ["packet:[5, 0, 6, 0]", "packet:[7, 0]", "finish"]
+    );
+    // Progress counts the frames on the timeline.
+    assert_eq!(
+        steps[steps.len() - 2],
+        Step::Progress {
+            frames_done: 3,
+            frames_total: Some(3)
+        }
+    );
+}
