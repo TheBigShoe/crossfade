@@ -16,8 +16,18 @@ pub(crate) struct Floor0 {
     pub(crate) amplitude_bits: u32,
     pub(crate) amplitude_offset: u32,
     pub(crate) books: Vec<u8>,
-    /// cos(omega) of each spectral line, for the short and the long block.
-    pub(crate) cos_omega: [Vec<f32>; 2],
+    /// The lines in runs of one bark map value, for the short and the long block.
+    pub(crate) runs: [Runs; 2],
+}
+
+/// Consecutive lines that share a bark map value share the curve's value: computing it once
+/// per run, and for all runs at once, is what makes floor 0 affordable.
+#[derive(Debug, Clone)]
+pub(crate) struct Runs {
+    /// cos(omega) of each run.
+    pub(crate) cos: Vec<f32>,
+    /// Where each run ends (exclusive); the last ends at the block's half.
+    pub(crate) ends: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -90,16 +100,16 @@ pub(crate) fn parse(
             if bark_map_size == 0 {
                 return Err(malformed("floor 0 bark map size of 0"));
             }
-            let cos_omega = [
-                bark_cos_omega(usize::from(block_sizes[0]) / 2, rate, bark_map_size, budget)?,
-                bark_cos_omega(usize::from(block_sizes[1]) / 2, rate, bark_map_size, budget)?,
+            let runs = [
+                bark_runs(usize::from(block_sizes[0]) / 2, rate, bark_map_size, budget)?,
+                bark_runs(usize::from(block_sizes[1]) / 2, rate, bark_map_size, budget)?,
             ];
             Ok(Floor::Zero(Floor0 {
                 order: order as usize,
                 amplitude_bits,
                 amplitude_offset,
                 books: list,
-                cos_omega,
+                runs,
             }))
         }
         1 => {
@@ -193,7 +203,11 @@ impl Floor {
     pub(crate) fn heap_bytes(&self) -> usize {
         match self {
             Floor::Zero(f) => {
-                f.books.capacity() + 4 * (f.cos_omega[0].capacity() + f.cos_omega[1].capacity())
+                f.books.capacity()
+                    + f.runs
+                        .iter()
+                        .map(|r| r.cos.capacity() * 4 + r.ends.capacity() * 2)
+                        .sum::<usize>()
             }
             Floor::One(f) => {
                 f.partitions.capacity()
@@ -211,24 +225,29 @@ fn bark(x: f32) -> f32 {
 }
 
 /// cos(omega) of each of `n` lines (section 6.2.3's bark map), computed in `f32` as libvorbis
-/// and lewton do.
-fn bark_cos_omega(
-    n: usize,
-    rate: u32,
-    bark_map_size: u32,
-    budget: &mut Budget,
-) -> Result<Vec<f32>> {
-    let mut out = budget.with_capacity(n)?;
+/// and lewton do, gathered into runs of one map value.
+fn bark_runs(n: usize, rate: u32, bark_map_size: u32, budget: &mut Budget) -> Result<Runs> {
     let half_rate = rate as f32 / 2.0;
     let scale = bark_map_size as f32 / bark(half_rate);
     let last = bark_map_size as f32 - 1.0;
     let step = std::f32::consts::PI / bark_map_size as f32;
     let hz_per_line = half_rate / n as f32;
-    for i in 0..n {
-        let map = libm::floorf(bark(i as f32 * hz_per_line) * scale).min(last);
-        out.push(libm::cosf(map * step));
+    let map = |i: usize| libm::floorf(bark(i as f32 * hz_per_line) * scale).min(last);
+    let count = 1 + (1..n).filter(|&i| map(i) != map(i - 1)).count();
+    let mut cos = budget.with_capacity(count)?;
+    let mut ends = budget.with_capacity(count)?;
+    let mut prev = map(0);
+    for i in 1..n {
+        let m = map(i);
+        if m != prev {
+            cos.push(libm::cosf(prev * step));
+            ends.push(i as u16);
+            prev = m;
+        }
     }
-    Ok(out)
+    cos.push(libm::cosf(prev * step));
+    ends.push(n as u16);
+    Ok(Runs { cos, ends })
 }
 
 impl Floor0 {
@@ -269,40 +288,75 @@ impl Floor0 {
     }
 
     /// Multiplies `spectrum` (the block's half) by the LSP curve (section 6.2.3), computed in
-    /// `f32` as the specification writes it.
-    pub(crate) fn apply(&self, long: bool, amp: u64, coeffs: &[f32], spectrum: &mut [f32]) {
-        let cos_omega = &self.cos_omega[usize::from(long)];
+    /// `f32` as the specification writes it, once per run of lines and for every run at once.
+    /// `scratch` holds at least twice the runs.
+    pub(crate) fn apply(
+        &self,
+        long: bool,
+        amp: u64,
+        coeffs: &[f32],
+        spectrum: &mut [f32],
+        scratch: &mut [f32],
+    ) {
+        let runs = &self.runs[usize::from(long)];
+        let k = runs.cos.len();
+        let (p, rest) = scratch.split_at_mut(k);
+        let q = &mut rest[..k];
+        let w = &runs.cos[..k];
         let order = self.order;
-        let mut cc = [0.0f32; 256];
-        for (c, &x) in cc.iter_mut().zip(&coeffs[..order]) {
-            *c = libm::cosf(x);
+        let odd = order % 2 == 1;
+        for ((p, q), &w) in p.iter_mut().zip(q.iter_mut()).zip(w) {
+            (*p, *q) = if odd {
+                (1.0 - w * w, 0.25)
+            } else {
+                ((1.0 - w) / 2.0, (1.0 + w) / 2.0)
+            };
+        }
+        let (pn, qn) = if odd {
+            ((order - 1) / 2, order.div_ceil(2))
+        } else {
+            (order / 2, order / 2)
+        };
+        for j in 0..pn {
+            let c = libm::cosf(coeffs[2 * j + 1]);
+            for (p, &w) in p.iter_mut().zip(w) {
+                let pm = c - w;
+                *p *= 4.0 * pm * pm;
+            }
+        }
+        for j in 0..qn {
+            let c = libm::cosf(coeffs[2 * j]);
+            for (q, &w) in q.iter_mut().zip(w) {
+                let qm = c - w;
+                *q *= 4.0 * qm * qm;
+            }
         }
         let offset = self.amplitude_offset as f32;
         let common = amp as f32 * offset / ((1u64 << self.amplitude_bits) - 1) as f32;
-        let n = spectrum.len().min(cos_omega.len());
-        let mut i = 0;
-        while i < n {
-            let w = cos_omega[i];
-            let (mut p, mut q, pn, qn) = if order % 2 == 1 {
-                (1.0 - w * w, 0.25, (order - 1) / 2, order.div_ceil(2))
-            } else {
-                ((1.0 - w) / 2.0, (1.0 + w) / 2.0, order / 2, order / 2)
-            };
-            for j in 0..pn {
-                let pm = cc[2 * j + 1] - w;
-                p *= 4.0 * pm * pm;
-            }
-            for j in 0..qn {
-                let qm = cc[2 * j] - w;
-                q *= 4.0 * qm * qm;
-            }
-            let value = libm::expf(0.115_129_25 * (common / libm::sqrtf(p + q) - offset));
-            // Lines that share a bark map value share the value; the first always matches.
-            while i < n && cos_omega[i] == w {
-                spectrum[i] *= value;
-                i += 1;
-            }
+        // sqrt is exact in IEEE arithmetic, so std's is the same bits everywhere.
+        for (p, &q) in p.iter_mut().zip(q.iter()) {
+            *p = common / (*p + q).sqrt() - offset;
         }
+        let mut start = 0;
+        for (&x, &end) in p.iter().zip(&runs.ends) {
+            let value = libm::expf(0.115_129_25 * x);
+            let end = usize::from(end).min(spectrum.len());
+            for s in &mut spectrum[start.min(end)..end] {
+                *s *= value;
+            }
+            start = end;
+        }
+    }
+
+    /// cos(omega) of every line, for tests.
+    #[cfg(test)]
+    pub(crate) fn cos_omega(&self, long: bool) -> Vec<f32> {
+        let runs = &self.runs[usize::from(long)];
+        let mut out = vec![];
+        for (&c, &end) in runs.cos.iter().zip(&runs.ends) {
+            out.resize(usize::from(end), c);
+        }
+        out
     }
 }
 

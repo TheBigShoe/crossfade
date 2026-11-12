@@ -47,6 +47,8 @@ pub struct Decoder {
     floor_y: Vec<i32>,
     floor_coeffs: Vec<f32>,
     floor_amp: Vec<u64>,
+    /// Floor 0's work space: two values per line at most.
+    floor_scratch: Vec<f32>,
     /// The channels of each submap of each mapping.
     submap_channels: Vec<Vec<Vec<usize>>>,
     /// Where each channel goes in an output frame.
@@ -117,6 +119,7 @@ impl Decoder {
             floor_y: vec![0; channels * MAX_POSTS],
             floor_coeffs: vec![0.0; channels * MAX_ORDER],
             floor_amp: vec![0; channels],
+            floor_scratch: vec![0.0; 2 * stride],
             submap_channels,
             order: (0..channels).collect(),
             setup,
@@ -139,6 +142,7 @@ impl Decoder {
             + Imdct::bytes(sizes[1])
             + (sizes[0] + sizes[1]) * 2
             + channels * (MAX_POSTS * 4 + MAX_ORDER * 4 + 8 + 2 + 8 * 2)
+            + 2 * stride * 4
     }
 
     pub fn channels(&self) -> usize {
@@ -284,6 +288,7 @@ impl Decoder {
                     self.floor_amp[ch],
                     &self.floor_coeffs[ch * MAX_ORDER..(ch + 1) * MAX_ORDER],
                     spectrum,
+                    &mut self.floor_scratch,
                 ),
                 Floor::One(f) => f.apply(&self.floor_y[ch * MAX_POSTS..], spectrum),
             }

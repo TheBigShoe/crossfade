@@ -886,9 +886,9 @@ fn floor_0_of_order_1_and_wide_amplitudes() {
         assert_eq!(got_amp, Some(amp));
         assert_eq!(coeffs[0], 2.0);
         let mut spectrum = vec![1.0f32; 128];
-        f.apply(false, amp, &coeffs, &mut spectrum);
+        f.apply(false, amp, &coeffs, &mut spectrum, &mut [0.0; 256]);
         for (i, &v) in spectrum.iter().enumerate() {
-            let w = f64::from(f.cos_omega[0][i]);
+            let w = f64::from(f.cos_omega(false)[i]);
             let (p, q) = (1.0 - w * w, (libm::cos(2.0) - w).powi(2));
             let common = amp as f64 * 10.0 / ((1u128 << amp_bits) - 1) as f64;
             let want = libm::exp(0.115_129_25 * (common / (p + q).sqrt() - 10.0));

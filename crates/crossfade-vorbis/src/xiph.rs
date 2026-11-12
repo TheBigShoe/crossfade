@@ -26,7 +26,7 @@ pub fn pack_headers(headers: [&[u8]; 3]) -> Vec<u8> {
 /// The identification, comment and setup headers of a packed blob, borrowed from it; every
 /// length is checked against what the blob holds.
 pub fn unpack_headers(blob: &[u8]) -> Result<[&[u8]; 3]> {
-    let bad = |what: &str| malformed(format!("vorbis header blob: {what}"));
+    let bad = |what: &str| malformed(format!("header blob: {what}"));
     let (&count, mut rest) = blob.split_first().ok_or_else(|| bad("empty"))?;
     if count != 2 {
         return Err(bad("not three packets"));
