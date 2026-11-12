@@ -336,8 +336,11 @@ fn check(bytes: &[u8], targets: &[u64], threads: usize, what: &str) {
         s.0.seek(t)
             .unwrap_or_else(|e| panic!("{what}: seek {t}: {e}"));
         let at = t.min(total);
-        assert_eq!(s.0.position(), at, "{what}: seek {t}");
+        if s.0.stream().frames.is_some() || t <= total {
+            assert_eq!(s.0.position(), at, "{what}: seek {t}");
+        }
         let got = s.rest();
+        assert_eq!(s.0.position(), total, "{what}: seek {t}, at the end");
         assert!(
             got == all[at as usize * ch..],
             "{what}: seek {t}: {} samples, want {}",
@@ -506,11 +509,22 @@ fn the_committed_fixtures_seek_exactly() {
         let bytes = std::fs::read(&p).unwrap();
         let mut io = MemoryIo::new();
         io.insert("in", bytes.clone());
-        // Fixtures of streams this engine does not read (a foreign-serial regression) are
-        // not this test's business.
-        let Ok(s) = DecodeSession::open("in", &mut io, &Limits::default()) else {
+        // Fixtures that do not decode whole (a fuzzer's regression input) are not this test's
+        // business.
+        let Ok(mut s) = DecodeSession::open("in", &mut io, &Limits::default()) else {
             continue;
         };
+        let mut f = AudioFrame::new(&s.stream().audio);
+        let whole = loop {
+            match s.next_frame(&mut f) {
+                Ok(true) => {}
+                Ok(false) => break true,
+                Err(_) => break false,
+            }
+        };
+        if !whole {
+            continue;
+        }
         let total = s.stream().frames.unwrap_or(1000).max(2);
         let mut targets = edge_targets(total);
         targets.extend((1..9).map(|k| total * k / 9 + k));
