@@ -158,6 +158,28 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_that_starts_past_a_prefix_counts_from_the_start_of_the_input() {
+        let data: Vec<u8> = (0..40).collect();
+        let mut inner: Box<dyn MediaSource> = Box::new(Cursor::new(data));
+        let mut prefix = [0u8; 14];
+        assert_eq!(inner.read(&mut prefix).unwrap(), 14);
+        // Bytes 0..10 went elsewhere (a tag); 10..14 are replayed.
+        let mut r = Replay::new(prefix[10..].to_vec(), inner, 10);
+        let mut two = [0u8; 2];
+        assert_eq!(r.read(&mut two).unwrap(), 2);
+        assert_eq!(two, [10, 11]);
+        assert_eq!(r.seek(SeekFrom::Current(3)).unwrap(), 15);
+        assert_eq!(r.read(&mut two).unwrap(), 2);
+        assert_eq!(two, [15, 16]);
+        let mut r = Replay::new(vec![10, 11, 12, 13], Box::new(Cursor::new(vec![0u8; 40])), 10);
+        assert!(r.seek(SeekFrom::Current(-11)).is_err());
+        assert_eq!(r.seek(SeekFrom::Current(-10)).unwrap(), 0);
+        let pipe = FaultySource::new(Cursor::new(vec![14u8, 15])).not_seekable();
+        let mut r = Replay::new(vec![12, 13], Box::new(pipe), 12);
+        assert_eq!(drain(&mut r), [12, 13, 14, 15]);
+    }
+
+    #[test]
     fn a_relative_seek_after_the_replay_is_plain() {
         let data: Vec<u8> = (0..40).collect();
         let mut r = sniffed(Cursor::new(data), 4);
