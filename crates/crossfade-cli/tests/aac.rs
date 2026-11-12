@@ -28,10 +28,12 @@ impl Dir {
             .unwrap()
     }
 
+    #[cfg(feature = "aac")]
     fn read(&self, name: &str) -> Vec<u8> {
         std::fs::read(self.0.join(name)).unwrap()
     }
 
+    #[cfg(not(feature = "aac"))]
     fn exists(&self, name: &str) -> bool {
         self.0.join(name).exists()
     }
