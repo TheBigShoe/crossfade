@@ -10,6 +10,7 @@ mod measure;
 mod pipeline;
 mod probe;
 mod run;
+mod timeline;
 mod two_pass;
 mod validate;
 
@@ -25,4 +26,5 @@ pub use probe::{
     probe_with_cancel,
 };
 pub use run::{CancelToken, Event, Normalization, run};
+pub use timeline::Timeline;
 pub use validate::{OutputPlan, describe, describe_concat, processing, validate, validate_concat};
