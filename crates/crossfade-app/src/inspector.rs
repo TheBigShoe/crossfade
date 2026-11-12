@@ -46,6 +46,9 @@ pub fn format_name(raw: &str) -> String {
         "flac" => "FLAC".into(),
         "aiff" => "AIFF".into(),
         "ogg" => "Ogg".into(),
+        "mp3" => "MP3".into(),
+        "mp4" => "MP4".into(),
+        "adts" => "AAC (ADTS)".into(),
         other => other.into(),
     }
 }
@@ -65,8 +68,17 @@ pub fn sample_format_name(raw: &str) -> String {
 
 /// `pcm_s16le` reads `PCM 16-bit LE`; short enough for a value column.
 pub fn codec_name(raw: &str) -> String {
-    if raw == "flac" {
-        return "FLAC".into();
+    let compressed = match raw {
+        "flac" => Some("FLAC"),
+        "vorbis" => Some("Vorbis"),
+        "opus" => Some("Opus"),
+        "mp3" => Some("MP3"),
+        "aac" => Some("AAC"),
+        "alac" => Some("ALAC"),
+        _ => None,
+    };
+    if let Some(name) = compressed {
+        return name.into();
     }
     let Some(rest) = raw.strip_prefix("pcm_") else {
         return raw.into();
