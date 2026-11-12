@@ -37,12 +37,73 @@ pub(crate) fn unpredict(
     for j in 1..=order.min(num - 1) {
         out[j] = sign_extend(residual[j].wrapping_add(out[j - 1]), chan_bits);
     }
-    // The fixed orders let the compiler unroll the taps; the arithmetic is the same.
-    match coefs {
-        [_, _, _, _] => filter(residual, out, coefs, 4, chan_bits, den_shift),
-        [_, _, _, _, _, _, _, _] => filter(residual, out, coefs, 8, chan_bits, den_shift),
+    // The orders encoders use get a copy with the taps in registers; the arithmetic is the same.
+    match order {
+        4 => fixed::<4>(residual, out, coefs, chan_bits, den_shift),
+        8 => fixed::<8>(residual, out, coefs, chan_bits, den_shift),
+        16 => fixed::<16>(residual, out, coefs, chan_bits, den_shift),
         _ => filter(residual, out, coefs, order, chan_bits, den_shift),
     }
+}
+
+/// `filter` for an order known at compile time, with the coefficients and taps in arrays.
+fn fixed<const N: usize>(
+    residual: &[i32],
+    out: &mut [i32],
+    coefs: &mut [i16],
+    chan_bits: u32,
+    den_shift: u32,
+) {
+    let Ok(c) = <&[i16; N]>::try_from(&*coefs) else {
+        return;
+    };
+    let mut c = *c;
+    let den_half = if den_shift == 0 {
+        0
+    } else {
+        1i32 << (den_shift - 1)
+    };
+    // Sign extension from `chan_bits` as a pair of shifts (none at 32 bits and more).
+    let wrap = 32 - chan_bits.min(32);
+    for j in N + 1..out.len() {
+        let top = out[j - N - 1];
+        let Ok(taps) = <[i32; N]>::try_from(&out[j - N..j]) else {
+            return;
+        };
+        let mut sum = 0i32;
+        for k in 0..N {
+            sum = sum.wrapping_add(i32::from(c[k]).wrapping_mul(taps[N - 1 - k].wrapping_sub(top)));
+        }
+        let del = residual[j];
+        let predicted = sum.wrapping_add(den_half) >> den_shift;
+        out[j] = (del.wrapping_add(top).wrapping_add(predicted) << wrap) >> wrap;
+        let mut left = del;
+        if del > 0 {
+            for k in (0..N).rev() {
+                let dd = top.wrapping_sub(taps[N - 1 - k]);
+                let sgn = dd.signum();
+                c[k] = c[k].wrapping_sub(sgn as i16);
+                left = left
+                    .wrapping_sub(((N - k) as i32).wrapping_mul(sgn.wrapping_mul(dd) >> den_shift));
+                if left <= 0 {
+                    break;
+                }
+            }
+        } else if del < 0 {
+            for k in (0..N).rev() {
+                let dd = top.wrapping_sub(taps[N - 1 - k]);
+                let sgn = dd.signum();
+                c[k] = c[k].wrapping_add(sgn as i16);
+                left = left.wrapping_sub(
+                    ((N - k) as i32).wrapping_mul(sgn.wrapping_neg().wrapping_mul(dd) >> den_shift),
+                );
+                if left >= 0 {
+                    break;
+                }
+            }
+        }
+    }
+    coefs.copy_from_slice(&c);
 }
 
 /// In place: each sample becomes itself plus the one before it, wrapped to `chan_bits`.
@@ -57,7 +118,6 @@ pub(crate) fn integrate(buf: &mut [i32], chan_bits: u32) {
     }
 }
 
-#[inline(always)]
 fn filter(
     residual: &[i32],
     out: &mut [i32],
@@ -169,7 +229,7 @@ mod tests {
         #[test]
         fn undoes_the_predictor(
             bits in 4u32..=33,
-            order in prop_oneof![Just(4usize), Just(8), 1usize..31],
+            order in prop_oneof![Just(4usize), Just(8), Just(16), 1usize..31],
             den_shift in 0u32..16,
             seed in prop::collection::vec(any::<i32>(), 1..400),
             coefs in prop::collection::vec(any::<i16>(), 31),
