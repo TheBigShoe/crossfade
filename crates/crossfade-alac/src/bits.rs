@@ -62,7 +62,13 @@ impl<'a> Bits<'a> {
     /// `n` bits (at most 57) as an unsigned value.
     #[inline]
     pub(crate) fn read_wide(&mut self, n: u32) -> Result<u64> {
-        let _ = n; Ok(0)
+        debug_assert!(n <= 57);
+        if n == 0 {
+            return Ok(0);
+        }
+        let v = self.peek64() >> (64 - n);
+        self.skip(n as usize)?;
+        Ok(v)
     }
 
     /// `n` bits (at most 32).
@@ -87,8 +93,12 @@ impl<'a> Bits<'a> {
 /// The low `bits` of `v` as a signed value; 32 or more leaves it alone.
 #[inline]
 pub(crate) fn sign_extend(v: i32, bits: u32) -> i32 {
-        let _ = bits; v
+    if bits >= 32 || bits == 0 {
+        return v;
     }
+    let shift = 32 - bits;
+    (v << shift) >> shift
+}
 
 #[cfg(test)]
 mod tests {

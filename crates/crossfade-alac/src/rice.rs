@@ -65,8 +65,54 @@ pub(crate) fn decode(
     chan_bits: u32,
     out: &mut [i32],
 ) -> Result<()> {
-        let _ = (bits, params, chan_bits, out, Error::UnexpectedEnd); Ok(())
+    let Params { mut mb, pb, kb } = params;
+    let wb = (1u32 << kb) - 1;
+    let mut zmode = 0u32;
+    let mut c = 0;
+    while c < out.len() {
+        let k = lg3a(mb >> QBSHIFT).min(kb);
+        let m = (1u32 << k) - 1;
+        let n = rice(bits, m, k, chan_bits)?;
+        let nd = n.wrapping_add(zmode);
+        // The low bit is the sign: 0, -1, 1, -2, 2, ...
+        let magnitude = (nd.wrapping_add(1) >> 1) as i32;
+        out[c] = if nd & 1 != 0 {
+            magnitude.wrapping_neg()
+        } else {
+            magnitude
+        };
+        c += 1;
+        mb = pb
+            .wrapping_mul(nd)
+            .wrapping_add(mb)
+            .wrapping_sub(pb.wrapping_mul(mb) >> QBSHIFT);
+        if n > MEAN_CLAMP {
+            mb = MEAN_CLAMP;
+        }
+        zmode = 0;
+        if (mb << MMULSHIFT) < QB && c < out.len() {
+            zmode = 1;
+            // `mb` is below 128 here unless the shift above wrapped, which only a mean the
+            // clamp keeps out could do; such a stream is broken.
+            let k = (mb.leading_zeros() + ((mb + MOFF) >> MDENSHIFT))
+                .checked_sub(BITOFF)
+                .filter(|k| (1..32).contains(k))
+                .ok_or(Error::Malformed("zero run parameter out of range"))?;
+            let mz = ((1u32 << k) - 1) & wb;
+            let run = rice(bits, mz, k, RUN_ESCAPE_BITS)? as usize;
+            let zeros = out
+                .get_mut(c..c.saturating_add(run))
+                .ok_or(Error::Malformed("run of zeros past the end of the frame"))?;
+            zeros.fill(0);
+            c += run;
+            if run >= 0xFFFF {
+                zmode = 0;
+            }
+            mb = 0;
+        }
     }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
