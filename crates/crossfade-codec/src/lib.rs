@@ -43,6 +43,9 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     if stream.codec == CodecId::Flac {
         return flac::decode::decoder_threads(stream, threads);
     }
+    if stream.codec == CodecId::Vorbis {
+        return vorbis::decoder(stream);
+    }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),
     })

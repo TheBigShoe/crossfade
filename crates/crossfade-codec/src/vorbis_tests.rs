@@ -54,8 +54,7 @@ fn build(channels: u8, modes: &str) -> Built {
 fn stream(b: &Built, layout: ChannelLayout) -> StreamInfo {
     let audio = AudioSpec::new(48_000, SampleFormat::F32, layout).unwrap();
     let mut s = StreamInfo::new(0, CodecId::Vorbis, audio, TimeBase::new(1, 48_000).unwrap());
-    s.extradata =
-        crossfade_vorbis::pack_headers([&b.headers[0], &b.headers[1], &b.headers[2]]);
+    s.extradata = crossfade_vorbis::pack_headers([&b.headers[0], &b.headers[1], &b.headers[2]]);
     s
 }
 
@@ -86,7 +85,8 @@ fn packet(data: &[u8], pts: i64) -> Packet {
 /// Sends each packet and collects what comes out, as (pts, frames, samples).
 fn run(d: &mut dyn Decoder, packets: &[Packet]) -> Vec<(i64, usize, Vec<f32>)> {
     let mut out = vec![];
-    let mut f = AudioFrame::new(&AudioSpec::new(1, SampleFormat::S16, ChannelLayout::mono()).unwrap());
+    let mut f =
+        AudioFrame::new(&AudioSpec::new(1, SampleFormat::S16, ChannelLayout::mono()).unwrap());
     for p in packets {
         d.send_packet(p).unwrap();
         while d.receive_frame(&mut f).unwrap() {
@@ -105,7 +105,12 @@ fn frames_carry_their_packets_pts_and_a_packet_that_yields_nothing_yields_no_fra
     let s = stream(&b, ChannelLayout::stereo());
     let mut d = decoder_for_threads(&s, 1).unwrap();
     let pts = [-128i64, -64, 320, 832, 1088];
-    let packets: Vec<Packet> = b.packets.iter().zip(pts).map(|(p, t)| packet(p, t)).collect();
+    let packets: Vec<Packet> = b
+        .packets
+        .iter()
+        .zip(pts)
+        .map(|(p, t)| packet(p, t))
+        .collect();
     let got = run(&mut *d, &packets);
     let want = direct(&b);
     assert_eq!(got.len(), 4);
@@ -114,7 +119,10 @@ fn frames_carry_their_packets_pts_and_a_packet_that_yields_nothing_yields_no_fra
         assert_eq!(*samples, want[k + 1]);
         assert_eq!(*frames, want[k + 1].len() / 2);
     }
-    assert_eq!(got.iter().map(|g| g.1).collect::<Vec<_>>(), [64 + 128, 256, 192, 128]);
+    assert_eq!(
+        got.iter().map(|g| g.1).collect::<Vec<_>>(),
+        [64 + 128, 256, 192, 128]
+    );
     d.drain();
     let mut f = AudioFrame::new(&s.audio);
     assert_eq!(d.receive_frame(&mut f), Ok(false));
