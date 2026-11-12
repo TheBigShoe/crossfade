@@ -103,3 +103,55 @@ pub(crate) fn put_residuals(
         }
     }
 }
+
+/// The predictor's encoding side: residuals for `x`, adapting `coefs` the way the decoder
+/// will. The order is `coefs.len()` (0 and 31 as in `predictor::unpredict`).
+pub(crate) fn predict(x: &[i32], coefs: &mut [i16], chan_bits: u32, den_shift: u32) -> Vec<i32> {
+    use crate::bits::sign_extend;
+    let order = coefs.len();
+    if x.is_empty() || order == 0 {
+        return x.to_vec();
+    }
+    let mut r = vec![x[0]];
+    let warm = if order == 31 { x.len() - 1 } else { order.min(x.len() - 1) };
+    for j in 1..=warm {
+        r.push(sign_extend(x[j].wrapping_sub(x[j - 1]), chan_bits));
+    }
+    if order == 31 {
+        return r;
+    }
+    let den_half = if den_shift == 0 { 0 } else { 1i32 << (den_shift - 1) };
+    for j in order + 1..x.len() {
+        let top = x[j - order - 1];
+        let mut sum = 0i32;
+        for (k, c) in coefs.iter().enumerate() {
+            sum = sum.wrapping_add(i32::from(*c).wrapping_mul(x[j - 1 - k].wrapping_sub(top)));
+        }
+        let predicted = sum.wrapping_add(den_half) >> den_shift;
+        let del = sign_extend(x[j].wrapping_sub(top).wrapping_sub(predicted), chan_bits);
+        r.push(del);
+        let mut left = del;
+        for k in (0..order).rev() {
+            if del == 0 {
+                break;
+            }
+            let dd = top.wrapping_sub(x[j - 1 - k]);
+            let sgn = dd.signum();
+            let step = (order - k) as i32;
+            if del > 0 {
+                coefs[k] = coefs[k].wrapping_sub(sgn as i16);
+                left = left.wrapping_sub(step.wrapping_mul(sgn.wrapping_mul(dd) >> den_shift));
+                if left <= 0 {
+                    break;
+                }
+            } else {
+                coefs[k] = coefs[k].wrapping_add(sgn as i16);
+                left = left.wrapping_sub(step.wrapping_mul((-sgn).wrapping_mul(dd) >> den_shift));
+                if left >= 0 {
+                    break;
+                }
+            }
+        }
+    }
+    r
+}

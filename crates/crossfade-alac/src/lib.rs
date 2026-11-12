@@ -4,6 +4,7 @@
 mod bits;
 pub mod config;
 mod error;
+mod predictor;
 mod rice;
 #[cfg(test)]
 mod testing;
