@@ -49,7 +49,13 @@ fn main_data_from_before_the_start_is_a_reservoir_error_with_silence() {
     f[5] = ((300 & 1) << 7) as u8;
     let mut out = Vec::new();
     let e = d.decode_frame(&f, &mut out).unwrap_err();
-    assert_eq!(e, Error::Reservoir { needed: 300, available: 0 });
+    assert_eq!(
+        e,
+        Error::Reservoir {
+            needed: 300,
+            available: 0
+        }
+    );
     assert!(e.is_reservoir());
     assert_eq!(out, vec![0.0; 1152]);
     // The frame's own 396 bytes of main data are held for the next one.
@@ -65,7 +71,10 @@ fn layers_one_and_two_give_silence_and_say_so() {
     let mut d = Decoder::new();
     let mut out = Vec::new();
     let l2 = frame([0xFF, 0xFD, 0x84, 0x00], 384);
-    assert_eq!(d.decode_frame(&l2, &mut out), Err(Error::UnsupportedLayer(Layer::II)));
+    assert_eq!(
+        d.decode_frame(&l2, &mut out),
+        Err(Error::UnsupportedLayer(Layer::II))
+    );
     assert_eq!(out.len(), 2304);
 }
 
@@ -73,8 +82,14 @@ fn layers_one_and_two_give_silence_and_say_so() {
 fn not_a_header_appends_nothing() {
     let mut d = Decoder::new();
     let mut out = Vec::new();
-    assert_eq!(d.decode_frame(&[0xFF, 0xFB], &mut out), Err(Error::NotAHeader("shorter than a header")));
-    assert_eq!(d.decode_frame(&[0; 417], &mut out), Err(Error::NotAHeader("no frame sync")));
+    assert_eq!(
+        d.decode_frame(&[0xFF, 0xFB], &mut out),
+        Err(Error::NotAHeader("shorter than a header"))
+    );
+    assert_eq!(
+        d.decode_frame(&[0; 417], &mut out),
+        Err(Error::NotAHeader("no frame sync"))
+    );
     assert!(out.is_empty());
 }
 
@@ -83,12 +98,21 @@ fn a_frame_of_the_wrong_length_is_refused_with_silence() {
     let mut d = Decoder::new();
     let mut out = Vec::new();
     let e = d.decode_frame(&frame(MONO, 416), &mut out).unwrap_err();
-    assert_eq!(e, Error::FrameLength { expected: 417, actual: 416 });
+    assert_eq!(
+        e,
+        Error::FrameLength {
+            expected: 417,
+            actual: 416
+        }
+    );
     assert_eq!(out.len(), 1152);
     // Free format: any length from the end of the side information, up to the cap.
     let free = [0xFF, 0xFB, 0x00, 0xC4];
     assert!(d.decode_frame(&frame(free, 21), &mut out).is_ok());
-    assert!(matches!(d.decode_frame(&frame(free, 20), &mut out), Err(Error::FrameLength { .. })));
+    assert!(matches!(
+        d.decode_frame(&frame(free, 20), &mut out),
+        Err(Error::FrameLength { .. })
+    ));
     assert!(matches!(
         d.decode_frame(&frame(free, crossfade_mp3::MAX_FRAME_LEN + 1), &mut out),
         Err(Error::FrameLength { .. })
@@ -105,7 +129,10 @@ fn the_crc_is_checked() {
     assert!(d.decode_frame(&f, &mut out).is_ok());
     f[10] ^= 0x40;
     let e = d.decode_frame(&f, &mut out).unwrap_err();
-    assert!(matches!(e, Error::Crc { expected, .. } if expected == c), "{e:?}");
+    assert!(
+        matches!(e, Error::Crc { expected, .. } if expected == c),
+        "{e:?}"
+    );
     assert_eq!(out.len(), 2 * 1152);
 }
 
@@ -118,7 +145,10 @@ fn impossible_side_information_is_corrupt() {
     let mut f = frame(MONO, 417);
     f[4 + 3] = 0b0000_0011;
     f[4 + 4] = 0xFF;
-    assert_eq!(d.decode_frame(&f, &mut out), Err(Error::Corrupt("big_values above 288")));
+    assert_eq!(
+        d.decode_frame(&f, &mut out),
+        Err(Error::Corrupt("big_values above 288"))
+    );
     // part2_3_length larger than the frame's main data.
     let mut f = frame(MONO, 417);
     f[4 + 2] = 0b0011_1111;
@@ -146,7 +176,12 @@ fn any_bytes_after_a_header_give_finite_bounded_output_without_panicking() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut d = Decoder::new();
     let mut out = Vec::new();
-    for (h, len) in [(JOINT, 417), (MONO, 417), (LSF_JOINT, 72), ([0xFF, 0xE3, 0x18, 0x10], 72)] {
+    for (h, len) in [
+        (JOINT, 417),
+        (MONO, 417),
+        (LSF_JOINT, 72),
+        ([0xFF, 0xE3, 0x18, 0x10], 72),
+    ] {
         for _ in 0..400 {
             let mut f = frame(h, len);
             for b in &mut f[4..] {
