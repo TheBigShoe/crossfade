@@ -103,6 +103,27 @@ pub(crate) fn loses_depth(input: &StreamInfo, out_format: SampleFormat) -> bool 
     out_format.bits() < depth
 }
 
+/// The sample format a transcode of `input` writes: the job's, else the input's. A lossy codec
+/// has no bit depth to keep (its decoder emits `F32`), so without a named format it is written
+/// as 16-bit, to every container.
+pub(crate) fn output_sample_format(input: &StreamInfo, settings: &AudioSettings) -> SampleFormat {
+    settings.sample_format.unwrap_or(if input.codec.is_lossy() {
+        SampleFormat::S16
+    } else {
+        input.audio.format()
+    })
+}
+
+/// What [`output_sample_format`] assumed, when it chose for a lossy codec.
+fn sample_format_note(input: &StreamInfo, settings: &AudioSettings) -> Option<String> {
+    (settings.sample_format.is_none() && input.codec.is_lossy()).then(|| {
+        format!(
+            "{} has no bit depth: writing 16-bit; choose --sample-format to change",
+            input.codec.name()
+        )
+    })
+}
+
 /// The chain a job runs on `input`, or `None` for the unprocessed path: the filters and the
 /// output's rate and channel conversions (`filter::plan`), or else, when the output format
 /// loses real depth and the job dithers, an empty chain that only quantises.
@@ -114,7 +135,7 @@ pub fn processing(
     if chain.is_some() || settings.dither == Dither::None {
         return Ok(chain);
     }
-    let out_format = settings.sample_format.unwrap_or(input.audio.format());
+    let out_format = output_sample_format(input, settings);
     Ok(loses_depth(input, out_format).then(|| ChainPlan {
         filters: Vec::new(),
         dither: settings.dither,
@@ -186,7 +207,7 @@ fn output_plan(
     chain: Option<&ChainPlan>,
 ) -> Result<OutputPlan, Error> {
     let in_spec = &input.audio;
-    let out_format = settings.sample_format.unwrap_or(in_spec.format());
+    let out_format = output_sample_format(input, settings);
     let codec = output_codec(output_format, out_format, settings.codec.as_deref())?;
     let (out_spec, frames, depth, time_base) = match chain {
         // Processed audio uses every bit of its format.
@@ -214,11 +235,13 @@ fn output_plan(
         bits_per_raw_sample: depth,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
+    let mut all = Vec::from_iter(sample_format_note(input, settings));
+    all.extend(notes(in_spec, chain));
     Ok(OutputPlan {
         output_format,
         output,
         copy: false,
-        notes: notes(in_spec, chain),
+        notes: all,
     })
 }
 
@@ -431,7 +454,7 @@ pub(crate) fn plan_join(
         })
         .collect::<Result<_, Error>>()?;
     let mut main = processing(&joined, settings)?;
-    let out_format = settings.sample_format.unwrap_or(joined.audio.format());
+    let out_format = output_sample_format(&joined, settings);
     let narrows =
         settings.dither != Dither::None && inputs.iter().any(|i| loses_depth(i, out_format));
     if main.is_none() && (narrows || conform.iter().any(Option::is_some)) {
