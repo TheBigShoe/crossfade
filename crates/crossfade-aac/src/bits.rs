@@ -51,11 +51,6 @@ impl<'a> BitReader<'a> {
         self.pos = self.pos.saturating_add(n);
     }
 
-    #[cfg_attr(not(feature = "decoder"), allow(dead_code))]
-    pub(crate) fn position(&self) -> usize {
-        self.pos
-    }
-
     pub(crate) fn len_bits(&self) -> usize {
         self.data.len() * 8
     }
@@ -97,10 +92,10 @@ mod tests {
         let mut r = BitReader::new(&[0xFF, 0x80]);
         r.read(1);
         r.byte_align();
-        assert_eq!(r.position(), 8);
+        assert_eq!(r.remaining(), 8);
         assert!(r.bit());
         r.byte_align();
         r.byte_align();
-        assert_eq!(r.position(), 16);
+        assert_eq!(r.remaining(), 0);
     }
 }
