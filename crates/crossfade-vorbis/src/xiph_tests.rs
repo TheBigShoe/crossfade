@@ -1,4 +1,5 @@
 use super::*;
+use crate::Error;
 
 #[test]
 fn three_headers_pack_as_matroska_codec_private_stores_them() {
@@ -19,7 +20,11 @@ fn lengths_of_255_and_more_are_laced_with_255s() {
         let packed = pack_headers([&a, &b, &c]);
         let lacing = la / 255 + 1 + lb / 255 + 1;
         assert_eq!(packed.len(), 1 + lacing + la + lb + 3, "{la} {lb}");
-        assert_eq!(unpack_headers(&packed), Ok([&a[..], &b[..], &c[..]]), "{la} {lb}");
+        assert_eq!(
+            unpack_headers(&packed),
+            Ok([&a[..], &b[..], &c[..]]),
+            "{la} {lb}"
+        );
     }
     assert_eq!(&pack_headers([&[0; 255], &[], &[]])[..4], &[2, 255, 0, 0]);
 }
