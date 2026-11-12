@@ -11,6 +11,22 @@ pub trait Demuxer {
     fn tags(&self) -> &Tags {
         &NO_TAGS
     }
+
+    /// Moves the reader so that playback can start at `pts`, in stream 0's time base.
+    ///
+    /// Feeding the packets read next to a freshly reset [`Decoder`] (see [`Decoder::reset`])
+    /// gives correct output from `pts` onwards: the reader lands early enough to cover the
+    /// codec's pre-roll, and the frames decoded before `pts` are the caller's to discard.
+    /// Returns the pts of the packet `read_packet` gives next, which is at most `pts`.
+    ///
+    /// A `pts` before the start seeks to the start. A `pts` at or past the end leaves the
+    /// reader at the end (the next `read_packet` returns `Ok(false)`) and returns the end's
+    /// pts. A source that cannot seek, and the default, give `Error::Unsupported`.
+    fn seek(&mut self, _pts: i64) -> Result<i64, Error> {
+        Err(Error::Unsupported {
+            what: "this reader cannot seek".into(),
+        })
+    }
 }
 
 /// Writes packets into a container.
@@ -30,6 +46,12 @@ pub trait Muxer {
 /// Packets in, frames out. Lossy codecs buffer, so this is not one-in-one-out:
 /// call `receive_frame` until it returns `Ok(false)` before the next
 /// `send_packet`.
+///
+/// Timing: a decoder stamps each frame it emits with the pts of the packet that produced it
+/// (counted in frames at its output rate); later frames of the same packet continue by counting
+/// frames. It emits every frame it decodes, priming and padding included: dropping what lies
+/// before pts 0 or at or past [`StreamInfo::frames`] is the engine's job, in one place after
+/// the decoder (see [`Packet::pts`]).
 pub trait Decoder {
     fn send_packet(&mut self, packet: &Packet) -> Result<(), Error>;
 
@@ -49,6 +71,12 @@ pub trait Decoder {
     fn flush(&mut self) -> Result<(), Error> {
         Ok(())
     }
+
+    /// Forgets all stream state (packets and frames pending, overlap history, a drain or a
+    /// failure in progress), as if freshly created for the same stream: the next packet may come
+    /// from anywhere in it (after [`Demuxer::seek`]). Required, so that no decoder can carry
+    /// history across a seek by forgetting to say what it holds.
+    fn reset(&mut self);
 }
 
 /// Frames in, packets out; same protocol as [`Decoder`]: call
@@ -142,5 +170,17 @@ mod tests {
         assert!(Demuxer::tags(&Bare).is_empty());
         assert!(Encoder::extradata(&Bare).is_empty());
         assert_eq!(Muxer::set_extradata(&mut Bare, &[1, 2]), Ok(()));
+    }
+
+    #[test]
+    fn a_reader_cannot_seek_unless_it_says_how() {
+        for pts in [i64::MIN, -1, 0, 1, i64::MAX] {
+            assert_eq!(
+                Bare.seek(pts),
+                Err(Error::Unsupported {
+                    what: "this reader cannot seek".into()
+                })
+            );
+        }
     }
 }

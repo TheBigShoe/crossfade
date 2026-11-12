@@ -19,8 +19,10 @@ and a GPUI desktop app (`crossfade-gui`).
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
-4. **Dependency direction:** core, flac, loudness, resample <- codec, dsp <- format <- graph <-
-   app <- cli, ui. Standalone crates (`crossfade-flac` first, then `crossfade-loudness`) depend on
+4. **Dependency direction:** core, flac, loudness, resample and the codec crates <- codec, dsp
+   <- format <- graph <- app <- cli, ui. Standalone crates (`crossfade-flac` first, then
+   `crossfade-loudness`, and the codec crates to come, `crossfade-vorbis`, `crossfade-opus`,
+   `crossfade-mp3`, `crossfade-aac`, `crossfade-alac`, the same way) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
    adapters. `crossfade-resample` stands alone the same way (only `libm`). A demuxer needs a codec's frame-header parser to split packets (as
    FFmpeg's libavformat uses libavcodec's parsers), so format depends on the
@@ -42,14 +44,14 @@ and a GPUI desktop app (`crossfade-gui`).
 
 | Crate | Role |
 |---|---|
-| `crossfade-core` | Time types, audio description (named layouts: `ChannelLayout::from_name`), `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`, `Filter`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
-| `crossfade-format` | Containers: WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader and writer (FLAC inside), tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking, `create_muxer` writes |
+| `crossfade-core` | Time types, audio description (named layouts: `ChannelLayout::from_name`), codec ids (`CodecId`: PCM, FLAC, ALAC and the lossy Vorbis, Opus, MP3 and AAC, `is_lossy`), `Limits`, the engine contract (`Packet`, `AudioFrame`, `Demuxer`, `Muxer`, `Decoder`, `Encoder`, `Filter`) and the I/O seams (`MediaSource`, `MediaSink`, `JobIo`, `Clock`) |
+| `crossfade-format` | Containers (`FormatId`): WAV, FLAC and AIFF/AIFF-C readers and writers, an Ogg reader (a mapping per codec: FLAC; Vorbis and Opus not built yet) and writer (FLAC inside), MP3, MP4 and ADTS recognised but their readers not built yet, tags (`vorbis_comment`, WAV `LIST/INFO`, AIFF text chunks); `open_demuxer` sniffs without seeking (through ID3v2 tags, whose bytes the MP3 reader receives), `create_muxer` writes |
 | `crossfade-flac` | Standalone FLAC, no dependencies at all: `bits`, `crc`, `md5`, `frame` and `streaminfo` parsing, the verifying `Decoder` (frame in, raw `Block` out; `push_frame` decodes on threads), the `Encoder` (levels 0-8, 4-32 bit, never worse than raw, deterministic at any thread count), the `pool` its threads run on, its own `Error`. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
-| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
+| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
@@ -69,6 +71,44 @@ can, and never allocates a length it read from the file without checking
 development oracles only; committed tests never call an external tool.
 Small reference-encoder fixtures live under `crates/*/tests/fixtures/` with a
 README giving the command that made each (5 MB budget for the repository).
+
+## Lossy codecs, gapless and seeking
+
+- **Timeline.** A stream's timeline starts at pts 0, the first sample frame meant to be heard.
+  `Packet::pts` is the position of the first frame decoding the packet yields, NEGATIVE for an
+  encoder's priming frames; a packet that yields nothing carries the pts of the next frame.
+  A decoder stamps each frame with its packet's pts (later frames of the packet count on) and
+  emits everything, priming and padding included. `StreamInfo::frames`, when known, counts
+  only the frames meant to be heard.
+- **Gapless trim in one place.** `crossfade_graph::Timeline`, right after every decoder (the
+  transcode, `decode_frames`, the measuring pass, each input of a join), drops what lies
+  before pts 0 and cuts at `frames`. A frame wholly on the timeline is not touched. No reader,
+  decoder or front end trims on its own.
+- **Seeking.** `Demuxer::seek(pts)` (stream 0's time base) lands early enough to cover the
+  codec's pre-roll and returns the pts of the next packet (at most `pts`; before the start
+  seeks to the start; at or past the end leaves the reader at its end); the default and a
+  source that cannot seek give `Unsupported`. After a seek the caller calls
+  `Decoder::reset`, which every decoder must implement (no default): it forgets all stream
+  state, as if new. Frames decoded before `pts` are the caller's to discard. A reset FLAC
+  decoder no longer checks the whole-stream MD5.
+- **Lossy output default.** A lossy codec (`CodecId::is_lossy`) has no bit depth; its decoder
+  emits interleaved `F32`. With no `--sample-format`, `output_sample_format` writes it as `S16`
+  to every container, with the note "<codec> has no bit depth: writing 16-bit; choose
+  --sample-format to change", and it is dithered like any float to integer. Float PCM to
+  FLAC is still refused.
+- **One standalone crate per codec**, `crossfade-<codec>`, depending on nothing in the
+  workspace and on nothing else but `libm`, with its own `#[non_exhaustive]` `Error`;
+  `crossfade-codec` wraps each in a thin adapter. A container reader that needs a codec's
+  header parser depends on the standalone crate, never on `crossfade-codec`.
+- **Bit-identical everywhere.** Tables and maths use `libm` only (no `std` `sin`, `cos`,
+  `exp`, `ln`, `powf`, no `mul_add`), so a decoder gives the same bits on every platform.
+- **Hostile input** never panics and never allocates a length read from the file without a
+  check against `Limits`. Every reader and decoder gets a fuzz target.
+- **Clean room.** Never read, copy or port GPL/LGPL code (FFmpeg, mpg123, libmad, faad2,
+  LAME). Use the specifications and BSD/MIT/Apache/public-domain implementations only, and
+  keep their notices where code is ported.
+- **AAC is patent-encumbered**: its decoder is compiled only with the off-by-default cargo
+  feature `aac`; without it an AAC stream is refused with a message that says so.
 
 ## Processing (DSP) rules
 

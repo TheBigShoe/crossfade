@@ -1,19 +1,21 @@
-//! Ogg container (RFC 3533). Only FLAC in Ogg can be read so far; other codecs are named and
-//! refused.
+//! Ogg container (RFC 3533). The first logical stream whose codec has a mapping (FLAC, Vorbis,
+//! Opus; one file each) is read; other streams are skipped, and a file with none of them is
+//! refused by the name of its first stream's codec.
 
 mod crc;
 mod flac;
 mod mux;
+mod opus;
 mod packets;
 mod page;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod testutil;
+mod vorbis;
 mod writer;
 
-use crossfade_core::{Demuxer, Error, Limits, MediaSource, Packet, StreamInfo, Tags};
-use crossfade_flac::frame::{self, HeaderError};
+use crossfade_core::{Demuxer, Error, Limits, MediaSource};
 use packets::PacketReader;
 use page::PageReader;
 
@@ -33,16 +35,34 @@ fn identify(first_packet: &[u8]) -> &'static str {
         .map_or("unknown", |&(_, name)| name)
 }
 
-struct OggFlacDemuxer {
-    packets: PacketReader,
-    streams: [StreamInfo; 1],
-    tags: Tags,
-    /// Frames of a fixed-block-size stream are numbered in units of this.
-    block_size: u32,
-    /// The first audio packet, read while looking for the end of the headers.
-    held: Vec<u8>,
-    has_held: bool,
-    done: bool,
+/// The codecs that can be read out of Ogg, each in its own file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapping {
+    Flac,
+    Vorbis,
+    Opus,
+}
+
+impl Mapping {
+    fn of(name: &str) -> Option<Self> {
+        match name {
+            "flac" => Some(Self::Flac),
+            "vorbis" => Some(Self::Vorbis),
+            "opus" => Some(Self::Opus),
+            _ => None,
+        }
+    }
+}
+
+/// The logical stream `open` chose, as it hands it to the stream's mapping.
+pub(crate) struct LogicalStream {
+    /// The stream's packets after the identification packet: positioned past every
+    /// beginning-of-stream page, and knowing the stream's serial number and the sequence number
+    /// its next page must carry.
+    pub(crate) packets: PacketReader,
+    pub(crate) serial: u32,
+    /// The identification packet: the whole body of the stream's first page.
+    pub(crate) id: Vec<u8>,
 }
 
 fn malformed(what: String) -> Error {
@@ -52,6 +72,20 @@ fn malformed(what: String) -> Error {
 pub use mux::create;
 
 pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
+    let (mapping, stream) = choose(source, limits)?;
+    match mapping {
+        Mapping::Flac => flac::open(stream, limits),
+        Mapping::Vorbis => vorbis::open(stream, limits),
+        Mapping::Opus => opus::open(stream, limits),
+    }
+}
+
+/// Reads the beginning-of-stream pages and picks the first stream, in page order, that has a
+/// mapping.
+fn choose(
+    source: Box<dyn MediaSource>,
+    limits: &Limits,
+) -> Result<(Mapping, LogicalStream), Error> {
     let mut pages = PageReader::new(source);
     if !pages.next_page()? {
         return Err(Error::UnexpectedEof { offset: 0 });
@@ -64,7 +98,7 @@ pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Dem
     }
     // Every logical stream announces itself on a beginning-of-stream page before any other
     // page appears (RFC 3533 section 4).
-    let mut flac: Option<(u32, u32, Vec<u8>)> = None;
+    let mut chosen: Option<(Mapping, u32, u32, Vec<u8>)> = None;
     let mut first_other: Option<&'static str> = None;
     let mut seen: Vec<u32> = Vec::new();
     let mut loaded = true;
@@ -75,93 +109,44 @@ pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Dem
         }
         seen.push(h.serial);
         let name = identify(pages.body());
-        if name == "flac" && flac.is_none() {
-            let lacing = pages.lacing();
-            let single = lacing.last().is_some_and(|&l| l < 255)
-                && lacing[..lacing.len() - 1].iter().all(|&l| l == 255);
-            if !single {
-                return Err(malformed(
-                    "ogg flac first page holds more than the identification packet".into(),
-                ));
+        match Mapping::of(name) {
+            Some(mapping) if chosen.is_none() => {
+                let lacing = pages.lacing();
+                let single = lacing.last().is_some_and(|&l| l < 255)
+                    && lacing[..lacing.len() - 1].iter().all(|&l| l == 255);
+                if !single {
+                    return Err(malformed(format!(
+                        "ogg {name} first page holds more than the identification packet"
+                    )));
+                }
+                chosen = Some((mapping, h.serial, h.sequence, pages.body().to_vec()));
             }
-            flac = Some((h.serial, h.sequence, pages.body().to_vec()));
-        } else if name != "flac" {
-            first_other.get_or_insert(name);
+            Some(_) => {}
+            None => {
+                first_other.get_or_insert(name);
+            }
         }
         if !pages.next_page()? {
             loaded = false;
             break;
         }
     }
-    let Some((serial, sequence, id)) = flac else {
+    let Some((mapping, serial, sequence, id)) = chosen else {
         return Err(Error::Unsupported {
             what: format!(
-                "ogg stream holds {}; only flac in ogg can be read so far",
+                "ogg stream holds {}; only flac, vorbis and opus in ogg can be read",
                 first_other.unwrap_or("unknown")
             ),
         });
     };
-    let header = flac::parse_first_packet(&id)?;
     let mut packets = PacketReader::new(pages, serial, limits.max_packet_bytes);
     packets.resume(sequence.wrapping_add(1), loaded);
-
-    let mut tags = None;
-    let mut held = Vec::new();
-    // The declared header count is only a hint: the headers end at the first frame.
-    let has_held = loop {
-        if !packets.next_packet(&mut held)? {
-            break false;
-        }
-        if flac::starts_frame(&held) {
-            break true;
-        }
-        if tags.is_none() {
-            tags = flac::comment_tags(&held, limits)?;
-        }
-    };
-    let tags = tags.unwrap_or_default();
-    let mut stream = crate::flac::stream_info(&header.block, &header.streaminfo)?;
-    crate::flac::apply_channel_mask(&mut stream, &tags)?;
-    Ok(Box::new(OggFlacDemuxer {
-        packets,
-        streams: [stream],
-        tags,
-        block_size: u32::from(header.block.min_block_size),
-        held,
-        has_held,
-        done: false,
-    }))
-}
-
-impl Demuxer for OggFlacDemuxer {
-    fn streams(&self) -> &[StreamInfo] {
-        &self.streams
-    }
-
-    fn tags(&self) -> &Tags {
-        &self.tags
-    }
-
-    fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
-        if self.done {
-            return Ok(false);
-        }
-        if self.has_held {
-            self.has_held = false;
-            std::mem::swap(&mut out.data, &mut self.held);
-        } else if !self.packets.next_packet(&mut out.data)? {
-            self.done = true;
-            return Ok(false);
-        }
-        let h = frame::parse_header(&out.data).map_err(|e| {
-            malformed(match e {
-                HeaderError::NeedMoreData => "ogg flac frame header is cut short".into(),
-                HeaderError::Invalid(why) => format!("ogg flac frame header: {why}"),
-            })
-        })?;
-        out.stream = 0;
-        out.pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
-        out.duration = u64::from(h.block_size);
-        Ok(true)
-    }
+    Ok((
+        mapping,
+        LogicalStream {
+            packets,
+            serial,
+            id,
+        },
+    ))
 }

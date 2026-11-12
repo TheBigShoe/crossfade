@@ -17,6 +17,12 @@ pub enum CodecId {
     PcmF32Be,
     PcmF64Be,
     Flac,
+    Vorbis,
+    Opus,
+    /// MPEG-1/2 Audio Layer III (layers I and II decode through the same codec).
+    Mp3,
+    Aac,
+    Alac,
 }
 
 impl CodecId {
@@ -36,6 +42,11 @@ impl CodecId {
             Self::PcmF32Be => "pcm_f32be",
             Self::PcmF64Be => "pcm_f64be",
             Self::Flac => "flac",
+            Self::Vorbis => "vorbis",
+            Self::Opus => "opus",
+            Self::Mp3 => "mp3",
+            Self::Aac => "aac",
+            Self::Alac => "alac",
         }
     }
 
@@ -54,6 +65,11 @@ impl CodecId {
             "pcm_f32be" => Self::PcmF32Be,
             "pcm_f64be" => Self::PcmF64Be,
             "flac" => Self::Flac,
+            "vorbis" => Self::Vorbis,
+            "opus" => Self::Opus,
+            "mp3" => Self::Mp3,
+            "aac" => Self::Aac,
+            "alac" => Self::Alac,
             _ => return None,
         })
     }
@@ -94,8 +110,15 @@ impl CodecId {
             Self::PcmS32Le | Self::PcmS32Be => SampleFormat::S32,
             Self::PcmF32Le | Self::PcmF32Be => SampleFormat::F32,
             Self::PcmF64Le | Self::PcmF64Be => SampleFormat::F64,
-            Self::Flac => return None,
+            Self::Flac | Self::Vorbis | Self::Opus | Self::Mp3 | Self::Aac | Self::Alac => {
+                return None;
+            }
         })
+    }
+
+    /// A perceptual codec: it has no bit depth, and its decoder emits `F32`.
+    pub fn is_lossy(self) -> bool {
+        matches!(self, Self::Vorbis | Self::Opus | Self::Mp3 | Self::Aac)
     }
 }
 
@@ -103,7 +126,7 @@ impl CodecId {
 mod tests {
     use super::*;
 
-    const ALL: [CodecId; 13] = [
+    const ALL: [CodecId; 18] = [
         CodecId::PcmU8,
         CodecId::PcmS8,
         CodecId::PcmS16Le,
@@ -117,6 +140,11 @@ mod tests {
         CodecId::PcmF32Be,
         CodecId::PcmF64Be,
         CodecId::Flac,
+        CodecId::Vorbis,
+        CodecId::Opus,
+        CodecId::Mp3,
+        CodecId::Aac,
+        CodecId::Alac,
     ];
 
     #[test]
@@ -128,7 +156,31 @@ mod tests {
         assert_eq!(CodecId::PcmS8.name(), "pcm_s8");
         assert_eq!(CodecId::PcmS24Be.name(), "pcm_s24be");
         assert_eq!(CodecId::PcmF64Be.name(), "pcm_f64be");
-        assert_eq!(CodecId::from_name("mp3"), None);
+        assert_eq!(CodecId::from_name("mp4"), None);
+    }
+
+    #[test]
+    fn the_compressed_codecs_have_ffmpeg_names() {
+        for (c, n) in [
+            (CodecId::Vorbis, "vorbis"),
+            (CodecId::Opus, "opus"),
+            (CodecId::Mp3, "mp3"),
+            (CodecId::Aac, "aac"),
+            (CodecId::Alac, "alac"),
+        ] {
+            assert_eq!(c.name(), n);
+            assert_eq!(CodecId::from_name(n), Some(c));
+            assert_eq!(c.pcm_sample_format(), None);
+        }
+    }
+
+    #[test]
+    fn only_the_perceptual_codecs_are_lossy() {
+        let lossy: Vec<CodecId> = ALL.into_iter().filter(|c| c.is_lossy()).collect();
+        assert_eq!(
+            lossy,
+            [CodecId::Vorbis, CodecId::Opus, CodecId::Mp3, CodecId::Aac]
+        );
     }
 
     #[test]

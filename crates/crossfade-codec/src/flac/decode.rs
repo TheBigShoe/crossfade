@@ -198,6 +198,17 @@ impl Decoder for FlacDecoder {
         }
         self.collect(|inner, on_block| inner.flush(on_block))
     }
+
+    /// Also turns off the whole-stream MD5 and total checks: after a seek they cannot hold.
+    fn reset(&mut self) {
+        self.inner.reset();
+        self.pts.clear();
+        self.spare.extend(self.ready.drain(..));
+        self.draining = false;
+        self.failed = false;
+        self.held = None;
+        self.end_checked = false;
+    }
 }
 
 #[cfg(test)]

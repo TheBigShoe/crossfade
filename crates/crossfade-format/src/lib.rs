@@ -2,15 +2,18 @@
 //! muxers that write them back. Built on the seams in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+pub mod adts;
 pub mod aiff;
 pub mod flac;
+pub mod mp3;
+pub mod mp4;
 pub mod ogg;
 mod replay;
+mod sniff;
 pub mod vorbis_comment;
 pub mod wav;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags};
-use replay::Replay;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -19,6 +22,12 @@ pub enum FormatId {
     Flac,
     Aiff,
     Ogg,
+    /// MPEG audio frames (layers I-III), optionally behind ID3v2 tags.
+    Mp3,
+    /// ISO base media (MP4, M4A, M4B).
+    Mp4,
+    /// AAC in ADTS frames.
+    Adts,
 }
 
 impl FormatId {
@@ -28,6 +37,9 @@ impl FormatId {
             Self::Flac => "flac",
             Self::Aiff => "aiff",
             Self::Ogg => "ogg",
+            Self::Mp3 => "mp3",
+            Self::Mp4 => "mp4",
+            Self::Adts => "adts",
         }
     }
 
@@ -36,37 +48,12 @@ impl FormatId {
             "wav" | "wave" => Some(Self::Wav),
             "flac" => Some(Self::Flac),
             "aiff" | "aif" | "aifc" => Some(Self::Aiff),
-            "ogg" | "oga" => Some(Self::Ogg),
+            "ogg" | "oga" | "opus" => Some(Self::Ogg),
+            "mp3" => Some(Self::Mp3),
+            "mp4" | "m4a" | "m4b" => Some(Self::Mp4),
+            "aac" | "adts" => Some(Self::Adts),
             _ => None,
         }
-    }
-}
-
-/// The longest magic: `FORM` + size + `AIFF`.
-const SNIFF_LEN: usize = 12;
-
-fn sniff(head: &[u8]) -> Option<FormatId> {
-    match head {
-        [b'R', b'I', b'F', b'F', ..] | [b'R', b'F', b'6', b'4', ..] => Some(FormatId::Wav),
-        // An ID3v2 tag may precede the stream marker; the FLAC reader skips it.
-        [b'f', b'L', b'a', b'C', ..] | [b'I', b'D', b'3', ..] => Some(FormatId::Flac),
-        [
-            b'F',
-            b'O',
-            b'R',
-            b'M',
-            _,
-            _,
-            _,
-            _,
-            b'A',
-            b'I',
-            b'F',
-            b'F' | b'C',
-            ..,
-        ] => Some(FormatId::Aiff),
-        [b'O', b'g', b'g', b'S', ..] => Some(FormatId::Ogg),
-        _ => None,
     }
 }
 
@@ -76,14 +63,17 @@ pub fn open_demuxer(
     source: Box<dyn MediaSource>,
     limits: &Limits,
 ) -> Result<(FormatId, Box<dyn Demuxer>), Error> {
-    let (head, source) = Replay::sniff(source, SNIFF_LEN)?;
-    let format = sniff(&head).ok_or(Error::UnrecognisedFormat)?;
-    let source: Box<dyn MediaSource> = Box::new(source);
+    let sniffed = sniff::sniff(source, limits)?;
+    let format = sniffed.format;
+    let source: Box<dyn MediaSource> = Box::new(sniffed.source);
     let demuxer: Box<dyn Demuxer> = match format {
         FormatId::Wav => Box::new(wav::WavDemuxer::new(source, limits)?),
         FormatId::Flac => flac::open(source, limits)?,
         FormatId::Aiff => aiff::open(source, limits)?,
         FormatId::Ogg => ogg::open(source, limits)?,
+        FormatId::Mp3 => mp3::open(source, sniffed.id3, limits)?,
+        FormatId::Mp4 => mp4::open(source, limits)?,
+        FormatId::Adts => adts::open(source, limits)?,
     };
     Ok((format, demuxer))
 }
@@ -100,6 +90,9 @@ pub fn create_muxer(
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => ogg::create(sink, stream, tags),
+        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => Err(Error::Unsupported {
+            what: format!("writing {} is not supported yet", format.name()),
+        }),
     }
 }
 
@@ -159,14 +152,23 @@ mod tests {
             (FormatId::Wav, "wav", &["wav", "WAV", "Wave", "wave"][..]),
             (FormatId::Flac, "flac", &["flac", "FLAC"][..]),
             (FormatId::Aiff, "aiff", &["aiff", "aif", "aifc", "AIF"][..]),
-            (FormatId::Ogg, "ogg", &["ogg", "oga", "OGG"][..]),
+            (
+                FormatId::Ogg,
+                "ogg",
+                &["ogg", "oga", "OGG", "opus", "Opus"][..],
+            ),
+            (FormatId::Mp3, "mp3", &["mp3", "MP3"][..]),
+            (FormatId::Mp4, "mp4", &["mp4", "m4a", "m4b", "M4A"][..]),
+            (FormatId::Adts, "adts", &["aac", "adts", "AAC"][..]),
         ] {
             assert_eq!(id.name(), name);
             for ext in exts {
                 assert_eq!(FormatId::from_extension(ext), Some(id), "{ext}");
             }
         }
-        for ext in ["", "mp3", "wav ", ".wav", "wavx", "flc", "ogv"] {
+        for ext in [
+            "", "mp2", "wav ", ".wav", "wavx", "flc", "ogv", "m4v", "mov",
+        ] {
             assert_eq!(FormatId::from_extension(ext), None, "{ext:?}");
         }
     }
@@ -213,6 +215,25 @@ mod tests {
     }
 
     #[test]
+    fn the_new_containers_reach_their_readers_which_say_they_are_not_built_yet() {
+        let open = |bytes: Vec<u8>| {
+            let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
+            unsupported(open_demuxer(Box::new(src), &Limits::default()))
+        };
+        let mp3 = vec![0xFF, 0xFB, 0x90, 0x00, 0, 0];
+        let mut tagged = b"ID3\x03\0\0\0\0\0\x02xx".to_vec();
+        tagged.extend(&mp3);
+        for (bytes, name) in [
+            (mp3, "mp3"),
+            (tagged, "mp3"),
+            (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
+            (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
+        ] {
+            assert_eq!(open(bytes), format!("reading {name} is not built yet"));
+        }
+    }
+
+    #[test]
     fn unknown_input_is_unrecognised_and_rf64_is_unsupported() {
         let open = |bytes: Vec<u8>| open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default());
         for bytes in [
@@ -241,5 +262,11 @@ mod tests {
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
         assert!(unsupported(mk(FormatId::Ogg)).contains("ogg files can only hold flac"));
+        for f in [FormatId::Mp3, FormatId::Mp4, FormatId::Adts] {
+            assert_eq!(
+                unsupported(mk(f)),
+                format!("writing {} is not supported yet", f.name())
+            );
+        }
     }
 }

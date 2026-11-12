@@ -49,7 +49,7 @@ fn codec_names_follow_ffmpeg_and_round_trip() {
         assert_eq!(c.name(), n);
         assert_eq!(CodecId::from_name(n), Some(c));
     }
-    assert_eq!(CodecId::from_name("mp3"), None);
+    assert_eq!(CodecId::from_name("mp4"), None);
     assert_eq!(CodecId::from_name(""), None);
 }
 

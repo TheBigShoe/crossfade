@@ -28,7 +28,8 @@ pub enum Verification {
     Md5Matched,
     /// STREAMINFO carries no hash (all zero); only the sample total, if it has one, was checked.
     NoMd5,
-    /// A frame failed earlier, so the total and the hash say nothing about the stream.
+    /// A frame failed earlier, or the decoder was [`reset`](Decoder::reset), so the total and
+    /// the hash say nothing about the stream.
     Skipped,
 }
 
@@ -47,6 +48,9 @@ pub struct Decoder {
     /// A frame failed: the totals and the hash no longer say anything about the stream.
     failed: bool,
     finished: bool,
+    /// The stream is decoded whole from its start, so its total and MD5 can be checked; a
+    /// `reset` turns this off for good.
+    verify: bool,
     /// The error that ended a stream given through `push_frame`; later calls repeat it.
     error: Option<Error>,
     /// Resolved thread count; 1 decodes every frame on the calling thread.
@@ -165,6 +169,7 @@ impl Decoder {
             block: 0,
             failed: false,
             finished: false,
+            verify: true,
             error: None,
             threads: match threads {
                 Self::AUTO_THREADS => crate::auto_thread_count().min(Self::MAX_AUTO_THREADS),
@@ -257,7 +262,7 @@ impl Decoder {
             unreachable!("made above")
         };
         pool.submit(job);
-        if pool.workers() > 0 && self.md5_stage.is_none() && self.info.md5 != [0; 16] {
+        if pool.workers() > 0 && self.md5_stage.is_none() && self.hashing() {
             // Workers are running, so the stream is long enough for MD5 to pay for a thread.
             let md5 = std::mem::take(&mut self.md5);
             match Serial::new(md5, hash_bytes, MD5_DEPTH) {
@@ -278,6 +283,31 @@ impl Decoder {
             self.take_one(on_block)?;
         }
         Ok(())
+    }
+
+    /// Forgets the stream so far, ready for frames from a new position (after a seek), as if
+    /// newly made: blocks still in flight are discarded unseen (the threads stop), a failure is
+    /// forgotten, and from now on [`finish`](Self::finish) checks neither the sample total nor
+    /// the MD5 and reports `Skipped`, since the stream is no longer decoded whole.
+    pub fn reset(&mut self) {
+        // Dropping them stops and joins the threads, discarding what they hold.
+        self.pool = None;
+        self.md5_stage = None;
+        self.md5 = Md5::new();
+        self.first = 0;
+        self.decoded = 0;
+        self.block = 0;
+        self.failed = false;
+        self.finished = false;
+        self.verify = false;
+        self.error = None;
+        self.pushed = 0;
+    }
+
+    /// Whether the MD5 is computed: STREAMINFO has one to compare with and nothing has made
+    /// the comparison meaningless.
+    fn hashing(&self) -> bool {
+        self.verify && self.info.md5 != [0; 16]
     }
 
     /// Frames given to [`push_frame`](Self::push_frame) whose blocks have not been handed
@@ -342,7 +372,7 @@ impl Decoder {
         if let Err(e) = std::mem::replace(&mut job.result, Ok(())) {
             return Err(self.fail(e));
         }
-        if self.info.md5 != [0; 16] {
+        if self.hashing() {
             if let Some(stage) = &mut self.md5_stage {
                 let spare = stage.spare().unwrap_or_default();
                 let sent = stage.send(std::mem::replace(&mut job.md5_bytes, spare));
@@ -409,7 +439,7 @@ impl Decoder {
         if !self.failed {
             self.reclaim_md5()?;
         }
-        if self.failed || std::mem::replace(&mut self.finished, true) {
+        if self.failed || !self.verify || std::mem::replace(&mut self.finished, true) {
             return Ok(Verification::Skipped);
         }
         let total = self.info.total_samples;
@@ -448,7 +478,7 @@ impl Decoder {
     /// the hash with. Returns the CRC-16 of `frame`, computed between the MD5's blocks: both are
     /// serial chains, and interleaved the CRC's runs while the MD5 waits on its own.
     fn hash(&mut self, block: usize, frame: &[u8]) -> u16 {
-        if self.info.md5 == [0; 16] {
+        if !self.hashing() {
             return crc16(frame);
         }
         pack_md5(

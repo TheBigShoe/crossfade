@@ -1,7 +1,10 @@
 //! The Ogg FLAC mapping (RFC 9639 section 10.1).
 
+use super::LogicalStream;
+use super::packets::PacketReader;
 use crate::vorbis_comment;
-use crossfade_core::{Error, Limits, Tags};
+use crossfade_core::{Demuxer, Error, Limits, Packet, StreamInfo, Tags};
+use crossfade_flac::frame::{self, HeaderError};
 use crossfade_flac::streaminfo::StreamInfoBlock;
 
 /// `0x7F "FLAC"`, version, header count, `fLaC`, block header, STREAMINFO.
@@ -11,6 +14,84 @@ const VORBIS_COMMENT: u8 = 4;
 fn malformed(what: &str) -> Error {
     Error::Malformed {
         what: format!("ogg flac: {what}"),
+    }
+}
+
+struct OggFlacDemuxer {
+    packets: PacketReader,
+    streams: [StreamInfo; 1],
+    tags: Tags,
+    /// Frames of a fixed-block-size stream are numbered in units of this.
+    block_size: u32,
+    /// The first audio packet, read while looking for the end of the headers.
+    held: Vec<u8>,
+    has_held: bool,
+    done: bool,
+}
+
+pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
+    let LogicalStream {
+        mut packets, id, ..
+    } = stream;
+    let header = parse_first_packet(&id)?;
+    let mut tags = None;
+    let mut held = Vec::new();
+    // The declared header count is only a hint: the headers end at the first frame.
+    let has_held = loop {
+        if !packets.next_packet(&mut held)? {
+            break false;
+        }
+        if starts_frame(&held) {
+            break true;
+        }
+        if tags.is_none() {
+            tags = comment_tags(&held, limits)?;
+        }
+    };
+    let tags = tags.unwrap_or_default();
+    let mut stream = crate::flac::stream_info(&header.block, &header.streaminfo)?;
+    crate::flac::apply_channel_mask(&mut stream, &tags)?;
+    Ok(Box::new(OggFlacDemuxer {
+        packets,
+        streams: [stream],
+        tags,
+        block_size: u32::from(header.block.min_block_size),
+        held,
+        has_held,
+        done: false,
+    }))
+}
+
+impl Demuxer for OggFlacDemuxer {
+    fn streams(&self) -> &[StreamInfo] {
+        &self.streams
+    }
+
+    fn tags(&self) -> &Tags {
+        &self.tags
+    }
+
+    fn read_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        if self.done {
+            return Ok(false);
+        }
+        if self.has_held {
+            self.has_held = false;
+            std::mem::swap(&mut out.data, &mut self.held);
+        } else if !self.packets.next_packet(&mut out.data)? {
+            self.done = true;
+            return Ok(false);
+        }
+        let h = frame::parse_header(&out.data).map_err(|e| Error::Malformed {
+            what: match e {
+                HeaderError::NeedMoreData => "ogg flac frame header is cut short".into(),
+                HeaderError::Invalid(why) => format!("ogg flac frame header: {why}"),
+            },
+        })?;
+        out.stream = 0;
+        out.pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
+        out.duration = u64::from(h.block_size);
+        Ok(true)
     }
 }
 
