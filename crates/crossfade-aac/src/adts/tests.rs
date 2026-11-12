@@ -37,8 +37,8 @@ fn lc_stereo_44k() -> Header {
 }
 
 #[test]
-fn a_header_made_by_afconvert_parses() {
-    // The first seven bytes of `afconvert -f adts -d aac` output, 44.1 kHz stereo.
+fn a_typical_header_parses() {
+    // MPEG-4 AAC LC, 44.1 kHz stereo, a 371-byte frame, no CRC.
     let h = Header::parse(&[0xFF, 0xF1, 0x50, 0x80, 0x2E, 0x7F, 0xFC]).unwrap();
     assert_eq!(
         h,
