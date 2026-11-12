@@ -46,6 +46,12 @@ pub trait Muxer {
 /// Packets in, frames out. Lossy codecs buffer, so this is not one-in-one-out:
 /// call `receive_frame` until it returns `Ok(false)` before the next
 /// `send_packet`.
+///
+/// Timing: a decoder stamps each frame it emits with the pts of the packet that produced it
+/// (counted in frames at its output rate); later frames of the same packet continue by counting
+/// frames. It emits every frame it decodes, priming and padding included: dropping what lies
+/// before pts 0 or at or past [`StreamInfo::frames`] is the engine's job, in one place after
+/// the decoder (see [`Packet::pts`]).
 pub trait Decoder {
     fn send_packet(&mut self, packet: &Packet) -> Result<(), Error>;
 

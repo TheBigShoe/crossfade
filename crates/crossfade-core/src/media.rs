@@ -1,5 +1,9 @@
 use crate::{AudioSpec, ChannelLayout, CodecId, SampleFormat, TimeBase};
 
+/// One stream of a container.
+///
+/// The stream's timeline starts at pts 0, the first sample frame meant to be heard; see
+/// [`Packet::pts`] for what comes before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamInfo {
     pub index: u32,
@@ -7,7 +11,9 @@ pub struct StreamInfo {
     pub audio: AudioSpec,
     /// Unit of `Packet::pts` and `Packet::duration`.
     pub time_base: TimeBase,
-    /// Total sample frames, when the container knows.
+    /// Sample frames meant to be heard, when the container knows: what is left once the
+    /// encoder's priming (negative pts) is dropped and its padding at the end is cut. The engine
+    /// plays nothing at or past it.
     pub frames: Option<u64>,
     /// The codec's header bytes (FLAC: the 34-byte STREAMINFO body). Empty for PCM.
     pub extradata: Vec<u8>,
@@ -35,6 +41,11 @@ impl StreamInfo {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Packet {
     pub stream: u32,
+    /// The timeline position, in the stream's time base, of the first sample frame that
+    /// decoding this packet yields. The timeline starts at 0 with the first frame meant to be
+    /// heard, so an encoder's priming (delay) frames have NEGATIVE pts. A packet that yields
+    /// no frames (a codec's first packet after the start or a reset can be like that) carries
+    /// the pts of the next frame to come.
     pub pts: i64,
     pub duration: u64,
     pub data: Vec<u8>,
