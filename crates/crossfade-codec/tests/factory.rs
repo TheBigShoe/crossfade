@@ -103,7 +103,8 @@ fn the_compressed_codecs_without_a_decoder_yet_are_refused_by_name() {
         CodecId::Vorbis,
         CodecId::Opus,
         CodecId::Mp3,
-        CodecId::Aac,
+        // AAC has a decoder behind the `aac` feature, and its own refusal without it
+        // (tests/aac.rs).
         CodecId::Alac,
     ] {
         let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 44100).unwrap());
