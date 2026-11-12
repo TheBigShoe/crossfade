@@ -225,7 +225,11 @@ mod tests {
             text += &format!(
                 "[[file]]\nid = \"{}\"\nname = \"{}\"\nurl = \"{}\"\nbytes = {}\nsha256 = \"{}\"\n\
                  licence = \"CC0-1.0\"\nexpect = \"decode\"\n",
-                e.id, e.name, e.url, e.bytes, e.sha256
+                e.id,
+                e.name,
+                e.url().unwrap(),
+                e.bytes,
+                e.sha256
             );
         }
         std::fs::write(root.join("corpus.toml"), text).unwrap();
@@ -253,8 +257,8 @@ mod tests {
 
     fn net(s: &Setup) -> Fake {
         Fake(vec![
-            (s.a.url.clone(), b"aaa".to_vec()),
-            (s.b.url.clone(), b"bbbb".to_vec()),
+            (s.a.url().unwrap().to_string(), b"aaa".to_vec()),
+            (s.b.url().unwrap().to_string(), b"bbbb".to_vec()),
         ])
     }
 

@@ -92,7 +92,11 @@ mod tests {
         let m = Manifest::parse(&format!(
             "[[file]]\nid = \"{}\"\nname = \"{}\"\nurl = \"{}\"\nbytes = {}\nsha256 = \"{}\"\n\
              licence = \"CC0-1.0\"\nexpect = \"decode\"\n",
-            e.id, e.name, e.url, e.bytes, e.sha256
+            e.id,
+            e.name,
+            e.url().unwrap(),
+            e.bytes,
+            e.sha256
         ))
         .unwrap();
         (m, Cache::new(temp_dir(tag)), e)

@@ -122,7 +122,11 @@ pub fn fetch(
             Outcome::Skipped
         } else {
             progress(Event::Starting(entry));
-            match install(cache, entry, |tmp| downloader.download(&entry.url, tmp)) {
+            let Some(url) = entry.url() else {
+                // Archive members arrive with the archive support.
+                continue;
+            };
+            match install(cache, entry, |tmp| downloader.download(url, tmp)) {
                 Ok(()) => Outcome::Fetched,
                 Err(e) => Outcome::Failed(e),
             }
@@ -211,7 +215,11 @@ mod tests {
             text += &format!(
                 "[[file]]\nid = \"{}\"\nname = \"{}\"\nurl = \"{}\"\nbytes = {}\nsha256 = \"{}\"\n\
                  licence = \"CC0-1.0\"\nexpect = \"decode\"\n",
-                e.id, e.name, e.url, e.bytes, e.sha256
+                e.id,
+                e.name,
+                e.url().unwrap(),
+                e.bytes,
+                e.sha256
             );
         }
         Manifest::parse(&text).unwrap()
@@ -221,7 +229,12 @@ mod tests {
         Fake {
             bodies: items
                 .iter()
-                .map(|(e, r)| (e.url.clone(), r.map(<[u8]>::to_vec).map_err(str::to_string)))
+                .map(|(e, r)| {
+                    (
+                        e.url().unwrap().to_string(),
+                        r.map(<[u8]>::to_vec).map_err(str::to_string),
+                    )
+                })
                 .collect(),
             calls: vec![],
         }
@@ -320,7 +333,7 @@ mod tests {
             &mut quiet,
         );
         assert_eq!(s.fetched, 1);
-        assert_eq!(dl.calls, vec![b.url.clone()]);
+        assert_eq!(dl.calls, vec![b.url().unwrap().to_string()]);
     }
 
     #[test]

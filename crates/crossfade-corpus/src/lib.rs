@@ -15,5 +15,5 @@ pub use cache::{Cache, Problem};
 pub use cli::{Defaults, run};
 pub use fetch::{CurlDownloader, Downloader, Event, Failure, Outcome, Summary, fetch, seed};
 
-pub use manifest::{Entry, Expect, Manifest, ManifestError};
+pub use manifest::{Archive, ArchiveFormat, Entry, Expect, Manifest, ManifestError, Source};
 pub use require::{RequireError, require, require_from, try_require, workspace_root};
