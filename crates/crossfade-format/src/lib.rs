@@ -206,6 +206,25 @@ mod tests {
     }
 
     #[test]
+    fn the_new_containers_reach_their_readers_which_say_they_are_not_built_yet() {
+        let open = |bytes: Vec<u8>| {
+            let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
+            unsupported(open_demuxer(Box::new(src), &Limits::default()))
+        };
+        let mp3 = vec![0xFF, 0xFB, 0x90, 0x00, 0, 0];
+        let mut tagged = b"ID3\x03\0\0\0\0\0\x02xx".to_vec();
+        tagged.extend(&mp3);
+        for (bytes, name) in [
+            (mp3, "mp3"),
+            (tagged, "mp3"),
+            (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
+            (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
+        ] {
+            assert_eq!(open(bytes), format!("reading {name} is not built yet"));
+        }
+    }
+
+    #[test]
     fn unknown_input_is_unrecognised_and_rf64_is_unsupported() {
         let open = |bytes: Vec<u8>| open_demuxer(Box::new(Cursor::new(bytes)), &Limits::default());
         for bytes in [
