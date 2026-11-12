@@ -122,6 +122,11 @@ impl PacketReader {
         }
     }
 
+    /// `Unsupported` unless the source can seek.
+    pub(crate) fn check_seekable(&mut self) -> Result<(), Error> {
+        self.pages.input_len().map(|_| ())
+    }
+
     /// The first page at or after `from`, starting before `limit`, that can end a seek: this
     /// stream's, ending a packet, with a granule. Its offset, granule and end.
     fn candidate(&mut self, from: u64, limit: u64) -> Result<Option<(u64, i64, u64)>, Error> {

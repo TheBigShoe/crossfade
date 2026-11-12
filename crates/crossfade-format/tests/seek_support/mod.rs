@@ -223,7 +223,11 @@ pub fn flac_file(
         .map(|(a, b)| b - a)
         .collect();
     let info = crossfade_flac::streaminfo::StreamInfoBlock {
-        min_block_size: *block_sizes.iter().min().unwrap() as u16,
+        // RFC 9639: the minimum leaves out the last block.
+        min_block_size: *block_sizes[..block_sizes.len().max(2) - 1]
+            .iter()
+            .min()
+            .unwrap() as u16,
         max_block_size: *block_sizes.iter().max().unwrap() as u16,
         min_frame_size: *sizes.iter().min().unwrap() as u32,
         max_frame_size: *sizes.iter().max().unwrap() as u32,

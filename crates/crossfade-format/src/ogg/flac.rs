@@ -1,7 +1,7 @@
 //! The Ogg FLAC mapping (RFC 9639 section 10.1).
 
 use super::LogicalStream;
-use super::packets::PacketReader;
+use super::packets::{PacketReader, PacketStart};
 use crate::vorbis_comment;
 use crossfade_core::{Demuxer, Error, Limits, Packet, StreamInfo, Tags};
 use crossfade_flac::frame::{self, HeaderError};
@@ -27,6 +27,8 @@ struct OggFlacDemuxer {
     held: Vec<u8>,
     has_held: bool,
     done: bool,
+    /// Where the first audio packet starts; `None` when the stream has none.
+    floor: Option<PacketStart>,
 }
 
 pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
@@ -37,11 +39,13 @@ pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Dem
     let mut tags = None;
     let mut held = Vec::new();
     // The declared header count is only a hint: the headers end at the first frame.
+    let mut floor = None;
     let has_held = loop {
         if !packets.next_packet(&mut held)? {
             break false;
         }
         if starts_frame(&held) {
+            floor = Some(packets.packet_start());
             break true;
         }
         if tags.is_none() {
@@ -59,6 +63,7 @@ pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Dem
         held,
         has_held,
         done: false,
+        floor,
     }))
 }
 
@@ -82,16 +87,78 @@ impl Demuxer for OggFlacDemuxer {
             self.done = true;
             return Ok(false);
         }
-        let h = frame::parse_header(&out.data).map_err(|e| Error::Malformed {
+        (out.pts, out.duration) = self.timing(&out.data)?;
+        out.stream = 0;
+        Ok(true)
+    }
+
+    /// Exact (FLAC has no pre-roll): the granule bisection lands at or before the target, and
+    /// the frames up to the one that holds it are read and dropped. A stream whose granules
+    /// disagree with its frames (the landing is past the target) is read from its first frame.
+    fn seek(&mut self, pts: i64) -> Result<i64, Error> {
+        self.packets.check_seekable()?;
+        let target = pts.max(0);
+        let Some(floor) = self.floor else {
+            self.done = true;
+            return Ok(0);
+        };
+        if let Some(total) = self.streams[0].frames
+            && u64::try_from(target).is_ok_and(|t| t >= total)
+        {
+            self.done = true;
+            self.has_held = false;
+            return i64::try_from(total).map_err(|_| Error::Overflow);
+        }
+        let landed = self.packets.seek_granule(target, floor)?;
+        if let Some(found) = self.forward_to(target, landed.unwrap_or(0))? {
+            return Ok(found);
+        }
+        self.packets.seek_granule(i64::MIN, floor)?;
+        Ok(self.forward_to(target, 0)?.unwrap_or(0))
+    }
+}
+
+impl OggFlacDemuxer {
+    /// A frame packet's pts and duration, from its header.
+    fn timing(&self, data: &[u8]) -> Result<(i64, u64), Error> {
+        let h = frame::parse_header(data).map_err(|e| Error::Malformed {
             what: match e {
                 HeaderError::NeedMoreData => "ogg flac frame header is cut short".into(),
                 HeaderError::Invalid(why) => format!("ogg flac frame header: {why}"),
             },
         })?;
-        out.stream = 0;
-        out.pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
-        out.duration = u64::from(h.block_size);
-        Ok(true)
+        let pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
+        Ok((pts, u64::from(h.block_size)))
+    }
+
+    /// Reads on to the packet that holds `target` and holds it for `read_packet`; returns its
+    /// pts, or the end's when the stream ends first. `None` when the landing cannot be right:
+    /// the first packet read starts past `target`, or there is none though the stream's total
+    /// (past `target`) says there should be. `end`: the position before the next packet.
+    fn forward_to(&mut self, target: i64, mut end: i64) -> Result<Option<i64>, Error> {
+        self.done = false;
+        self.has_held = false;
+        let mut first = true;
+        loop {
+            if !self.packets.next_packet(&mut self.held)? {
+                // Short of a known total, landing at the end means the granules lied.
+                if first && self.streams[0].frames.is_some() {
+                    return Ok(None);
+                }
+                self.done = true;
+                return Ok(Some(end));
+            }
+            let (pts, duration) = self.timing(&self.held)?;
+            if first && pts > target {
+                return Ok(None);
+            }
+            first = false;
+            end = pts.saturating_add(i64::try_from(duration).unwrap_or(i64::MAX));
+            if end > target {
+                self.has_held = true;
+                return Ok(Some(pts));
+            }
+        }
     }
 }
 
