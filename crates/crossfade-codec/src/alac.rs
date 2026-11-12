@@ -29,6 +29,11 @@ struct AlacDecoder {
     ready: Option<AudioFrame>,
 }
 
+/// Not threaded yet.
+pub fn decoder_threads(stream: &StreamInfo, _threads: usize) -> Result<Box<dyn Decoder>, Error> {
+    decoder(stream)
+}
+
 pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
     let config = crossfade_alac::Config::parse(&stream.extradata).map_err(engine_error)?;
     let layout = crossfade_alac::wave_layout(config.channels).ok_or_else(|| Error::Malformed {
@@ -263,6 +268,78 @@ mod tests {
         assert_eq!(f.pts, 4096);
     }
 
+    /// Every frame and the first error, sent one packet at a time as the pipeline does.
+    fn outcome(
+        s: &StreamInfo,
+        packets: &[Packet],
+        threads: usize,
+    ) -> (Vec<AudioFrame>, Option<Error>) {
+        let mut d = decoder_threads(s, threads).unwrap();
+        let mut f = AudioFrame::new(&s.audio);
+        let mut out = Vec::new();
+        let result = (|| {
+            for p in packets {
+                d.send_packet(p)?;
+                while d.receive_frame(&mut f)? {
+                    out.push(f.clone());
+                }
+            }
+            d.drain();
+            while d.receive_frame(&mut f)? {
+                out.push(f.clone());
+            }
+            Ok(())
+        })();
+        (out, result.err())
+    }
+
+    #[test]
+    fn threads_never_change_the_frames_or_the_error() {
+        let s = stream(24, 6);
+        let good: Vec<Packet> = (0..150)
+            .map(|i| packet(24, 6, 1 + i % 7, i64::from(i) * 4096))
+            .collect();
+        let one = outcome(&s, &good, 1);
+        assert_eq!(one.0.len(), 150);
+        assert_eq!(one.1, None);
+        let mut bad = good.clone();
+        bad[77].data = vec![0xE0];
+        let want = outcome(&s, &bad, 1);
+        assert_eq!(want.0.len(), 77);
+        assert!(want.1.is_some());
+        for threads in [0, 2, 3, 4, 9] {
+            assert!(outcome(&s, &good, threads) == one, "{threads}");
+            assert!(outcome(&s, &bad, threads) == want, "{threads}");
+        }
+    }
+
+    #[test]
+    fn flush_and_reset_with_threads() {
+        let s = stream(16, 2);
+        let mut d = decoder_threads(&s, 3).unwrap();
+        let mut f = AudioFrame::new(&s.audio);
+        d.send_packet(&packet(16, 2, 2, 0)).unwrap();
+        assert!(!d.receive_frame(&mut f).unwrap(), "a batch late");
+        d.flush().unwrap();
+        assert!(d.receive_frame(&mut f).unwrap());
+        d.send_packet(&packet(16, 2, 2, 8)).unwrap();
+        d.reset();
+        d.drain();
+        assert!(!d.receive_frame(&mut f).unwrap());
+        d.send_packet(&Packet {
+            data: vec![0xE0],
+            ..Packet::default()
+        })
+        .unwrap();
+        assert!(d.flush().is_err());
+        d.send_packet(&packet(16, 2, 2, 8)).unwrap();
+        d.reset();
+        d.send_packet(&packet(16, 2, 2, 16)).unwrap();
+        d.flush().unwrap();
+        assert!(d.receive_frame(&mut f).unwrap());
+        assert_eq!(f.pts, 16);
+    }
+
     #[test]
     fn errors_keep_the_crates_text() {
         let s = stream(16, 1);
@@ -281,8 +358,11 @@ mod tests {
             data: vec![0x40],
             ..Packet::default()
         };
+        // A failed stream is over: what follows is not decoded.
+        assert_eq!(d.send_packet(&cce), Ok(()));
+        let mut fresh = decoder(&s).unwrap();
         assert!(matches!(
-            d.send_packet(&cce),
+            fresh.send_packet(&cce),
             Err(Error::Unsupported { .. })
         ));
         let mut wrong = stream(16, 2);
