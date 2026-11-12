@@ -51,7 +51,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
-| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `decode_frames` (a decode-only pass for analysis) |
+| `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `DecodeSession` (one input decoded frame by frame on its timeline, with exact `seek`), `decode_frames` (a decode-only pass for analysis, read through a session) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
@@ -91,6 +91,15 @@ README giving the command that made each (5 MB budget for the repository).
   `Decoder::reset`, which every decoder must implement (no default): it forgets all stream
   state, as if new. Frames decoded before `pts` are the caller's to discard. A reset FLAC
   decoder no longer checks the whole-stream MD5.
+- **Seeking in Ogg and through the engine.** An Ogg mapping seeks with
+  `PacketReader::seek_granule(target, floor)`: it lands on the packet after the last page of its
+  stream (from `floor`, the mapping's first audio packet, kept from `packet_start()`) whose
+  granule is at most `target`, returns that granule (`None`: back at `floor`), bisects in
+  O(log n) page reads, and checks every page found by scanning by its CRC; `granule()` says
+  which granule applies to the packet just read. A mapping asks for a target early enough for
+  its pre-roll and reads on from the landing. `crossfade_graph::DecodeSession` is the one exact seek for a front end: it seeks the
+  reader, resets the decoder and drops what lies before the target; seek-then-decode equals
+  decode-then-slice (the tests, and the tier-3 `conformance_seek`).
 - **Lossy output default.** A lossy codec (`CodecId::is_lossy`) has no bit depth; its decoder
   emits interleaved `F32`. With no `--sample-format`, `output_sample_format` writes it as `S16`
   to every container, with the note "<codec> has no bit depth: writing 16-bit; choose
