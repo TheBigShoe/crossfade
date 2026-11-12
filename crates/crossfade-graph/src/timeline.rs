@@ -166,7 +166,12 @@ mod tests {
     #[test]
     fn extreme_pts_do_not_overflow() {
         check(None, i64::MIN, 10, None);
-        check(Some(u64::MAX), i64::MAX - 10, 10, Some((i64::MAX - 10, i64::MAX)));
+        check(
+            Some(u64::MAX),
+            i64::MAX - 10,
+            10,
+            Some((i64::MAX - 10, i64::MAX)),
+        );
     }
 
     #[test]
