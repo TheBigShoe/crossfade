@@ -17,6 +17,8 @@ mod xiph;
 
 pub use channels::{Speaker, speakers};
 pub use decoder::Decoder;
+#[cfg(feature = "profile")]
+pub use decoder::STAGES;
 pub use error::{Error, Result};
 pub use header::{Comments, HeaderKind, Ident, header_kind};
 pub use setup::{Modes, Setup, packet_frames};

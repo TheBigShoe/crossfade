@@ -14,6 +14,8 @@ libm.workspace = true
 # A bit packer and header and packet builders, for tests that need hand-made streams (this
 # crate's and its users'). Not an encoder.
 writer = []
+# Decoder::stage_times: where decoding spends its time (costs a clock read per stage).
+profile = []
 
 [lints]
 workspace = true

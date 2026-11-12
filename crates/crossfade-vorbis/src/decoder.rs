@@ -51,7 +51,20 @@ pub struct Decoder {
     submap_channels: Vec<Vec<Vec<usize>>>,
     /// Where each channel goes in an output frame.
     order: Vec<usize>,
+    #[cfg(feature = "profile")]
+    times: [std::time::Duration; STAGES.len()],
 }
+
+/// The stages [`Decoder::stage_times`] reports.
+#[cfg(feature = "profile")]
+pub const STAGES: [&str; 6] = [
+    "floor decode",
+    "residue decode",
+    "coupling and floor curve",
+    "IMDCT",
+    "overlap-add",
+    "interleave",
+];
 
 impl Decoder {
     /// A decoder for the stream these headers describe. The identification header must be
@@ -107,6 +120,8 @@ impl Decoder {
             submap_channels,
             order: (0..channels).collect(),
             setup,
+            #[cfg(feature = "profile")]
+            times: Default::default(),
         })
     }
 
@@ -152,6 +167,12 @@ impl Decoder {
         true
     }
 
+    /// Time spent in each of [`STAGES`] so far.
+    #[cfg(feature = "profile")]
+    pub fn stage_times(&self) -> [std::time::Duration; STAGES.len()] {
+        self.times
+    }
+
     /// Forgets the overlap: the next packet yields nothing, as the first one does.
     pub fn reset(&mut self) {
         self.prev_n = 0;
@@ -163,6 +184,19 @@ impl Decoder {
     /// flags) is an error that changes nothing; a packet that ends early otherwise decodes,
     /// its spectrum ending where the data does.
     pub fn decode(&mut self, packet: &[u8], out: &mut Vec<f32>) -> Result<usize> {
+        #[cfg(feature = "profile")]
+        let mut clock = std::time::Instant::now();
+        macro_rules! lap {
+            ($stage:expr) => {
+                #[cfg(feature = "profile")]
+                #[allow(unused_assignments)]
+                {
+                    let now = std::time::Instant::now();
+                    self.times[$stage] += now - clock;
+                    clock = now;
+                }
+            };
+        }
         let setup = &self.setup;
         let mut r = BitReader::new(packet);
         let mode = setup.modes().read_mode(&mut r)?;
@@ -198,6 +232,7 @@ impl Decoder {
             };
         }
 
+        lap!(0);
         self.coded.copy_from_slice(&self.used);
         for &(m, a) in &mapping.coupling {
             let (m, a) = (usize::from(m), usize::from(a));
@@ -223,6 +258,7 @@ impl Decoder {
             );
         }
 
+        lap!(1);
         for &(m, a) in mapping.coupling.iter().rev() {
             let (m, a) = (usize::from(m), usize::from(a));
             let (mag, ang) = if m < a {
@@ -251,8 +287,11 @@ impl Decoder {
                 ),
                 Floor::One(f) => f.apply(&self.floor_y[ch * MAX_POSTS..], spectrum),
             }
+            lap!(2);
             self.imdct[usize::from(long)].dct4(spectrum, &mut self.fft);
+            lap!(3);
         }
+        lap!(2);
 
         let frames = if self.prev_n == 0 {
             0
@@ -270,9 +309,11 @@ impl Decoder {
                 );
             }
         }
+        lap!(4);
         std::mem::swap(&mut self.cur, &mut self.prev);
         self.prev_n = n;
         self.interleave(frames, out);
+        lap!(5);
         Ok(frames)
     }
 
