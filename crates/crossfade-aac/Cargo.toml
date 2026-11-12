@@ -1,0 +1,21 @@
+[package]
+name = "crossfade-aac"
+description = "AAC in pure Rust: ADTS and AudioSpecificConfig parsing, and (behind the off-by-default `decoder` feature, since AAC is patent-encumbered) an AAC-LC decoder."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# The decoder is patent-encumbered: compiled only on request, never in a default build.
+decoder = []
+
+# libm only, for tables: std's transcendental functions are not the same bits everywhere.
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
