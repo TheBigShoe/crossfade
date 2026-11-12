@@ -196,3 +196,97 @@ fn two_headers_of_one_stream_agree_on_the_fixed_fields_only() {
         assert!(!a.same_stream(&c), "{c:?}");
     }
 }
+
+/// A protected frame of `blocks` (each followed by a 2-byte CRC), with its position table.
+fn protected_frame(blocks: &[&[u8]]) -> Vec<u8> {
+    let n = blocks.len();
+    let table = 2 * (n - 1) + 2;
+    let body: usize = blocks.iter().map(|b| b.len() + 2).sum();
+    let h = Header {
+        protection_absent: false,
+        raw_data_blocks: n as u8,
+        frame_length: (7 + table + body) as u16,
+        ..lc_stereo_44k()
+    };
+    let mut f = pack(&h)[..7].to_vec();
+    let mut at = 0;
+    for b in &blocks[..n - 1] {
+        at += b.len() + 2;
+        f.extend((at as u16).to_be_bytes());
+    }
+    f.extend([0xC0, 0xC0]); // header CRC
+    for b in blocks {
+        f.extend(*b);
+        f.extend([0xCC, 0xCC]);
+    }
+    f
+}
+
+#[test]
+fn a_frame_of_one_block_is_its_payload() {
+    let mut f = pack(&Header {
+        frame_length: 12,
+        ..lc_stereo_44k()
+    });
+    f.extend([1, 2, 3, 4, 5]);
+    let h = Header::parse(&f).unwrap();
+    let blocks: Vec<_> = h.raw_data_blocks(&f).unwrap().collect();
+    assert_eq!(blocks, [&[1, 2, 3, 4, 5][..]]);
+    let crc = protected_frame(&[&[9, 9, 9]]);
+    let h = Header::parse(&crc).unwrap();
+    let blocks: Vec<_> = h.raw_data_blocks(&crc).unwrap().collect();
+    assert_eq!(blocks, [&[9, 9, 9][..]]);
+}
+
+#[test]
+fn a_protected_frame_of_several_blocks_splits_at_its_positions() {
+    let parts: [&[u8]; 4] = [&[1; 5], &[2; 3], &[3; 7], &[4; 1]];
+    for n in 2..=4 {
+        let f = protected_frame(&parts[..n]);
+        let h = Header::parse(&f).unwrap();
+        assert_eq!(h.raw_data_blocks, n as u8);
+        let blocks: Vec<_> = h.raw_data_blocks(&f).unwrap().collect();
+        assert_eq!(blocks, parts[..n]);
+    }
+}
+
+#[test]
+fn positions_that_do_not_fit_the_frame_are_malformed() {
+    let mut f = protected_frame(&[&[1; 5], &[2; 3]]);
+    f[8] = 200;
+    let h = Header::parse(&f).unwrap();
+    assert_eq!(
+        h.raw_data_blocks(&f).err(),
+        Some(Error::Malformed(
+            "aac: adts: raw data block positions do not fit the frame".into()
+        ))
+    );
+    let mut f = protected_frame(&[&[1; 5], &[2; 3]]);
+    f[8] = 1; // block 0 shorter than its CRC
+    let h = Header::parse(&f).unwrap();
+    assert!(h.raw_data_blocks(&f).is_err());
+    // The frame given must be as long as the header says.
+    let f = protected_frame(&[&[1; 5], &[2; 3]]);
+    let h = Header::parse(&f).unwrap();
+    assert_eq!(
+        h.raw_data_blocks(&f[..f.len() - 1]).err(),
+        Some(Error::UnexpectedEnd)
+    );
+}
+
+#[test]
+fn several_blocks_without_a_crc_cannot_be_split_and_are_refused_by_name() {
+    let h = Header {
+        raw_data_blocks: 3,
+        frame_length: 20,
+        ..lc_stereo_44k()
+    };
+    let mut f = pack(&h);
+    f.resize(20, 0);
+    assert_eq!(
+        h.raw_data_blocks(&f).err(),
+        Some(Error::Unsupported(
+            "aac: adts: frames of 3 raw data blocks without a CRC are not supported".into()
+        ))
+    );
+}

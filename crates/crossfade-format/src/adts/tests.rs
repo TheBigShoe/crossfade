@@ -263,14 +263,77 @@ fn the_crc_is_skipped_with_the_header() {
     assert_eq!(got[2].data, [2; 10]);
 }
 
+/// A protected frame of `blocks`, each followed by a CRC, with its position table.
+fn protected_frame(blocks: &[Vec<u8>]) -> Vec<u8> {
+    let n = blocks.len();
+    let len = 7 + 2 * n + blocks.iter().map(|b| b.len() + 2).sum::<usize>();
+    let mut f = header(len - 7, 2);
+    f[1] = 0xF0; // protection_absent 0
+    f[6] = 0xFC | (n as u8 - 1);
+    let mut at = 0;
+    for b in &blocks[..n - 1] {
+        at += b.len() + 2;
+        f.extend((at as u16).to_be_bytes());
+    }
+    f.extend([0xC0, 0xC0]);
+    for b in blocks {
+        f.extend(b);
+        f.extend([0xCC, 0xCC]);
+    }
+    f
+}
+
 #[test]
-fn frames_of_several_raw_data_blocks_are_refused_by_name() {
+fn a_protected_frame_of_several_blocks_gives_a_packet_per_block() {
+    let block = |i: usize| vec![i as u8; 5 + i % 3];
+    // Frames of 1, 4, 2, 3 blocks, then single blocks: 10 + 6 blocks.
+    let mut bytes = Vec::new();
+    let mut want = Vec::new();
+    let mut i = 0;
+    for n in [1, 4, 2, 3, 1, 1, 1, 1, 1, 1] {
+        let blocks: Vec<_> = (i..i + n).map(block).collect();
+        bytes.extend(protected_frame(&blocks));
+        want.extend(blocks);
+        i += n;
+    }
+    for d in [open_bytes(bytes.clone()), open_pipe(bytes.clone())] {
+        let got = packets(&mut *d.unwrap());
+        assert_eq!(got.len(), want.len());
+        for (k, (p, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(
+                (p.pts, p.duration, &p.data),
+                (k as i64 * 1024, 1024, w),
+                "{k}"
+            );
+        }
+    }
+    let mut d = open_bytes(bytes).unwrap();
+    assert_eq!(d.streams()[0].frames, Some(want.len() as u64 * 1024));
+    // Into the middle of the 4-block frame and of the 3-block one.
+    for (pts, landed) in [
+        (3 * 1024 + 9, 2),
+        (9 * 1024, 8),
+        (16 * 1024, 16),
+        (4 * 1024, 3),
+    ] {
+        assert_eq!(d.seek(pts), Ok(landed * 1024), "{pts}");
+        let rest = packets(&mut *d);
+        assert_eq!(rest.len(), want.len() - landed as usize, "{pts}");
+        if let Some(first) = rest.first() {
+            assert_eq!(first.data, want[landed as usize], "{pts}");
+        }
+    }
+}
+
+#[test]
+fn several_blocks_without_a_crc_are_refused_by_name() {
     let mut bytes = frames(3);
     bytes[6] |= 1; // two blocks in the first frame
     let want = Error::Unsupported {
-        what: "adts: frames holding 2 raw data blocks are not supported".into(),
+        what: "aac: adts: frames of 2 raw data blocks without a CRC are not supported".into(),
     };
     assert_eq!(open_bytes(bytes.clone()).err(), Some(want.clone()));
+    assert_eq!(open_pipe(bytes).err(), Some(want));
     let mut later = frames(3);
     let second = walk(&later)[0].len() + 7;
     later[second + 6] |= 3;
@@ -280,7 +343,7 @@ fn frames_of_several_raw_data_blocks_are_refused_by_name() {
     assert_eq!(
         d.read_packet(&mut p),
         Err(Error::Unsupported {
-            what: "adts: frames holding 4 raw data blocks are not supported".into()
+            what: "aac: adts: frames of 4 raw data blocks without a CRC are not supported".into()
         })
     );
 }

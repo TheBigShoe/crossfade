@@ -118,5 +118,33 @@ impl Header {
     }
 }
 
+/// The raw data blocks of a frame.
+pub struct RawDataBlocks<'a> {
+    frame: &'a [u8],
+    ranges: [(usize, usize); 4],
+    count: usize,
+    next: usize,
+}
+
+impl<'a> Iterator for RawDataBlocks<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let _ = (self.frame, self.ranges, self.count, self.next);
+        None
+    }
+}
+
+impl Header {
+    pub fn raw_data_blocks<'a>(&self, frame: &'a [u8]) -> Result<RawDataBlocks<'a>> {
+        Ok(RawDataBlocks {
+            frame,
+            ranges: [(0, 0); 4],
+            count: 0,
+            next: 0,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;
