@@ -143,4 +143,16 @@ mod tests {
         assert!(Encoder::extradata(&Bare).is_empty());
         assert_eq!(Muxer::set_extradata(&mut Bare, &[1, 2]), Ok(()));
     }
+
+    #[test]
+    fn a_reader_cannot_seek_unless_it_says_how() {
+        for pts in [i64::MIN, -1, 0, 1, i64::MAX] {
+            assert_eq!(
+                Bare.seek(pts),
+                Err(Error::Unsupported {
+                    what: "this reader cannot seek".into()
+                })
+            );
+        }
+    }
 }
