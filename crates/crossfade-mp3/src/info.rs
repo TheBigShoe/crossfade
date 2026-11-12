@@ -46,8 +46,15 @@ impl InfoFrame {
     /// Reads `frame` (one whole frame, header first) as an info frame; `None` when it is an
     /// ordinary audio frame. Layer III only.
     pub fn parse(header: &FrameHeader, frame: &[u8]) -> Option<Self> {
-        let _ = (header, frame, Self::vbri);
-        None
+        if header.layer != crate::Layer::III {
+            return None;
+        }
+        let at = header.data_start() + header.side_info_len();
+        let tag = frame.get(at..)?;
+        match tag.get(..4)? {
+            b"Xing" | b"Info" => Some(Self::xing(tag)),
+            _ => Self::vbri(frame),
+        }
     }
 
     fn xing(tag: &[u8]) -> Self {
