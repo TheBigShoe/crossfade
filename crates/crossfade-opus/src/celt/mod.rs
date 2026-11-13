@@ -68,6 +68,7 @@
 //! go in `celt/tables.rs`, private to this module. Nothing else in the crate shares them;
 //! the range decoder needs none.
 
+mod cwrs;
 mod ec;
 mod laplace;
 mod maths;
@@ -75,6 +76,7 @@ mod rate;
 mod tables;
 #[cfg(test)]
 mod test_util;
+mod vq;
 
 use crate::error::{Error, Result};
 use crate::range::RangeDecoder;
