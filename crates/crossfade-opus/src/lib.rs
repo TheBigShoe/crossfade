@@ -4,11 +4,13 @@
 //! and the royalty-free patent licences that cover Opus.
 #![forbid(unsafe_code)]
 
+mod celt;
 mod decoder;
 mod error;
 pub mod head;
 pub mod packet;
 pub mod range;
+mod silk;
 #[doc(hidden)]
 pub mod testing;
 
