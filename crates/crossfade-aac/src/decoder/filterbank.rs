@@ -157,29 +157,34 @@ impl Fft {
             for (r, i) in re.chunks_exact_mut(len).zip(im.chunks_exact_mut(len)) {
                 let (ar, br) = r.split_at_mut(half);
                 let (ai, bi) = i.split_at_mut(half);
-                // Four lanes at a time (half is a multiple of 4), so the lanes vectorise.
-                let lanes = ar
-                    .as_chunks_mut::<4>()
-                    .0
-                    .iter_mut()
-                    .zip(ai.as_chunks_mut::<4>().0.iter_mut())
-                    .zip(br.as_chunks_mut::<4>().0.iter_mut())
-                    .zip(bi.as_chunks_mut::<4>().0.iter_mut())
-                    .zip(wr.as_chunks::<4>().0.iter().zip(wi.as_chunks::<4>().0));
-                for ((((ar, ai), br), bi), (wr, wi)) in lanes {
-                    for k in 0..4 {
-                        let tr = br[k] * wr[k] - bi[k] * wi[k];
-                        let ti = br[k] * wi[k] + bi[k] * wr[k];
-                        br[k] = ar[k] - tr;
-                        bi[k] = ai[k] - ti;
-                        ar[k] += tr;
-                        ai[k] += ti;
-                    }
-                }
+                butterflies(ar, ai, br, bi, wr, wi);
             }
             tw += half;
             len *= 2;
         }
+    }
+}
+
+/// One radix-2 stage's butterflies over a block: `a + w b` and `a - w b`, lane by lane.
+#[inline(always)]
+fn butterflies(
+    ar: &mut [f32],
+    ai: &mut [f32],
+    br: &mut [f32],
+    bi: &mut [f32],
+    wr: &[f32],
+    wi: &[f32],
+) {
+    // Equal lengths up front, so the loop has no checks and vectorises.
+    let n = ar.len();
+    let (ai, br, bi, wr, wi) = (&mut ai[..n], &mut br[..n], &mut bi[..n], &wr[..n], &wi[..n]);
+    for k in 0..n {
+        let tr = br[k] * wr[k] - bi[k] * wi[k];
+        let ti = br[k] * wi[k] + bi[k] * wr[k];
+        br[k] = ar[k] - tr;
+        bi[k] = ai[k] - ti;
+        ar[k] += tr;
+        ai[k] += ti;
     }
 }
 
