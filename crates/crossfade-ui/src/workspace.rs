@@ -7,14 +7,15 @@ use std::sync::Arc;
 
 use crossfade_app::Request;
 use crossfade_app::inputs::{InputId, InputState, Inputs, probe_path};
+use crossfade_app::player::AudioSink;
 use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent, quit_warning};
 use crossfade_app::sheet::ConvertSheet;
 use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
 use crate::actions::{
-    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, Quit, ToggleQueue,
-    WORKSPACE_CONTEXT,
+    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, PlaybackToEnd, PlaybackToStart,
+    Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
 use crate::config::{self, Config};
@@ -34,6 +35,13 @@ pub type IoFactory = Arc<dyn Fn() -> Box<dyn JobIo + Send> + Send + Sync>;
 /// Whether a path already names a file; the convert sheet asks it to flag overwrites.
 pub type Exists = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// Where preview playback goes: a sink, or why there is none (playback is then off and the
+/// strip says so in a word).
+pub enum AudioOutput {
+    Sink(Box<dyn AudioSink>),
+    Off(String),
+}
+
 /// What the workspace works through. Tests and screenshots script the runner and its
 /// events; [`WorkspaceOptions::real`] is what the app runs on.
 pub struct WorkspaceOptions {
@@ -42,10 +50,12 @@ pub struct WorkspaceOptions {
     pub events: async_channel::Receiver<(JobId, RunnerEvent)>,
     pub io: IoFactory,
     pub exists: Exists,
+    pub audio: AudioOutput,
 }
 
 impl WorkspaceOptions {
-    /// Real worker threads over the real file system.
+    /// Real worker threads over the real file system. No audio device: only
+    /// [`open_main_window`] opens one, so a test never does.
     pub fn real() -> Self {
         let (sender, events) = async_channel::unbounded();
         let runner = ThreadRunner::new(Limits::default(), move |id, event| {
@@ -57,6 +67,21 @@ impl WorkspaceOptions {
             events,
             io: Arc::new(|| Box::new(FsIo::new())),
             exists: Arc::new(|path| std::path::Path::new(path).exists()),
+            audio: AudioOutput::Off("No audio output".into()),
+        }
+    }
+}
+
+/// The system's default output device, or why playback is off.
+fn device_output() -> AudioOutput {
+    match crate::audio_out::default_output() {
+        Ok(sink) => {
+            eprintln!("crossfade: audio output: {}", sink.describe());
+            AudioOutput::Sink(Box::new(sink))
+        }
+        Err(why) => {
+            eprintln!("crossfade: playback off: {why}");
+            AudioOutput::Off("No audio output".into())
         }
     }
 }
@@ -127,6 +152,7 @@ impl Workspace {
             events,
             io,
             exists,
+            audio,
         } = options;
         let listening = cx.spawn(async move |this, cx| {
             // Reports from a busy worker pile up between wake-ups; apply them together.
@@ -178,7 +204,7 @@ impl Workspace {
             .unwrap_or(true)
         });
         cx.set_global(QuitTarget(cx.entity().downgrade()));
-        let strip = cx.new(|cx| WaveformStrip::new(Arc::clone(&io), cx));
+        let strip = cx.new(|cx| WaveformStrip::new(Arc::clone(&io), audio, cx));
         Self {
             focus,
             last_action: None,
@@ -675,6 +701,16 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &About, _, cx| {
                 this.record(AppAction::About, cx);
             }))
+            // From the files list or the strip: both are inside the workspace's context.
+            .on_action(cx.listener(|this, _: &TogglePlayback, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.toggle_playback(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PlaybackToStart, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.to_start(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PlaybackToEnd, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.to_end(cx));
+            }))
             .child(self.toolbar(cx))
             .child(self.body(cx))
             .child(self.status_bar(cx))
@@ -752,7 +788,11 @@ pub fn open_main_window(cx: &mut App) -> Result<Entity<Workspace>> {
                 config::set_appearance(dark, cx);
             })
             .detach();
-        cx.new(|cx| Workspace::new(WorkspaceOptions::real(), window, cx))
+        let options = WorkspaceOptions {
+            audio: device_output(),
+            ..WorkspaceOptions::real()
+        };
+        cx.new(|cx| Workspace::new(options, window, cx))
     })?;
     cx.activate(true);
     Ok(workspace)

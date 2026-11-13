@@ -434,6 +434,61 @@ const SCENES: &[Scene] = &[
             );
         },
     },
+    Scene {
+        file: "29-playback-stopped-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+        },
+    },
+    Scene {
+        file: "30-playback-playing-dark.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+            stage.play_for(3.4);
+        },
+    },
+    Scene {
+        file: "31-playback-playing-light.png",
+        size: WINDOW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Light);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+            stage.play_for(3.4);
+        },
+    },
+    Scene {
+        file: "32-playback-zoomed-narrow-dark.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+            stage.press("space");
+            stage.click("waveform-strip");
+            for _ in 0..2 {
+                stage.press("+");
+            }
+            stage.press("home");
+            stage.play_for(5.2);
+        },
+    },
+    Scene {
+        file: "33-playback-no-output-dark.png",
+        size: NARROW,
+        drive: |stage| {
+            stage.set_theme(ThemeMode::Dark);
+            stage.audio_off();
+            stage.add_programme("interview-take-1.wav");
+            stage.wait_analysis();
+        },
+    },
 ];
 
 /// A scratch directory for generated inputs, removed when the scene ends.
@@ -783,6 +838,40 @@ impl Stage {
 }
 
 impl Stage {
+    /// Start playback (unless it is playing) and pull `seconds` of audio from the virtual
+    /// output, as a device would, in pieces the player's buffer can serve.
+    fn play_for(&mut self, seconds: f64) {
+        let strip = self.workspace.read_with(&self.cx, |w, _| w.strip().clone());
+        let playing = strip.read_with(&self.cx, |s, _| {
+            s.player_state() == Some(crossfade_app::player::State::Playing)
+        });
+        if !playing {
+            self.press("space");
+        }
+        let mut left = (seconds * 48_000.0) as usize;
+        while left > 0 {
+            let n = left.min(8_192);
+            strip.read_with(&self.cx, |s, _| s.settle());
+            self.script.audio().pull(n);
+            left -= n;
+            self.cx.run_until_parked();
+            self.draw().expect("draw");
+        }
+    }
+
+    /// Reopen the window as the app does when there is no audio device.
+    fn audio_off(&mut self) {
+        let workspace = self.workspace.clone();
+        self.cx.update(|cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .strip()
+                    .update(cx, |strip, _| strip.disable_audio("No audio output"));
+            });
+        });
+        self.cx.run_until_parked();
+    }
+
     /// Replace what a field of the open sheet holds: focus it, select all, type.
     fn type_into(&mut self, id: &'static str, text: &str) {
         self.draw().expect("draw");

@@ -49,28 +49,33 @@ pub fn probe_path(path: &str, io: &mut dyn JobIo, limits: &Limits) -> InputState
 }
 
 /// An engine refusal as the inspector shows it.
-fn refusal(error: &Error) -> String {
+pub fn refusal(error: &Error) -> String {
     let Error::Unsupported { what } = error else {
         return error.to_string();
     };
-    // A codec with no mapping, or one whose reader is not built yet.
-    let codec = what
+    // Opus in Ogg is recognised but has no decoder yet.
+    if what.starts_with("opus in ogg is recognised") {
+        return "This Ogg file holds Opus audio. Crossfade recognises Opus but cannot open it yet."
+            .into();
+    }
+    // The cargo feature is no advice for someone using the app.
+    if what.starts_with("aac decoding is not part of this build") {
+        return "This build of Crossfade does not include AAC decoding.".into();
+    }
+    let Some(codec) = what
         .strip_prefix("ogg stream holds ")
         .and_then(|rest| rest.split(';').next())
-        .or_else(|| what.strip_suffix(" in ogg is recognised, but reading it is not built yet"));
-    let Some(codec) = codec else {
+    else {
         return plain(what);
     };
     let holds = match codec {
-        "vorbis" => "Vorbis audio".to_owned(),
-        "opus" => "Opus audio".to_owned(),
         "theora" => "Theora video".to_owned(),
         "speex" => "Speex audio".to_owned(),
         "unknown" => "audio Crossfade does not recognise".to_owned(),
         other => format!("{other} data"),
     };
     format!(
-        "This Ogg file holds {holds}, which Crossfade cannot open yet. Only FLAC inside Ogg can be opened."
+        "This Ogg file holds {holds}, which Crossfade cannot open. Inside Ogg it opens FLAC and Vorbis audio."
     )
 }
 

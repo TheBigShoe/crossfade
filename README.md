@@ -3,10 +3,11 @@
 An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
-Crossfade is early. It handles lossless audio today, with processing: sample
-rate and channel conversion, gain, loudness normalising, trim, fades and
-joining files. Lossy codecs and video are planned. It has only been run on
-macOS so far.
+Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC) and
+reads those and lossy audio too (MP3, AAC, Vorbis; Opus is not built yet), with
+processing: sample rate and channel conversion, gain, loudness normalising,
+trim, fades and joining files. Lossy encoders and video are planned. It has
+only been run on macOS so far.
 
 ## What works
 
@@ -52,9 +53,13 @@ crossfade convert song.wav -o song.flac --compression-level 8
 crossfade convert song.wav -o song.flac --threads 1   # one thread (the default is auto)
 crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
+crossfade convert song.mp3 -o song.flac
+crossfade probe song.m4a
 ```
 
-`crossfade convert --help` lists every option. FLAC decoding and encoding use
+Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC and Vorbis), MP3, MP4/M4A (ALAC;
+AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
+FLAC, AIFF, Ogg FLAC. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
@@ -103,7 +108,9 @@ just run
 
 Open or drop files to inspect them (a zoomable waveform and a loudness readout
 appear under the file name; scroll to pan, pinch or Cmd/Ctrl-scroll to zoom,
-double-click to fit), convert with the same options the command
+double-click to fit), play them through the default output device (Space plays
+and pauses, Home and End jump, a click on the waveform seeks and a drag scrubs;
+the playhead follows playback until you scroll), convert with the same options the command
 line has (sample rate, channels, and an Adjust section for gain or loudness
 normalise, trim and fades), and watch a queue with progress, cancel and retry.
 A normalising job shows Measuring first; a finished job says how many samples
@@ -133,9 +140,9 @@ just ci       # formatting, lints, tests, and the conformance tier
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and compares the results with a committed record. The corpus also holds the
-official Opus (RFC 8251), Vorbis (Xiph), MP3 and AAC (ISO/IEC 14496-26 and 13818-4) test
-vectors for the decoders to come; none is committed, `corpus.toml` only lists
+and the Xiph Vorbis, MP3 and AAC (ISO/IEC 14496-26 and 13818-4) test vectors, and compares
+the results with a committed record. The corpus also holds the official Opus
+(RFC 8251) vectors for the decoder to come; none is committed, `corpus.toml` only lists
 where each one lives. `just corpus` takes them all; to fetch one codec, run
 `cargo run --release -p crossfade-corpus -- fetch --only flac/` (the flag
 repeats, and `verify`, `list` and `seed` take it too).

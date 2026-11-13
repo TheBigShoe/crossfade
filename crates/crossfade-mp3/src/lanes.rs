@@ -8,9 +8,11 @@ use core::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 pub(crate) struct F4(pub(crate) [f32; 4]);
 
 impl F4 {
+    /// Written out: `[x; 4]` can become a call to `memset_pattern16` on macOS (LLVM turns the
+    /// repeat's store loop into that library call), in the middle of a kernel.
     #[inline(always)]
     pub(crate) fn splat(x: f32) -> Self {
-        Self([x; 4])
+        Self([x, x, x, x])
     }
 
     #[inline(always)]

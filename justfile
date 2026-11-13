@@ -89,7 +89,8 @@ ci: fmt-check lint lint-aac test test-aac conformance
 # the committed fixtures as an extra corpus directory (the writable corpus is named first, so
 # libFuzzer writes new inputs only there): flac_demux and flac_decode -> tests/fixtures/flac,
 # aiff_demux -> tests/fixtures/aiff, ogg_demux -> tests/fixtures/ogg, adts_demux ->
-# tests/fixtures/adts; the others start empty.
+# tests/fixtures/adts, mp3_demux and mp3_decode -> tests/fixtures/mp3, mp4_demux ->
+# tests/fixtures/mp4; the others start empty.
 fuzz_run := env_var_or_default("FUZZ_RUN", "RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none")
 fixtures := justfile_directory() / "crates/crossfade-format/tests/fixtures"
 
@@ -100,6 +101,8 @@ fuzz target secs="60":
         aiff_demux) seeds="{{fixtures}}/aiff" ;; \
         ogg_demux) seeds="{{fixtures}}/ogg" ;; \
         adts_demux) seeds="{{fixtures}}/adts" ;; \
+        mp3_demux|mp3_decode) seeds="{{fixtures}}/mp3" ;; \
+        mp4_demux) seeds="{{fixtures}}/mp4" ;; \
     esac; \
     mkdir -p fuzz/corpus/{{target}}; \
     cd fuzz && {{fuzz_run}} "{{target}}" corpus/{{target}} $seeds -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256

@@ -31,8 +31,28 @@ pub const MAX_LEADING_JUNK: u64 = 64 << 10;
 /// Bytes of main data a Layer III frame can reach back into earlier frames: 511 in MPEG-1,
 /// 255 in MPEG-2 and 2.5. Seeking starts early enough to have this much before any frame it
 /// keeps.
-fn max_reservoir(h: &FrameHeader) -> usize {
-    if h.version.is_lsf() { 255 } else { 511 }
+fn max_reservoir(lsf: bool) -> usize {
+    if lsf { 255 } else { 511 }
+}
+
+/// The frame to start decoding from so that frame `target` decodes exactly as in a straight
+/// decode: the frame before the target's (two before in MPEG-2 and 2.5, `lsf`, whose frames are
+/// one granule) must decode in full, since its overlap and filterbank history feed the target;
+/// and before that frame come enough frames to hold a full reservoir of main data.
+/// `main_data(i)` is the bytes of main data frame `i` holds. Shared with the MP4 reader.
+pub(crate) fn first_frame_to_decode(
+    target: usize,
+    lsf: bool,
+    main_data: impl Fn(usize) -> usize,
+) -> usize {
+    let reservoir = max_reservoir(lsf);
+    let mut j = target.saturating_sub(if lsf { 2 } else { 1 });
+    let mut held = 0usize;
+    while j > 0 && held < reservoir {
+        j -= 1;
+        held += main_data(j);
+    }
+    j
 }
 
 /// Opens an MPEG audio stream. `source` is positioned at the first byte after any ID3v2 tags,
@@ -314,10 +334,7 @@ impl Demuxer for Mp3Demuxer {
         let Some(stream) = self.framer.stream() else {
             return Ok(first_pts);
         };
-        let reservoir = max_reservoir(&stream);
-        // The frame before the target's (two before in MPEG-2 and 2.5, whose frames are one
-        // granule) must decode in full: its overlap and filterbank history feed the target.
-        let pre = if stream.version.is_lsf() { 2 } else { 1 };
+        let lsf = stream.version.is_lsf();
         let index = self.build_index()?;
         let total = index.len() as i64;
         let end_pts = frames.map_or(first_pts + total * spf, |f| f as i64);
@@ -328,15 +345,7 @@ impl Demuxer for Mp3Demuxer {
             return Ok(end_pts.max(first_pts));
         }
         let target = ((pts.max(first_pts) - first_pts) / spf).min(total - 1);
-        let needed = (target - pre).max(0) as usize;
-        // Back from the first frame that must decode until the frames before it hold a full
-        // reservoir of main data.
-        let mut j = needed;
-        let mut held = 0usize;
-        while j > 0 && held < reservoir {
-            j -= 1;
-            held += usize::from(index[j].main_data);
-        }
+        let j = first_frame_to_decode(target as usize, lsf, |i| usize::from(index[i].main_data));
         let offset = index[j].offset;
         self.framer.reposition(offset, true)?;
         self.pending = None;

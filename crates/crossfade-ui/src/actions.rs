@@ -16,7 +16,10 @@ actions!(
         WaveformZoomOut,
         WaveformFit,
         WaveformPanLeft,
-        WaveformPanRight
+        WaveformPanRight,
+        TogglePlayback,
+        PlaybackToStart,
+        PlaybackToEnd
     ]
 );
 

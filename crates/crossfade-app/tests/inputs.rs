@@ -2,7 +2,7 @@ mod common;
 
 use common::{sine_wav, spec};
 use crossfade_app::inputs::{InputState, Inputs, probe_path};
-use crossfade_core::{ChannelLayout, Limits, SampleFormat};
+use crossfade_core::{ChannelLayout, Error, Limits, SampleFormat};
 use crossfade_testkit::memory::MemoryIo;
 
 fn failed() -> InputState {
@@ -167,18 +167,21 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
     io.insert("odd.ogg", ogg_page(b"mystery!"));
     io.insert("talk.opus", ogg_page(b"OpusHead\x01\x02\0\0"));
     io.insert("film.ogv", ogg_page(b"\x80theora\0\0\0\0"));
-    for (path, holds) in [("talk.opus", "Opus audio"), ("film.ogv", "Theora video")] {
-        let InputState::Failed(text) = probe_path(path, &mut io, &Limits::default()) else {
-            panic!("expected Failed");
-        };
-        assert_eq!(
-            text,
-            format!(
-                "This Ogg file holds {holds}, which Crossfade cannot open yet. \
-                 Only FLAC inside Ogg can be opened."
-            )
-        );
-    }
+    let InputState::Failed(opus) = probe_path("talk.opus", &mut io, &Limits::default()) else {
+        panic!("expected Failed");
+    };
+    assert_eq!(
+        opus,
+        "This Ogg file holds Opus audio. Crossfade recognises Opus but cannot open it yet."
+    );
+    let InputState::Failed(film) = probe_path("film.ogv", &mut io, &Limits::default()) else {
+        panic!("expected Failed");
+    };
+    assert_eq!(
+        film,
+        "This Ogg file holds Theora video, which Crossfade cannot open. \
+         Inside Ogg it opens FLAC and Vorbis audio."
+    );
     let InputState::Failed(vorbis) = probe_path("song.ogg", &mut io, &Limits::default()) else {
         panic!("expected Failed");
     };
@@ -195,4 +198,15 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
         "{odd}"
     );
     assert!(!vorbis.contains("unsupported:") && !odd.contains("--"));
+}
+
+#[test]
+fn aac_without_the_feature_says_this_build_lacks_it() {
+    let engine = Error::Unsupported {
+        what: "aac decoding is not part of this build (AAC is patent-encumbered); build with --features aac".into(),
+    };
+    assert_eq!(
+        crossfade_app::inputs::refusal(&engine),
+        "This build of Crossfade does not include AAC decoding."
+    );
 }

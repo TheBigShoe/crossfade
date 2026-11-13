@@ -1,6 +1,7 @@
 //! The file inspector's model: a probe document as labelled rows. Each row
 //! names the JSON key it shows, so a schema change cannot go unnoticed.
 
+use crossfade_core::CodecId;
 use crossfade_graph::{ProbeDocument, ProbeStream};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,12 +99,24 @@ pub fn codec_name(raw: &str) -> String {
     format!("PCM {} {endian}", sample_format_name(sample))
 }
 
+/// What a lossy stream's sample format reads as: its decoder's float is not the file's.
+pub const LOSSY_FORMAT: &str = "lossy, no bit depth";
+
+/// Whether the stream's codec is lossy, so it has no bit depth.
+pub fn is_lossy(stream: &ProbeStream) -> bool {
+    CodecId::from_name(&stream.codec).is_some_and(CodecId::is_lossy)
+}
+
 /// The significant bits of a stream: the raw count when it is below the sample format's.
-pub fn depth(stream: &ProbeStream) -> String {
-    stream.bits_per_raw_sample.map_or_else(
+/// `None` for a lossy stream, which has no depth.
+pub fn depth(stream: &ProbeStream) -> Option<String> {
+    if is_lossy(stream) {
+        return None;
+    }
+    Some(stream.bits_per_raw_sample.map_or_else(
         || sample_format_name(&stream.sample_format),
         |bits| format!("{bits}-bit"),
-    )
+    ))
 }
 
 fn or_unknown<T>(v: Option<T>, f: impl FnOnce(T) -> String) -> String {
@@ -171,7 +184,11 @@ fn stream_section(s: &ProbeStream) -> Section {
         friendly_row(
             "sample_format",
             "Sample format",
-            sample_format_name(&s.sample_format),
+            if is_lossy(s) {
+                LOSSY_FORMAT.to_owned()
+            } else {
+                sample_format_name(&s.sample_format)
+            },
             s.sample_format.clone(),
         ),
         row("sample_rate", "Sample rate", rate(s.sample_rate)),
@@ -184,7 +201,7 @@ fn stream_section(s: &ProbeStream) -> Section {
             or_unknown(s.duration_seconds, duration),
         ),
     ];
-    if let Some(bits) = s.bits_per_raw_sample {
+    if let Some(bits) = s.bits_per_raw_sample.filter(|_| !is_lossy(s)) {
         // Right after the sample format it qualifies.
         rows.insert(
             4,

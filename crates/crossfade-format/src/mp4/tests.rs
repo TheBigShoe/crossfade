@@ -717,14 +717,15 @@ fn seeking_lands_on_the_packet_with_its_codecs_preroll() {
     assert_eq!(d.seek(0), Ok(1024 - 2112));
     assert_eq!(d.seek(5000), Ok(5 * 1024 - 2112));
     assert_eq!(d.seek(-2112), Ok(-2112));
-    // MP3: ten packets earlier, never before the first.
+    // MP3: back until the frames before hold 511 bytes of main data (379 in each 417-byte
+    // MPEG-1 stereo frame: two), after the one frame its overlap needs; never before the first.
     let mp3 = File {
         entry: mp4a_entry(0x6B, &[], 2, 44100),
-        samples: (0..30).map(|i| (vec![i; 4], 1152)).collect(),
+        samples: (0..30).map(|i| (vec![i; 417], 1152)).collect(),
         ..File::alac(0)
     };
     let mut d = seekable(&mp3);
-    assert_eq!(d.seek(20 * 1152 + 5), Ok(10 * 1152));
+    assert_eq!(d.seek(20 * 1152 + 5), Ok(17 * 1152));
     assert_eq!(d.seek(3 * 1152), Ok(0));
 }
 

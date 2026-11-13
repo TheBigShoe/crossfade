@@ -7,8 +7,7 @@
 //! built on it skip it: Xiph's own `unused-mode-test.ogg` holds 34 such packets.
 
 use crossfade_core::{
-    AudioFrame, Channel, ChannelLayout, Decoder, Error, Limits, Packet, SampleFormat, Samples,
-    StreamInfo,
+    AudioFrame, Channel, Decoder, Error, Limits, Packet, SampleFormat, Samples, StreamInfo,
 };
 use crossfade_vorbis::Speaker;
 
@@ -47,19 +46,6 @@ fn speakers(channels: u8) -> Option<Vec<Channel>> {
         .collect()
 }
 
-/// The layout of a Vorbis stream of `channels` channels: the specification's speakers for 1 to
-/// 8, in WAVE mask order (which the decoder reorders into), unpositioned otherwise.
-pub fn layout(channels: u8) -> ChannelLayout {
-    let bit = |c: Channel| ChannelLayout::from_positions(vec![c]).ok()?.to_mask();
-    let mask = speakers(channels).and_then(|s| s.into_iter().map(bit).sum::<Option<u32>>());
-    match mask.and_then(|m| ChannelLayout::from_mask(m, u16::from(channels))) {
-        Some(l) => l,
-        // Never zero channels: the identification header refuses them.
-        None => ChannelLayout::unpositioned(u16::from(channels).max(1))
-            .unwrap_or_else(|_| ChannelLayout::mono()),
-    }
-}
-
 struct VorbisDecoder {
     inner: crossfade_vorbis::Decoder,
     template: AudioFrame,
@@ -70,7 +56,7 @@ struct VorbisDecoder {
 
 /// A decoder for a Vorbis stream whose `extradata` holds its three headers in Xiph lacing
 /// (see [`crossfade_vorbis::pack_headers`]). The stream must describe the identification
-/// header (rate, channel count) as `F32`; its layout may be [`layout`]'s, in which case the
+/// header (rate, channel count) as `F32`; its layout may be [`ChannelLayout::vorbis_order`]'s, in which case the
 /// channels come out in that order, or unpositioned, in which case they come out in Vorbis's.
 pub fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
     let [id, comment, setup] =

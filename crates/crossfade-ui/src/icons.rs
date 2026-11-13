@@ -18,6 +18,8 @@ icon_assets!(pub AppIcons, [
     PanelBottom,
     PanelLeft,
     PanelRight,
+    Pause,
+    Play,
     Plus,
     RotateCcw,
     Settings,
@@ -71,6 +73,8 @@ mod tests {
             IconName::FileMusic,
             IconName::CircleStop,
             IconName::BrushCleaning,
+            IconName::Play,
+            IconName::Pause,
         ] {
             let path = icon.path();
             let loaded = Assets.load(&path).expect("no load error");

@@ -225,6 +225,11 @@ impl SampleTable {
         }
     }
 
+    /// Size in bytes of `sample` (below `count`).
+    pub(super) fn size(&self, sample: u64) -> u64 {
+        self.bytes_before(sample + 1) - self.bytes_before(sample)
+    }
+
     /// Byte offset and size of `sample` (below `count`).
     pub(super) fn locate(&self, sample: u64) -> Result<(u64, u64), Error> {
         let run = &self.chunk_runs[self

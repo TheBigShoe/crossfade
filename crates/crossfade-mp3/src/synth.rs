@@ -1,38 +1,156 @@
 //! The 32-band polyphase synthesis filterbank (ISO/IEC 11172-3 2.4.3.2.2 and Annex A): a
 //! 32-point DCT-II per time slot, then the 512-tap window over the last 16 slots.
 //!
-//! The algorithm (a fast DCT-II, and a window walk that keeps both channels' even and odd
-//! slots as four lanes) and its constants follow minimp3 (public domain, CC0 1.0) by way of
-//! nanomp3-core (MIT OR Apache-2.0, Copyright (c) 2025 Robert B. Langer). The window is the
-//! standard's times 65536 and output comes out at 16-bit scale, so it is scaled by 1/32768.
+//! The fast DCT-II and its constants follow minimp3 (public domain, CC0 1.0) by way of
+//! nanomp3-core (MIT OR Apache-2.0, Copyright (c) 2025 Robert B. Langer). The windowing is the
+//! standard's in matrix form. A slot's 64-value vector V comes from the DCT's 32 outputs A by
+//! symmetry: V[j] = A[16 + j], 0 at j = 16, -A[48 - j]; V[32 + j] = -A[16 - j], -A[j - 16].
+//! Sample j of a slot is the sum over the last 16 slots of a window coefficient times the
+//! first half of their V (even look-backs) or the second (odd ones), and samples j and 32 - j
+//! take the same element of A: so each slot keeps two short rows, E = A[16..32] then 0 and
+//! O = A[16], A[15], ..., A[0], and samples 0..16 read them from element 0, samples 31 down to
+//! 16 from element 1, with the signs in the window. Every sum is then contiguous 4-wide
+//! multiply-adds in a fixed order: the same bits everywhere.
 #![allow(clippy::excessive_precision)]
 
-use crate::lanes::{F4, Lane};
-use crate::tables::{DCT_II_SEC, SYNTH_WIN};
+use crate::lanes::F4;
+use crate::tables::{DCT_II_SEC, SYNTH_WINDOW};
 
 /// The output's bound: samples are clamped to plus or minus this, so any input gives finite,
 /// bounded output (+12 dB over full scale leaves real overshoot alone).
 pub const OUTPUT_LIMIT: f32 = 4.0;
 
-/// Floats of filterbank history kept between granules.
-pub(crate) const HISTORY: usize = 15 * 64;
+/// A slot's two rows, E and O, 17 values each (padded to 20).
+type Slot = [[f32; 20]; 2];
+/// Slots kept per channel from one granule to the next.
+const HISTORY: usize = 15;
+/// Slots per channel while a granule is synthesised: the history, then its 18.
+const SLOTS: usize = HISTORY + 18;
 
-/// Rows of four floats in the working buffer: the history, then two rows per time slot.
-pub(crate) const ROWS: usize = (18 + 15) * 2 * 32 / 4;
+/// The window over 65536 and the output's 16-bit scale over 32768 (one exact power of two),
+/// with each row's samples 16..32 reversed to match the rows' order: column `16 + k` is
+/// sample `31 - k`.
+const WINDOW: [[f32; 32]; 16] = {
+    let mut w = [[0.0; 32]; 16];
+    let mut m = 0;
+    while m < 16 {
+        let mut j = 0;
+        while j < 32 {
+            let from = if j < 16 { j } else { 47 - j };
+            w[m][j] = SYNTH_WINDOW[m][from] * (1.0 / 32768.0);
+            j += 1;
+        }
+        m += 1;
+    }
+    w
+};
 
-const ZLIN: usize = 15 * 16;
-const SYNTH_ROWS: usize = ZLIN + 2 * 16;
+/// The filterbank's state: per channel, the rows of the last 15 time slots.
+pub(crate) struct Synth {
+    slots: Box<[[Slot; SLOTS]; 2]>,
+}
 
-/// DCT-II over columns `k..k + T`'s lanes of the 18x32 (slot by subband) matrix.
+impl Synth {
+    pub(crate) fn new() -> Self {
+        Self {
+            slots: Box::new([[[[0.0; 20]; 2]; SLOTS]; 2]),
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        for ch in self.slots.iter_mut() {
+            ch[..HISTORY].fill([[0.0; 20]; 2]);
+        }
+    }
+
+    /// One granule: `x` holds `nch` channels of 576 subband samples (subband by slot); `pcm`
+    /// receives 576 interleaved sample frames. A mono granule moves only the first channel's
+    /// history on.
+    pub(crate) fn granule(&mut self, x: &[[f32; 576]; 2], nch: usize, pcm: &mut [f32]) {
+        for (x, slots) in x.iter().zip(self.slots.iter_mut()).take(nch) {
+            let new = &mut slots[HISTORY..];
+            // 18 slots in groups of four; the last group overlaps the one before and writes
+            // the same values for slots 14 and 15.
+            dct_ii::<0>(x, new);
+            dct_ii::<4>(x, new);
+            dct_ii::<8>(x, new);
+            dct_ii::<12>(x, new);
+            dct_ii::<14>(x, new);
+        }
+        if nch == 1 {
+            blocks::<1>(&self.slots, pcm);
+        } else {
+            blocks::<2>(&self.slots, pcm);
+        }
+        for slots in self.slots.iter_mut().take(nch) {
+            slots.copy_within(SLOTS - HISTORY.., 0);
+        }
+    }
+}
+
+fn blocks<const NCH: usize>(slots: &[[Slot; SLOTS]; 2], pcm: &mut [f32]) {
+    window::<NCH, 0>(slots, pcm);
+    window::<NCH, 4>(slots, pcm);
+    window::<NCH, 8>(slots, pcm);
+    window::<NCH, 12>(slots, pcm);
+    window::<NCH, 16>(slots, pcm);
+    window::<NCH, 20>(slots, pcm);
+    window::<NCH, 24>(slots, pcm);
+    window::<NCH, 28>(slots, pcm);
+}
+
+/// Column `COL..COL + 4` of every slot's samples (0..16, then 31 down to 16): the window's row
+/// `m` times a row of slot `t - m` (E for even `m`, O for odd), summed from `m = 0` up in two
+/// chains, the even and the odd look-backs, added at the end. The column's 16 window vectors
+/// stay in registers for all slots and channels.
 #[inline(always)]
-fn dct_ii_cols<T: Lane + LoadStore>(x: &mut [f32; 576], k: usize) {
-    let c = T::splat;
+fn window<const NCH: usize, const COL: usize>(slots: &[[Slot; SLOTS]; 2], pcm: &mut [f32]) {
+    let at = COL % 16 + COL / 16;
+    let w: [F4; 16] = core::array::from_fn(|m| F4::load(&WINDOW[m][COL..]));
+    for t in 0..18 {
+        let mut out = [F4::splat(0.0); NCH];
+        for (o, slots) in out.iter_mut().zip(slots) {
+            let Some(last) = slots[t..].first_chunk::<16>() else {
+                return;
+            };
+            let row = |back: usize| F4::load(&last[15 - back][back & 1][at..]);
+            let mut even = w[0] * row(0);
+            let mut odd = w[1] * row(1);
+            for k in 1..8 {
+                even += w[2 * k] * row(2 * k);
+                odd += w[2 * k + 1] * row(2 * k + 1);
+            }
+            *o = even + odd;
+        }
+        // Samples 31 down to 16 go out reversed.
+        let first = if COL < 16 {
+            COL
+        } else {
+            for o in &mut out {
+                *o = o.rev();
+            }
+            44 - COL
+        };
+        let dst = &mut pcm[NCH * (32 * t + first)..][..4 * NCH];
+        for (i, d) in dst.iter_mut().enumerate() {
+            *d = out_sample(out[i % NCH].0[i / NCH]);
+        }
+    }
+}
+
+/// The DCT-II of slots `K..K + 4` of the 18x32 (slot by subband) matrix, each slot's outputs
+/// `A` stored as its rows E and O.
+#[inline(always)]
+#[allow(clippy::assign_op_pattern)]
+fn dct_ii<const K: usize>(x: &[f32; 576], slots: &mut [Slot]) {
+    let k = K;
+    let c = F4::splat;
     let mut t = [[c(0.0); 8]; 4];
     for i in 0..8 {
-        let x0 = T::load(&x[k + i * 18..]);
-        let x1 = T::load(&x[k + (15 - i) * 18..]);
-        let x2 = T::load(&x[k + (16 + i) * 18..]);
-        let x3 = T::load(&x[k + (31 - i) * 18..]);
+        let x0 = F4::load(&x[k + i * 18..]);
+        let x1 = F4::load(&x[k + (15 - i) * 18..]);
+        let x2 = F4::load(&x[k + (16 + i) * 18..]);
+        let x3 = F4::load(&x[k + (31 - i) * 18..]);
         let t0 = x0 + x3;
         let t1 = x1 + x2;
         let t2 = (x1 - x2) * c(DCT_II_SEC[3 * i]);
@@ -83,55 +201,34 @@ fn dct_ii_cols<T: Lane + LoadStore>(x: &mut [f32; 576], k: usize) {
         x[6] = (x4 - x3) * c(1.30656302);
         x[7] = (xt - x7) * c(2.56291556);
     }
-    for i in 0..7 {
-        let y = k + i * 4 * 18;
-        t[0][i].store(&mut x[y..]);
-        (t[2][i] + t[3][i] + t[3][i + 1]).store(&mut x[y + 18..]);
-        (t[1][i] + t[1][i + 1]).store(&mut x[y + 2 * 18..]);
-        (t[2][i + 1] + t[3][i] + t[3][i + 1]).store(&mut x[y + 3 * 18..]);
+    let a = |n: usize| -> F4 {
+        let i = n / 4;
+        match (n % 4, i) {
+            (0, _) => t[0][i],
+            (1, 7) => t[2][7] + t[3][7],
+            (1, _) => t[2][i] + t[3][i] + t[3][i + 1],
+            (2, 7) => t[1][7],
+            (2, _) => t[1][i] + t[1][i + 1],
+            (_, 7) => t[3][7],
+            _ => t[2][i + 1] + t[3][i] + t[3][i + 1],
+        }
+    };
+    // Four outputs of four slots at a time, turned into four outputs of each slot.
+    let mut blocks = [[F4::splat(0.0); 8]; 4];
+    for b in 0..8 {
+        let v = [a(4 * b), a(4 * b + 1), a(4 * b + 2), a(4 * b + 3)];
+        for (lane, slot) in blocks.iter_mut().enumerate() {
+            slot[b] = F4([v[0].0[lane], v[1].0[lane], v[2].0[lane], v[3].0[lane]]);
+        }
     }
-    let y = k + 7 * 4 * 18;
-    t[0][7].store(&mut x[y..]);
-    (t[2][7] + t[3][7]).store(&mut x[y + 18..]);
-    t[1][7].store(&mut x[y + 2 * 18..]);
-    t[3][7].store(&mut x[y + 3 * 18..]);
-}
-
-/// Contiguous loads and stores (unlike `Lane`'s strided ones).
-pub(crate) trait LoadStore {
-    fn load(s: &[f32]) -> Self;
-    fn store(self, s: &mut [f32]);
-}
-
-impl LoadStore for f32 {
-    #[inline(always)]
-    fn load(s: &[f32]) -> Self {
-        s[0]
+    for (b, [e, o]) in blocks.iter().zip(&mut slots[K..K + 4]) {
+        for i in 0..4 {
+            b[4 + i].store(&mut e[4 * i..]);
+            b[3 - i].rev().store(&mut o[1 + 4 * i..]);
+        }
+        e[16] = 0.0;
+        o[0] = b[4].0[0];
     }
-    #[inline(always)]
-    fn store(self, s: &mut [f32]) {
-        s[0] = self;
-    }
-}
-
-impl LoadStore for F4 {
-    #[inline(always)]
-    fn load(s: &[f32]) -> Self {
-        F4::load(s)
-    }
-    #[inline(always)]
-    fn store(self, s: &mut [f32]) {
-        F4::store(self, s);
-    }
-}
-
-fn dct_ii(x: &mut [f32; 576]) {
-    // 18 slots: four groups of four lanes and two single columns.
-    for k in [0, 4, 8, 12] {
-        dct_ii_cols::<F4>(x, k);
-    }
-    dct_ii_cols::<f32>(x, 16);
-    dct_ii_cols::<f32>(x, 17);
 }
 
 /// `max` then `min` rather than `clamp`: a NaN (which finite input never gives, but the bound
@@ -139,147 +236,5 @@ fn dct_ii(x: &mut [f32; 576]) {
 #[inline(always)]
 #[allow(clippy::manual_clamp)]
 fn out_sample(x: f32) -> f32 {
-    (x * (1.0 / 32768.0)).max(-OUTPUT_LIMIT).min(OUTPUT_LIMIT)
-}
-
-/// The two samples written to `pcm[0]` and `pcm[16 * nch]`, from `lane` (and `lane + 2`) of
-/// every 16th row from `row`.
-#[inline(always)]
-fn synth_pair(z: &[[f32; 4]; SYNTH_ROWS], row: usize, lane: usize) -> (f32, f32) {
-    let x = |m: usize| z[row + 16 * m][lane];
-    let mut a;
-    a = (x(14) - x(0)) * 29.0;
-    a += (x(1) + x(13)) * 213.0;
-    a += (x(12) - x(2)) * 459.0;
-    a += (x(3) + x(11)) * 2037.0;
-    a += (x(10) - x(4)) * 5153.0;
-    a += (x(5) + x(9)) * 6574.0;
-    a += (x(8) - x(6)) * 37489.0;
-    a += x(7) * 75038.0;
-    let first = a;
-    let x = |m: usize| z[row + 16 * m][lane + 2];
-    a = x(14) * 104.0;
-    a += x(12) * 1567.0;
-    a += x(10) * 9727.0;
-    a += x(8) * 64019.0;
-    a += x(6) * -9975.0;
-    a += x(4) * -45.0;
-    a += x(2) * 146.0;
-    a += x(0) * -5.0;
-    (first, a)
-}
-
-/// Two time slots (64 samples per channel) from the DCT outputs `xl` and `xr`.
-fn synth<const NCH: usize>(xl: &[f32], xr: &[f32], dst: &mut [f32], lins: &mut [[f32; 4]]) {
-    let dst = &mut dst[..64 * NCH];
-    let Some(lins) = lins.first_chunk_mut::<SYNTH_ROWS>() else {
-        return;
-    };
-    let (Some(xl), Some(xr)) = (xl.first_chunk::<560>(), xr.first_chunk::<560>()) else {
-        return;
-    };
-    let r = NCH - 1;
-    lins[ZLIN + 15] = [xl[18 * 16], xr[18 * 16], xl[0], xr[0]];
-    lins[ZLIN + 31] = [xl[1 + 18 * 16], xr[1 + 18 * 16], xl[1], xr[1]];
-    let mut pair = |at: usize, row: usize, lane: usize, lins: &[[f32; 4]; SYNTH_ROWS]| {
-        let (a, b) = synth_pair(lins, row, lane);
-        dst[at] = out_sample(a);
-        dst[at + 16 * NCH] = out_sample(b);
-    };
-    if NCH == 2 {
-        pair(r, 15, 1, lins);
-        pair(r + 32 * NCH, 31, 1, lins);
-    }
-    pair(0, 15, 0, lins);
-    pair(32 * NCH, 31, 0, lins);
-
-    for i in (0..15).rev() {
-        lins[ZLIN + i] = [
-            xl[18 * (31 - i)],
-            xr[18 * (31 - i)],
-            xl[1 + 18 * (31 - i)],
-            xr[1 + 18 * (31 - i)],
-        ];
-        lins[ZLIN + 16 + i][0] = xl[1 + 18 * (1 + i)];
-        lins[ZLIN + 16 + i][1] = xr[1 + 18 * (1 + i)];
-        lins[ZLIN - 16 + i][2] = xl[18 * (1 + i)];
-        lins[ZLIN - 16 + i][3] = xr[18 * (1 + i)];
-
-        let w = &SYNTH_WIN[(14 - i) * 16..][..16];
-        let vz = |k: usize| F4(lins[ZLIN + i - 16 * k]);
-        let vy = |k: usize| F4(lins[i + 16 * k]);
-        let w0 = |k: usize| F4::splat(w[2 * k]);
-        let w1 = |k: usize| F4::splat(w[2 * k + 1]);
-        let mut b = vz(0) * w1(0) + vy(0) * w0(0);
-        let mut a = vz(0) * w0(0) - vy(0) * w1(0);
-        for k in [1, 3, 5, 7] {
-            b += vz(k) * w1(k) + vy(k) * w0(k);
-            a += vy(k) * w1(k) - vz(k) * w0(k);
-            if k < 7 {
-                let k = k + 1;
-                b += vz(k) * w1(k) + vy(k) * w0(k);
-                a += vz(k) * w0(k) - vy(k) * w1(k);
-            }
-        }
-        let (a, b) = (a.0, b.0);
-        if NCH == 2 {
-            dst[r + (15 - i) * NCH] = out_sample(a[1]);
-            dst[r + (17 + i) * NCH] = out_sample(b[1]);
-        }
-        dst[(15 - i) * NCH] = out_sample(a[0]);
-        dst[(17 + i) * NCH] = out_sample(b[0]);
-        if NCH == 2 {
-            dst[r + (47 - i) * NCH] = out_sample(a[3]);
-            dst[r + (49 + i) * NCH] = out_sample(b[3]);
-        }
-        dst[(47 - i) * NCH] = out_sample(a[2]);
-        dst[(49 + i) * NCH] = out_sample(b[2]);
-    }
-}
-
-fn synth_all<const NCH: usize>(x: &[f32], pcm: &mut [f32], lins: &mut [[f32; 4]; ROWS]) {
-    for i in (0..18).step_by(2) {
-        synth::<NCH>(
-            &x[i..],
-            &x[576 * (NCH - 1) + i..],
-            &mut pcm[32 * NCH * i..],
-            &mut lins[16 * i..],
-        );
-    }
-}
-
-/// One granule: `x` holds `nch` channels of 576 subband samples (subband by slot), which are
-/// overwritten; `pcm` receives 576 interleaved sample frames. `history` carries the filterbank
-/// state from granule to granule.
-pub(crate) fn granule(
-    history: &mut [f32; HISTORY],
-    x: &mut [[f32; 576]; 2],
-    nch: usize,
-    pcm: &mut [f32],
-    lins: &mut [[f32; 4]; ROWS],
-) {
-    for ch in x.iter_mut().take(nch) {
-        dct_ii(ch);
-    }
-    lins.as_flattened_mut()[..HISTORY].copy_from_slice(history);
-    let flat = x.as_flattened();
-    if nch == 1 {
-        synth_all::<1>(flat, pcm, lins);
-    } else {
-        synth_all::<2>(flat, pcm, lins);
-    }
-    let tail = &lins.as_flattened()[18 * 64..18 * 64 + HISTORY];
-    if nch == 1 {
-        // A mono granule moves only the left channel's history on.
-        for (h, t) in history
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .zip(tail.as_chunks::<2>().0)
-        {
-            h[0] = t[0];
-        }
-    } else {
-        history.copy_from_slice(tail);
-    }
+    x.max(-OUTPUT_LIMIT).min(OUTPUT_LIMIT)
 }

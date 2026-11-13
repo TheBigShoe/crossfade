@@ -178,3 +178,21 @@ fn probing_an_mp3_mp4_or_aac_file_says_its_reader_is_not_built_yet() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn every_help_names_all_readable_inputs() {
+    for args in [
+        ["probe", "--help"],
+        ["convert", "--help"],
+        ["concat", "--help"],
+    ] {
+        let help = text(&run(&args).stdout).to_lowercase();
+        for want in ["wav", "flac", "aiff", "vorbis", "mp3", "m4a", "alac", "aac"] {
+            assert!(help.contains(want), "{want} missing from {args:?}: {help}");
+        }
+        assert!(
+            !help.contains("flac inside"),
+            "stale list in {args:?}: {help}"
+        );
+    }
+}
