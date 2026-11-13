@@ -42,6 +42,7 @@ fn each_mode_goes_to_its_layer() {
     assert_eq!(d.decode(Some(&silk), &mut out), Ok(960));
     assert_eq!(out.len(), 960 * 2);
     out.clear();
+    let mut d = Decoder::new(2).unwrap();
     assert_eq!(
         d.decode(Some(&hybrid), &mut out),
         Err(Error::Unsupported("hybrid decoding is not built yet"))
