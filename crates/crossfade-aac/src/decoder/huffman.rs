@@ -197,8 +197,10 @@ pub(crate) fn books() -> &'static Books {
 mod tests {
     use super::*;
 
-    /// Each spectral book's codes with its shape: (codes, dim, signed, modulo).
-    fn spectral_codes() -> Vec<(Vec<(u8, u32)>, usize, bool, i32)> {
+    /// A spectral book's codes with its shape: (codes, dim, signed, modulo).
+    type Shaped = (Vec<(u8, u32)>, usize, bool, i32);
+
+    fn spectral_codes() -> Vec<Shaped> {
         vec![
             (widen(&cb::SPECTRUM_1), 4, true, 3),
             (widen(&cb::SPECTRUM_2), 4, true, 3),
