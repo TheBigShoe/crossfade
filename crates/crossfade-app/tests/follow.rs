@@ -23,7 +23,11 @@ fn the_view_pages_to_keep_the_playhead_in_sight() {
     assert!(!follow.keep_in_view(&mut v, 4999), "still in view");
     assert_eq!(v.start(), 0);
     assert!(follow.keep_in_view(&mut v, 5000));
-    assert_eq!(v.visible(), (5000, 10_000), "a page on, the playhead at the left");
+    assert_eq!(
+        v.visible(),
+        (5000, 10_000),
+        "a page on, the playhead at the left"
+    );
     assert_eq!(v.frames_per_pixel(), 10, "the zoom is the user's");
 }
 
