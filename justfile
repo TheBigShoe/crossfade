@@ -22,6 +22,7 @@ test:
 conformance:
     cargo test --release -p crossfade-format --test conformance_flac -- --ignored
     cargo test --release -p crossfade-format --test conformance_seek -- --ignored
+    cargo test --release -p crossfade-format --test conformance_mp3 -- --ignored
 
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:

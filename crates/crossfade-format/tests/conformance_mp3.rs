@@ -1,11 +1,8 @@
-//! ISO/IEC 11172-4 accuracy of the MP3 reader and decoder on the Layer III conformance streams
-//! of ISO/IEC 14496-26 (`l3_*.mpg` with 24-bit `l3_*.wav` references). ISO's terms allow
-//! testing with them and forbid redistributing them, so they are not in the repository:
-//!
-//! ```sh
-//! CROSSFADE_MP3_ISO_DIR=/path/to/iso14496-26 cargo test --release -p crossfade-format \
-//!     --test mp3_conformance -- --ignored --nocapture
-//! ```
+//! Tier 3: ISO/IEC 11172-4 accuracy of the MP3 reader and decoder on the Layer III conformance
+//! streams of ISO/IEC 14496-26 (corpus ids `mp3/iso/l3_*.mpg`, with 24-bit `mp3/iso/l3_*.wav`
+//! references; ISO's terms allow testing with them and forbid redistributing them, so only the
+//! corpus manifest names them). `#[ignore]`d like the rest of the tier; `just conformance` runs
+//! it, and it fails (never skips) when a file is missing.
 //!
 //! Everything is keyed by file name. Each stream goes through `open_demuxer` and the engine's
 //! decoder (`decoder_for`), untrimmed: the references start at the decoder's first output
@@ -21,21 +18,20 @@
 //!   a fresh engine decoder never sees. (The crate's decoder handles the switch.)
 //!
 //! Criterion, per channel: RMS of the difference below 2^-15/sqrt(12) and largest difference
-//! at most 2^-14 of full scale is "full accuracy"; RMS below 2^-11/sqrt(12) is "limited".
+//! at most 2^-14 of full scale is "full accuracy"; RMS below 2^-11/sqrt(12) is "limited". Every
+//! pair must be full, and the verdicts with the measured RMS and largest difference are
+//! compared with the frozen `tests/conformance/mp3.txt` (`CROSSFADE_BLESS=1` rewrites it), so a
+//! change in the decoder's numbers is noticed even while it stays full.
 
 use crossfade_codec::decoder_for;
 use crossfade_core::{AudioFrame, Error, Limits, Packet, Samples};
 use crossfade_format::open_demuxer;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 /// (stream, reference, channel of the stream the reference holds: `None` for all).
-fn pairs(dir: &Path) -> Vec<(String, String, Option<usize>)> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
+fn pairs(names: &[String]) -> Vec<(String, String, Option<usize>)> {
     let mut out = Vec::new();
     for mpg in names
         .iter()
@@ -167,23 +163,35 @@ fn compare(ours: &[f32], reference: &[f32]) -> (f64, f64, usize) {
     ((sum / n.max(1) as f64).sqrt(), max, n)
 }
 
+const FROZEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/conformance/mp3.txt");
+
+const FROZEN_HEADER: &str = "\
+# Frozen results of the MP3 conformance run (tests/conformance_mp3.rs); do not edit by hand.
+# Rewrite with `CROSSFADE_BLESS=1 just conformance` after a deliberate decoder change.
+# Columns (tab-separated): stream, reference, samples per channel compared, accuracy by the
+# ISO/IEC 11172-4 rule (full, limited or FAIL), RMS and largest difference (worst channel).
+";
+
 #[test]
-#[ignore = "needs the ISO conformance streams: set CROSSFADE_MP3_ISO_DIR"]
+#[ignore = "needs the corpus: `just corpus`, then `just conformance`"]
 fn iso_layer3_conformance() {
-    let dir = PathBuf::from(std::env::var("CROSSFADE_MP3_ISO_DIR").expect("CROSSFADE_MP3_ISO_DIR"));
+    let files: BTreeMap<String, PathBuf> = crossfade_corpus::require_all("mp3/iso/")
+        .into_iter()
+        .map(|(id, path)| (id.trim_start_matches("mp3/iso/").to_owned(), path))
+        .collect();
+    let names: Vec<String> = files.keys().cloned().collect();
     let full_rms = 2f64.powi(-15) / 12f64.sqrt();
     let full_max = 2f64.powi(-14);
     let limited_rms = 2f64.powi(-11) / 12f64.sqrt();
-    println!("| stream | reference | samples per channel | RMS | max | accuracy |");
-    println!("|---|---|---|---|---|---|");
+    let mut text = String::from(FROZEN_HEADER);
     let mut failed = Vec::new();
     let mut cache: Option<(String, Vec<Vec<Vec<f32>>>)> = None;
-    for (mpg, wav, channel) in pairs(&dir) {
+    for (mpg, wav, channel) in pairs(&names) {
         if cache.as_ref().is_none_or(|(name, _)| *name != mpg) {
-            cache = Some((mpg.clone(), decode(&std::fs::read(dir.join(&mpg)).unwrap())));
+            cache = Some((mpg.clone(), decode(&std::fs::read(&files[&mpg]).unwrap())));
         }
         let segments = &cache.as_ref().unwrap().1;
-        let reference = read_wav(&dir.join(&wav));
+        let reference = read_wav(&files[&wav]);
         // l3_10201's references are its segments in order: _0, _1_AA, _2.
         let segment = match wav.as_str() {
             "l3_10201_1_AA.wav" => &segments[1],
@@ -209,10 +217,39 @@ fn iso_layer3_conformance() {
         } else {
             "FAIL"
         };
-        println!("| {mpg} | {wav} | {n} | {rms:.2e} | {max:.2e} | {verdict} |");
+        text.push_str(&format!(
+            "{mpg}\t{wav}\t{n}\t{verdict}\t{rms:.3e}\t{max:.3e}\n"
+        ));
         if verdict != "full" {
             failed.push(format!("{mpg} / {wav}"));
         }
     }
+    print!("{text}");
     assert!(failed.is_empty(), "not full accuracy: {failed:?}");
+    if std::env::var_os("CROSSFADE_BLESS").is_some() {
+        std::fs::write(FROZEN, &text).expect("write the frozen results");
+        return;
+    }
+    let frozen = std::fs::read_to_string(FROZEN)
+        .unwrap_or_else(|e| panic!("{FROZEN}: {e}; create it with CROSSFADE_BLESS=1"));
+    let lines = |t: &str| -> Vec<String> {
+        t.lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    };
+    let (want, have) = (lines(&frozen), lines(&text));
+    let diffs: Vec<String> = want
+        .iter()
+        .zip(&have)
+        .filter(|(w, h)| w != h)
+        .map(|(w, h)| format!("frozen: {w}\n   now: {h}"))
+        .collect();
+    assert!(
+        diffs.is_empty() && want.len() == have.len(),
+        "the MP3 conformance results changed ({} lines frozen, {} now):\n{}",
+        want.len(),
+        have.len(),
+        diffs.join("\n")
+    );
 }
