@@ -1667,6 +1667,7 @@ dependencies = [
  "crossfade-dsp",
  "crossfade-format",
  "crossfade-loudness",
+ "crossfade-opus",
  "crossfade-resample",
  "crossfade-testkit",
  "crossfade-vorbis",
