@@ -183,3 +183,10 @@ path = "fuzz_targets/opus_packet.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "opus_celt"
+path = "fuzz_targets/opus_celt.rs"
+test = false
+doc = false
+bench = false
