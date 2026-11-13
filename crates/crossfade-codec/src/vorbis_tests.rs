@@ -141,11 +141,15 @@ fn channels_are_labelled_from_the_specifications_table_and_stored_in_mask_order(
         (8, Some("7.1")),
     ];
     for (n, name) in names {
-        assert_eq!(layout(n).name(), name, "{n} channels");
-        assert_eq!(layout(n).channels(), u16::from(n));
+        assert_eq!(ChannelLayout::vorbis_order(n).unwrap().name(), name, "{n} channels");
+        assert_eq!(ChannelLayout::vorbis_order(n).unwrap().channels(), u16::from(n));
     }
-    assert_eq!(layout(9), ChannelLayout::unpositioned(9).unwrap());
-    assert_eq!(layout(255).channels(), 255);
+    assert_eq!(
+        ChannelLayout::vorbis_order(9).unwrap(),
+        ChannelLayout::unpositioned(9).unwrap()
+    );
+    assert_eq!(ChannelLayout::vorbis_order(255).unwrap().channels(), 255);
+    assert!(ChannelLayout::vorbis_order(0).is_err());
 }
 
 #[test]
@@ -155,9 +159,9 @@ fn six_channels_come_out_in_the_layouts_order() {
     let want = direct(&b);
     // Vorbis order: FL C FR RL RR LFE; 5.1-back storage order: FL FR FC LFE BL BR.
     let vorbis_to_storage = [0, 2, 1, 4, 5, 3];
-    let s = stream(&b, layout(6));
+    let s = stream(&b, ChannelLayout::vorbis_order(6).unwrap());
     assert_eq!(
-        layout(6).positions(),
+        ChannelLayout::vorbis_order(6).unwrap().positions(),
         Some(&[FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight][..])
     );
     let mut d = decoder_for_threads(&s, 1).unwrap();
@@ -235,4 +239,23 @@ fn a_bad_header_blob_or_description_is_refused() {
         ChannelLayout::from_positions(vec![Channel::FrontLeft, Channel::Lfe]).unwrap(),
     );
     assert!(malformed(&s).contains("layout"));
+}
+
+/// The core's table must hold the same speakers as the Vorbis crate's, for every count, in
+/// WAVE mask order.
+#[test]
+fn core_vorbis_order_agrees_with_the_vorbis_crates_speakers() {
+    for n in 1..=8u8 {
+        let want = speakers(n).unwrap();
+        let layout = ChannelLayout::vorbis_order(n).unwrap();
+        let got = layout.positions().unwrap();
+        assert_eq!(got.len(), want.len(), "{n} channels");
+        for w in &want {
+            assert!(got.contains(w), "{n} channels: {w:?} missing from {got:?}");
+        }
+        assert!(layout.to_mask().is_some(), "{n} channels: not in mask order");
+    }
+    for n in [0u8, 9, 100, 255] {
+        assert!(speakers(n).is_none());
+    }
 }
