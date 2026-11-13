@@ -19,7 +19,8 @@ pub(crate) struct Imdct {
     m: usize,
     /// Pre- and post-twiddles `e^(-i pi (k + 1/8) / m)`, k < m/2; the post ones carry the
     /// output scale.
-    pre: Vec<(f32, f32)>,
+    pre_c: Vec<f32>,
+    pre_s: Vec<f32>,
     post: Vec<(f32, f32)>,
     fft: Fft,
 }
@@ -32,7 +33,8 @@ impl Imdct {
         };
         Self {
             m,
-            pre: (0..m / 2).map(|k| tw(k, 1.0)).collect(),
+            pre_c: (0..m / 2).map(|k| tw(k, 1.0).0).collect(),
+            pre_s: (0..m / 2).map(|k| tw(k, 1.0).1).collect(),
             post: (0..m / 2).map(|k| tw(k, scale)).collect(),
             fft: Fft::new(m / 2),
         }
@@ -44,20 +46,19 @@ impl Imdct {
         let m = self.m;
         let (q, h) = (m / 2, m / 2);
         let (re, im) = (&mut re[..q], &mut im[..q]);
-        // Pre-twiddle of spec[2k] + i spec[m - 1 - 2k], written in bit-reversed order so the
-        // FFT needs no reordering pass.
-        let inputs = spec[..m]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .zip(spec[..m].as_rchunks::<2>().1.iter().rev());
-        for ((x, y), (&(c, s), &r)) in inputs.zip(self.pre.iter().zip(&self.fft.rev)) {
-            let (a, b) = (x[0], y[1]);
-            let r = usize::from(r);
-            re[r] = a * c - b * s;
-            im[r] = a * s + b * c;
+        // Pre-twiddle of spec[2k] + i spec[m - 1 - 2k] in natural order, into the output's
+        // first half (unused until the fold); the FFT's first pass reads it bit-reversed.
+        let (tr, rest) = out.split_at_mut(q);
+        let ti = &mut rest[..q];
+        let pairs = spec[..m].as_chunks::<2>().0;
+        let (pre_c, pre_s) = (&self.pre_c[..q], &self.pre_s[..q]);
+        for k in 0..q {
+            let (a, b) = (pairs[k][0], pairs[q - 1 - k][1]);
+            let (c, s) = (pre_c[k], pre_s[k]);
+            tr[k] = a * c - b * s;
+            ti[k] = a * s + b * c;
         }
-        self.fft.run(re, im);
+        self.fft.run(tr, ti, re, im);
         // Post-twiddle in place: re[n] = u[2n], im[n] = u[m - 1 - 2n].
         for ((a, b), &(c, s)) in re.iter_mut().zip(im.iter_mut()).zip(&self.post) {
             let (x, y) = (*a, *b);
@@ -93,12 +94,15 @@ impl Imdct {
     }
 }
 
-/// Radix-2 complex FFT, forward (`e^(-2 pi i nk / n)`), in place on split real and imaginary
-/// parts whose input is already in bit-reversed order. The first two stages need no
-/// multiplications; each later stage reads its twiddles in order, so its loop vectorises.
+/// Radix-2 complex FFT, forward (`e^(-2 pi i nk / n)`), decimation in time. Its first pass
+/// reads the input in bit-reversed order (no separate reordering pass) and does the stages of
+/// length 2 and 4 at once; each later stage reads its twiddles in order, so its loop
+/// vectorises.
 struct Fft {
     n: usize,
-    rev: Vec<u16>,
+    /// For each `r < n/4`, the `j` whose bit reversal (over `n/4`) it is: output quad `j` reads
+    /// input `r`, `r + n/2`, `r + n/4`, `r + 3n/4` (bit reversal over `n` of `4j + t`).
+    quad: Vec<u16>,
     /// Twiddles of the stages of length 8, 16, ..., n, one run of `len / 2` each.
     tw_re: Vec<f32>,
     tw_im: Vec<f32>,
@@ -106,9 +110,9 @@ struct Fft {
 
 impl Fft {
     fn new(n: usize) -> Self {
-        let bits = n.trailing_zeros();
-        let rev = (0..n)
-            .map(|i| (i.reverse_bits() >> (usize::BITS - bits)) as u16)
+        let bits = (n / 4).trailing_zeros();
+        let quad = (0..n / 4)
+            .map(|i: usize| (i.reverse_bits() >> (usize::BITS - bits)) as u16)
             .collect();
         let (mut tw_re, mut tw_im) = (Vec::new(), Vec::new());
         let mut len = 8;
@@ -122,32 +126,30 @@ impl Fft {
         }
         Self {
             n,
-            rev,
+            quad,
             tw_re,
             tw_im,
         }
     }
 
-    fn run(&self, re: &mut [f32], im: &mut [f32]) {
+    /// The transform of `xr + i xi` (natural order) into `re + i im`.
+    fn run(&self, xr: &[f32], xi: &[f32], re: &mut [f32], im: &mut [f32]) {
         let n = self.n;
-        // Stages of length 2 and 4 together: a radix-4 butterfly with twiddles 1 and -i.
-        for (r, i) in re
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(im.as_chunks_mut::<4>().0.iter_mut())
-        {
+        let q4 = n / 4;
+        let (xr, xi) = (&xr[..n], &xi[..n]);
+        let (re4, im4) = (re.as_chunks_mut::<4>().0, im.as_chunks_mut::<4>().0);
+        // Stages of length 2 and 4 together: a radix-4 butterfly with twiddles 1 and -i, on
+        // the inputs that bit reversal puts at 4j..4j+4.
+        for (k, &j) in self.quad[..q4].iter().enumerate() {
+            let at = |x: &[f32], t: usize| x[k + t * q4];
+            let r = [at(xr, 0), at(xr, 2), at(xr, 1), at(xr, 3)];
+            let i = [at(xi, 0), at(xi, 2), at(xi, 1), at(xi, 3)];
             let (a0r, a0i, a1r, a1i) = (r[0] + r[1], i[0] + i[1], r[0] - r[1], i[0] - i[1]);
             let (a2r, a2i, a3r, a3i) = (r[2] + r[3], i[2] + i[3], r[2] - r[3], i[2] - i[3]);
-            r[0] = a0r + a2r;
-            i[0] = a0i + a2i;
-            r[2] = a0r - a2r;
-            i[2] = a0i - a2i;
+            let j = usize::from(j);
             // (a3) * -i = (a3i, -a3r)
-            r[1] = a1r + a3i;
-            i[1] = a1i - a3r;
-            r[3] = a1r - a3i;
-            i[3] = a1i + a3r;
+            re4[j] = [a0r + a2r, a1r + a3i, a0r - a2r, a1r - a3i];
+            im4[j] = [a0i + a2i, a1i - a3r, a0i - a2i, a1i + a3r];
         }
         let mut len = 8;
         let mut tw = 0;
