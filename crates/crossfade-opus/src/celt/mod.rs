@@ -70,6 +70,7 @@
 
 mod bands;
 mod cwrs;
+mod decoder;
 mod ec;
 mod fft;
 mod laplace;
