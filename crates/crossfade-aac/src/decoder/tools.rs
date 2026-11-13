@@ -3,6 +3,7 @@
 
 use super::ics::{INTENSITY_HCB, INTENSITY_HCB2, Ics, NOISE_HCB};
 use super::tables::{TNS_MAX_BANDS_LONG, TNS_MAX_BANDS_SHORT};
+use std::sync::OnceLock;
 
 /// The CPE's M/S decision per group and band.
 pub(crate) struct MsMask {
@@ -69,7 +70,7 @@ pub(crate) fn intensity_stereo(ms: &MsMask, left: &Ics, right: &mut Ics) {
             if ms.present == 1 && ms.used[g][b] {
                 sign = -sign;
             }
-            let scale = sign * libm::exp2(-0.25 * f64::from(right.sf[g][b])) as f32;
+            let scale = sign * intensity_gain(right.sf[g][b]);
             for w in windows(right, g) {
                 let range = right.band(w, b);
                 for (r, &l) in right.spec[range.clone()].iter_mut().zip(&left.spec[range]) {
@@ -77,6 +78,18 @@ pub(crate) fn intensity_stereo(ms: &MsMask, left: &Ics, right: &mut Ics) {
                 }
             }
         }
+    }
+}
+
+/// 2^(-position / 4), from a table for the positions streams use.
+fn intensity_gain(position: i32) -> f32 {
+    const LOW: i32 = -256;
+    static T: OnceLock<[f32; 512]> = OnceLock::new();
+    let exact = |p: i32| libm::exp2(-0.25 * f64::from(p)) as f32;
+    let table = T.get_or_init(|| std::array::from_fn(|i| exact(i as i32 + LOW)));
+    match usize::try_from(position - LOW) {
+        Ok(i) if i < table.len() => table[i],
+        _ => exact(position),
     }
 }
 
@@ -200,6 +213,19 @@ pub(crate) fn tns(ics: &mut Ics, sampling_index: usize) {
             } else {
                 band.iter_mut().for_each(&mut run);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intensity_gains_are_the_exact_power_inside_and_outside_the_table() {
+        for p in -600..600 {
+            let want = libm::exp2(-0.25 * f64::from(p)) as f32;
+            assert_eq!(intensity_gain(p).to_bits(), want.to_bits(), "{p}");
         }
     }
 }
