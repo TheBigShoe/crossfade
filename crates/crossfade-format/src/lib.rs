@@ -226,7 +226,6 @@ mod tests {
         for (bytes, name) in [
             (mp3, "mp3"),
             (tagged, "mp3"),
-            (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
             (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
         ] {
             assert_eq!(open(bytes), format!("reading {name} is not built yet"));

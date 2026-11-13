@@ -1,7 +1,7 @@
 //! The Ogg FLAC mapping (RFC 9639 section 10.1).
 
 use super::LogicalStream;
-use super::packets::PacketReader;
+use super::packets::{PacketReader, PacketStart};
 use crate::vorbis_comment;
 use crossfade_core::{Demuxer, Error, Limits, Packet, StreamInfo, Tags};
 use crossfade_flac::frame::{self, HeaderError};
@@ -27,6 +27,8 @@ struct OggFlacDemuxer {
     held: Vec<u8>,
     has_held: bool,
     done: bool,
+    /// Where the first audio packet starts; `None` when the stream has none.
+    floor: Option<PacketStart>,
 }
 
 pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
@@ -37,11 +39,13 @@ pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Dem
     let mut tags = None;
     let mut held = Vec::new();
     // The declared header count is only a hint: the headers end at the first frame.
+    let mut floor = None;
     let has_held = loop {
         if !packets.next_packet(&mut held)? {
             break false;
         }
         if starts_frame(&held) {
+            floor = Some(packets.packet_start());
             break true;
         }
         if tags.is_none() {
@@ -59,6 +63,7 @@ pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Dem
         held,
         has_held,
         done: false,
+        floor,
     }))
 }
 
@@ -82,16 +87,78 @@ impl Demuxer for OggFlacDemuxer {
             self.done = true;
             return Ok(false);
         }
-        let h = frame::parse_header(&out.data).map_err(|e| Error::Malformed {
+        (out.pts, out.duration) = self.timing(&out.data)?;
+        out.stream = 0;
+        Ok(true)
+    }
+
+    /// Exact (FLAC has no pre-roll): the granule bisection lands at or before the target, and
+    /// the frames up to the one that holds it are read and dropped. A stream whose granules
+    /// disagree with its frames (the landing is past the target) is read from its first frame.
+    fn seek(&mut self, pts: i64) -> Result<i64, Error> {
+        self.packets.check_seekable()?;
+        let target = pts.max(0);
+        let Some(floor) = self.floor else {
+            self.done = true;
+            return Ok(0);
+        };
+        if let Some(total) = self.streams[0].frames
+            && u64::try_from(target).is_ok_and(|t| t >= total)
+        {
+            self.done = true;
+            self.has_held = false;
+            return i64::try_from(total).map_err(|_| Error::Overflow);
+        }
+        let landed = self.packets.seek_granule(target, floor)?;
+        if let Some(found) = self.forward_to(target, landed.unwrap_or(0))? {
+            return Ok(found);
+        }
+        self.packets.seek_granule(i64::MIN, floor)?;
+        Ok(self.forward_to(target, 0)?.unwrap_or(0))
+    }
+}
+
+impl OggFlacDemuxer {
+    /// A frame packet's pts and duration, from its header.
+    fn timing(&self, data: &[u8]) -> Result<(i64, u64), Error> {
+        let h = frame::parse_header(data).map_err(|e| Error::Malformed {
             what: match e {
                 HeaderError::NeedMoreData => "ogg flac frame header is cut short".into(),
                 HeaderError::Invalid(why) => format!("ogg flac frame header: {why}"),
             },
         })?;
-        out.stream = 0;
-        out.pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
-        out.duration = u64::from(h.block_size);
-        Ok(true)
+        let pts = i64::try_from(h.first_sample(self.block_size)).map_err(|_| Error::Overflow)?;
+        Ok((pts, u64::from(h.block_size)))
+    }
+
+    /// Reads on to the packet that holds `target` and holds it for `read_packet`; returns its
+    /// pts, or the end's when the stream ends first. `None` when the landing cannot be right:
+    /// the first packet read starts past `target`, or there is none though the stream's total
+    /// (past `target`) says there should be. `end`: the position before the next packet.
+    fn forward_to(&mut self, target: i64, mut end: i64) -> Result<Option<i64>, Error> {
+        self.done = false;
+        self.has_held = false;
+        let mut first = true;
+        loop {
+            if !self.packets.next_packet(&mut self.held)? {
+                // Short of a known total, landing at the end means the granules lied.
+                if first && self.streams[0].frames.is_some() {
+                    return Ok(None);
+                }
+                self.done = true;
+                return Ok(Some(end));
+            }
+            let (pts, duration) = self.timing(&self.held)?;
+            if first && pts > target {
+                return Ok(None);
+            }
+            first = false;
+            end = pts.saturating_add(i64::try_from(duration).unwrap_or(i64::MAX));
+            if end > target {
+                self.has_held = true;
+                return Ok(Some(pts));
+            }
+        }
     }
 }
 
@@ -279,5 +346,156 @@ mod tests {
         p.truncate(9);
         assert!(malformed(comment_tags(&p, &Limits::default())).contains("block"));
         assert!(malformed(comment_tags(&[4, 0], &Limits::default())).contains("block"));
+    }
+
+    mod seeking {
+        use crate::ogg::testutil::{self, RawPage};
+        use crossfade_core::{Demuxer, Error, Limits, Packet};
+        use std::io::Cursor;
+
+        const NOISE: &[u8] = include_bytes!("../../tests/fixtures/ogg/noise8.oga");
+        const SMALL: &[u8] = include_bytes!("../../tests/fixtures/ogg/smallblock.oga");
+
+        fn open(bytes: &[u8]) -> Box<dyn Demuxer> {
+            crate::ogg::open(Box::new(Cursor::new(bytes.to_vec())), &Limits::default()).unwrap()
+        }
+
+        fn all(d: &mut dyn Demuxer) -> Result<Vec<Packet>, Error> {
+            let mut out = Vec::new();
+            let mut p = Packet::default();
+            while d.read_packet(&mut p)? {
+                out.push(p.clone());
+            }
+            Ok(out)
+        }
+
+        /// Every packet of the file (headers too) with the samples each one holds.
+        fn packets(file: &[u8]) -> Vec<(Vec<u8>, i64)> {
+            let mut pages = crate::ogg::page::PageReader::new(Box::new(Cursor::new(file.to_vec())));
+            assert!(pages.next_page().unwrap());
+            let serial = pages.header().serial;
+            let mut r = crate::ogg::packets::PacketReader::new(
+                crate::ogg::page::PageReader::new(Box::new(Cursor::new(file.to_vec()))),
+                serial,
+                1 << 20,
+            );
+            let mut out = Vec::new();
+            let mut buf = Vec::new();
+            while r.next_packet(&mut buf).unwrap() {
+                let n = crossfade_flac::frame::parse_header(&buf)
+                    .map_or(0, |h| i64::from(h.block_size));
+                out.push((buf.clone(), n));
+            }
+            out
+        }
+
+        /// The file's packets re-paged `per_page` segments at a time (packets go on across
+        /// pages), each page's granule the samples through its last completed packet, and a page
+        /// of another stream after every third page.
+        fn repaged(file: &[u8], per_page: &[usize]) -> Vec<u8> {
+            let packets = packets(file);
+            let data: Vec<Vec<u8>> = packets.iter().map(|(d, _)| d.clone()).collect();
+            let mut per = vec![1];
+            per.extend(per_page);
+            let mut pages = testutil::pages(77, 0, &data, &per);
+            let (mut done, mut samples) = (0usize, 0i64);
+            for p in &mut pages {
+                let ends = p.lacing.iter().filter(|&&l| l < 255).count();
+                for (_, n) in &packets[done..done + ends] {
+                    samples += n;
+                }
+                done += ends;
+                p.granule = if ends == 0 { -1 } else { samples };
+            }
+            let mut out = Vec::new();
+            for (i, p) in pages.iter().enumerate() {
+                out.extend(p.to_bytes());
+                if i % 3 == 2 {
+                    out.extend(
+                        RawPage {
+                            serial: 78,
+                            sequence: i as u32,
+                            granule: 0,
+                            lacing: vec![8],
+                            body: b"OggSOggS".to_vec(),
+                            ..RawPage::default()
+                        }
+                        .to_bytes(),
+                    );
+                }
+            }
+            out
+        }
+
+        fn check(bytes: &[u8], what: &str) {
+            let from_start = all(open(bytes).as_mut()).unwrap();
+            let end = from_start.last().map_or(0, |p| p.pts + p.duration as i64);
+            let mut d = open(bytes);
+            for target in [
+                0,
+                1,
+                end / 2,
+                end - 1,
+                end,
+                end + 7,
+                end / 3,
+                5000,
+                4999,
+                -1,
+            ] {
+                let got = d.seek(target).unwrap();
+                match from_start
+                    .iter()
+                    .position(|p| p.pts + p.duration as i64 > target.max(0))
+                {
+                    Some(i) => {
+                        assert_eq!(got, from_start[i].pts, "{what} {target}");
+                        assert!(
+                            all(d.as_mut()).unwrap() == from_start[i..],
+                            "{what} {target}"
+                        );
+                    }
+                    None => {
+                        assert_eq!(got, end, "{what} {target}");
+                        assert!(!d.read_packet(&mut Packet::default()).unwrap());
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn packets_continued_across_pages_and_another_stream_between_them() {
+            for per_page in [&[1usize][..], &[3, 40], &[17]] {
+                check(&repaged(NOISE, per_page), &format!("noise8 {per_page:?}"));
+                check(
+                    &repaged(SMALL, per_page),
+                    &format!("smallblock {per_page:?}"),
+                );
+            }
+        }
+
+        #[test]
+        fn granules_that_disagree_with_the_frames_still_land_at_or_before_the_target() {
+            let mut bytes = repaged(SMALL, &[5]);
+            // Every granule halved: the bisection lands late, and must notice.
+            let mut at = 0;
+            while at + 27 <= bytes.len() {
+                let segs = usize::from(bytes[at + 26]);
+                let body: usize = bytes[at + 27..at + 27 + segs]
+                    .iter()
+                    .map(|&l| usize::from(l))
+                    .sum();
+                let len = 27 + segs + body;
+                let g = i64::from_le_bytes(bytes[at + 6..at + 14].try_into().unwrap());
+                if g > 0 {
+                    bytes[at + 6..at + 14].copy_from_slice(&(g / 2).to_le_bytes());
+                }
+                bytes[at + 22..at + 26].fill(0);
+                let crc = crate::ogg::crc::crc32(&bytes[at..at + len]);
+                bytes[at + 22..at + 26].copy_from_slice(&crc.to_le_bytes());
+                at += len;
+            }
+            check(&bytes, "halved granules");
+        }
     }
 }

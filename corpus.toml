@@ -1,24 +1,43 @@
 # Crossfade conformance corpus manifest.
 #
-# Official FLAC decoder test files from the IETF CELLAR working group
-# (https://github.com/ietf-wg-cellar/flac-test-files), pinned at one commit
-# and licensed CC0-1.0. They are too large to commit, so they live in a
-# cache that is never checked in.
+# The official test vectors for FLAC, Opus, Vorbis, MP3 and AAC. They are too big to
+# commit, and some may not be redistributed, so nothing here is checked in: this file
+# lists where each one is, its size and SHA-256, and the cache holds the bytes.
 #
-# Fetch once:   just corpus          (cargo run --release -p crossfade-corpus -- fetch)
+# Fetch all:    just corpus          (cargo run --release -p crossfade-corpus -- fetch)
+# Fetch some:   crossfade-corpus fetch --only flac/ --only opus/   (id prefixes; also on
+#               verify, list and seed; with no flag a fresh clone downloads about 550 MB and the
+#               cache ends at about 600 MB: FLAC 310, AAC 73, Opus 127, Vorbis 53, MP3 39)
 # Verify:       just corpus-verify
-# Offline:      crossfade-corpus seed --from <local clone of the suite>
+# Offline:      crossfade-corpus seed --from <dir or archive file>   (a mirror, a local
+#               clone of a suite, or the Opus tar.gz itself; every file is still verified)
 #
-# Cache: $CROSSFADE_CORPUS_DIR, else <workspace>/.corpus-cache.
-# Every file is checked by size and SHA-256 before use.
+# Cache: $CROSSFADE_CORPUS_DIR, else <workspace>/.corpus-cache; a file is at
+# <cache>/<id>/<name>. Every file is checked by size and SHA-256 before use, and an
+# error says what a wrong download was (the ISO server answers a wrong URL with status
+# 200 and an HTML page).
+#
+# Schema. A file is fetched on its own:
+#   [[file]]  id = "<codec>/<suite>/<name>"  name  url  bytes  sha256  licence  expect  [md5]
+# or is one member of an archive, which is downloaded once, verified, and read for only
+# the members named here (paths come from this file, never from the archive; the archive
+# is deleted once every member is in):
+#   [[archive]]  id  url  bytes  sha256  licence  format = "tar.gz"
+#   [[file]]  id  name  archive = "<archive id>"  member = "<path in the archive>"  bytes  sha256  licence  expect
 #
 # expect = "decode"           must decode to the end and match the stored MD5
 #          "decode-or-reject" decodes correctly or returns an error; never wrong audio, never a panic
 #          "no-panic"         must not panic or hang; any result is acceptable
+#          "data"             fetched and verified, never decoded by itself: a reference output,
+#                             or a stream whose test lives in the codec's own conformance test
 #
-# Generated once from a local clone of the pinned commit (sizes and hashes
-# computed from the files, MD5 from STREAMINFO via metaflac); this file is
-# the source of truth.
+# Generated once from the files themselves (sizes and hashes computed from the bytes, URLs
+# from the publishers' directory listings, each confirmed with a HEAD request); this file
+# is the source of truth.
+
+# FLAC: the official decoder test files from the IETF CELLAR working group
+# (https://github.com/ietf-wg-cellar/flac-test-files), pinned at one commit, CC0-1.0.
+# Pass criterion: see expect; MD5 is the STREAMINFO MD5 (read with metaflac).
 
 [[file]]
 id = "flac/subset/01"
@@ -906,3 +925,1971 @@ sha256 = "3732151ba8c4e66a785165aa75a444aad814c16807ddc97b793811376acacfd6"
 licence = "CC0-1.0"
 expect = "no-panic"
 note = "Wrong metadata block length; parser reads garbage."
+
+# Opus: the RFC 8251 test vectors, one archive (opus_testvectors-rfc8251.tar.gz) of which
+# only the members named here are extracted. testvectorNN.bit is the stream in the Opus
+# demo's framing (per packet a 4-byte big-endian length, a 4-byte final-range value, then
+# the packet); testvectorNN.dec and testvectorNNm.dec are the two accepted reference
+# decodes. All are expect = "data": Opus conformance is a comparison made by the Opus
+# test, never by a decode alone. Pass criterion: opus_compare quality >= 0 against the
+# .dec or the m.dec file (RFC 6716 section 6, RFC 8251); decodes need not match bit for bit.
+
+[[archive]]
+id = "opus/rfc8251"
+url = "https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz"
+bytes = 74624664
+sha256 = "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+format = "tar.gz"
+
+[[file]]
+id = "opus/rfc8251/testvector01.bit"
+name = "testvector01.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector01.bit"
+bytes = 676719
+sha256 = "00a4d34e12a2a32a047bfcaf762f663430b2232bc76a1c21e3b598f060f99b7e"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector01.dec"
+name = "testvector01.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector01.dec"
+bytes = 5660160
+sha256 = "c4b8b31ede5a2f32e0daf445073d2765533a93e45656a8eb36bc288f05bafd34"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector01m.dec"
+name = "testvector01m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector01m.dec"
+bytes = 5660160
+sha256 = "43ed3123cf34d9c45c784a6e2658c75a934783d13f4708fbe32922e1755a167a"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector02.bit"
+name = "testvector02.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector02.bit"
+bytes = 78574
+sha256 = "285deaf78e6b1ebdde7dc6a76af279a08bf0fa7a13e3a84e87ac3f76213626a6"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector02.dec"
+name = "testvector02.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector02.dec"
+bytes = 4805760
+sha256 = "4ad3b7aeaea242acc96cafebee69edb0914abc2e46c0c884f812ce10bbee4dbc"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector02m.dec"
+name = "testvector02m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector02m.dec"
+bytes = 4805760
+sha256 = "4ad3b7aeaea242acc96cafebee69edb0914abc2e46c0c884f812ce10bbee4dbc"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector03.bit"
+name = "testvector03.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector03.bit"
+bytes = 74868
+sha256 = "811b3d28483c781e4d1a0f8008bf73c3882c6c9cf8dedc65c0c14fa4239bb9d9"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector03.dec"
+name = "testvector03.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector03.dec"
+bytes = 4062720
+sha256 = "e00f4ee27f007d849fb67f4386db93254631d2ff31b580394d854819560f1bc7"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector03m.dec"
+name = "testvector03m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector03m.dec"
+bytes = 4062720
+sha256 = "e00f4ee27f007d849fb67f4386db93254631d2ff31b580394d854819560f1bc7"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector04.bit"
+name = "testvector04.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector04.bit"
+bytes = 84085
+sha256 = "874b838699a471acd97bd13e11224a3ef71c95b018b85a9c93a41459a7185565"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector04.dec"
+name = "testvector04.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector04.dec"
+bytes = 5112960
+sha256 = "ce7450716f4911284332e76dab66518dcfd5c84e320c0a8a54014e658f5c6908"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector04m.dec"
+name = "testvector04m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector04m.dec"
+bytes = 5112960
+sha256 = "ce7450716f4911284332e76dab66518dcfd5c84e320c0a8a54014e658f5c6908"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector05.bit"
+name = "testvector05.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector05.bit"
+bytes = 156255
+sha256 = "9b13f677c61cfad9a94460f986401b843e07e3245265067580539d9d8f1ec230"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector05.dec"
+name = "testvector05.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector05.dec"
+bytes = 5216640
+sha256 = "21a63bd7b9eefc228cf18c312f9fbe144e02a8d696306cb93575ece97e05ea0f"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector05m.dec"
+name = "testvector05m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector05m.dec"
+bytes = 5216640
+sha256 = "2dccbba51402ffae88e68a060a18bf719c3becbbb745cdc4b19faccc49ca2bf3"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector06.bit"
+name = "testvector06.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector06.bit"
+bytes = 147576
+sha256 = "65a779507949842232cfb6119db3ec8c056c05b80d65abb7a3ae9b06b443e33f"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector06.dec"
+name = "testvector06.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector06.dec"
+bytes = 4803840
+sha256 = "e216d2a721c74d01ae9d1147c75178800b865b3388efcc6b2bb5db96d50a64e8"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector06m.dec"
+name = "testvector06m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector06m.dec"
+bytes = 4803840
+sha256 = "7a593d17e0702184c30fd2db9240d0fffc03ddbf2e6e6a3847e360158c5d4a4e"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector07.bit"
+name = "testvector07.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector07.bit"
+bytes = 210714
+sha256 = "ae7ae8f569807d4d964c574d7b1556e8b930307adfa9928942fe44f5e2bcc5f1"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector07.dec"
+name = "testvector07.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector07.dec"
+bytes = 4340160
+sha256 = "e0161343bef57f81f07183ba58f336c7845246553bdf4e6d64fe6f5af46d48bd"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector07m.dec"
+name = "testvector07m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector07m.dec"
+bytes = 4340160
+sha256 = "09faeaa61c70fe451dfd05e34f7a796ecdb12f786964dcbb617e75aaffd27cda"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector08.bit"
+name = "testvector08.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector08.bit"
+bytes = 140061
+sha256 = "4de258de02ccc08c805b3d41414c3a0f2f607e57ea3a7a5cb9bef26c2f01eb01"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector08.dec"
+name = "testvector08.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector08.dec"
+bytes = 5240640
+sha256 = "8b8435b88ea5f8c5fc1b6ed355454324cd7c5e81d7ab3ba055511979be6c6358"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector08m.dec"
+name = "testvector08m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector08m.dec"
+bytes = 5240640
+sha256 = "8b6ded1b08cf40e8e377c65ddd7ae21245045ee4b146540be21aac7dcceafc43"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector09.bit"
+name = "testvector09.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector09.bit"
+bytes = 798481
+sha256 = "91a798186cd2483e47a6b3db44eb3f8fb7f5584c3ed2f2c8158ae8f9172a6b31"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector09.dec"
+name = "testvector09.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector09.dec"
+bytes = 5294400
+sha256 = "9baedeac28470f1b275c3a1b6a89725ed9a00370460dd4ab03cdaac09387049f"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector09m.dec"
+name = "testvector09m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector09m.dec"
+bytes = 5294400
+sha256 = "026a3961c57e96aeab19026de0d0dd113162675bf404b56b6abbbad35933492f"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector10.bit"
+name = "testvector10.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector10.bit"
+bytes = 744304
+sha256 = "7288deb8d0e9e49f7f8ae50d6b4f2221294faa222b9db69161951b928e62435a"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector10.dec"
+name = "testvector10.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector10.dec"
+bytes = 6145920
+sha256 = "8529af01c64acf8a1a10cc9f1664a78508c392078ac165f77da6a3846f6b1d48"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector10m.dec"
+name = "testvector10m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector10m.dec"
+bytes = 6145920
+sha256 = "8529af01c64acf8a1a10cc9f1664a78508c392078ac165f77da6a3846f6b1d48"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector11.bit"
+name = "testvector11.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector11.bit"
+bytes = 361303
+sha256 = "ee3cd3c6f420d803f563af6518851316696fd121932a191045349a615df7a249"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector11.dec"
+name = "testvector11.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector11.dec"
+bytes = 5763840
+sha256 = "4f3e16ddef55e84a7776469cba161e0ed647dadc1e36271fad1bc43a70112813"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector11m.dec"
+name = "testvector11m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector11m.dec"
+bytes = 5763840
+sha256 = "d8e0595a896cb134bf3d4a5ac1138354981222e476b985e01459f7bae9f98896"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector12.bit"
+name = "testvector12.bit"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector12.bit"
+bytes = 56702
+sha256 = "48df85083178e8fc9c31af3fa6d5b38377f0eb84da4931a8886af503b17a0218"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector12.dec"
+name = "testvector12.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector12.dec"
+bytes = 5114880
+sha256 = "bd7f89a4cb02fb8dcb8fca4425bbcfdbdb3487beed9cd9d49883beb0960e617b"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "opus/rfc8251/testvector12m.dec"
+name = "testvector12m.dec"
+archive = "opus/rfc8251"
+member = "opus_newvectors/testvector12m.dec"
+bytes = 5114880
+sha256 = "bd7f89a4cb02fb8dcb8fca4425bbcfdbdb3487beed9cd9d49883beb0960e617b"
+licence = "unstated (opus-codec.org test vectors); fetched, never redistributed"
+expect = "data"
+
+# Vorbis: Xiph's test streams (https://people.xiph.org/~xiphmont/test-vectors/vorbis/),
+# one download each. There is no official reference output, so these are expect = "data":
+# the pass criterion is a clean decode of the whole stream (declared length and rate), and
+# any comparison with another decoder's output belongs to the decoder's own test.
+
+[[file]]
+id = "vorbis/xiph/1.0-test.ogg"
+name = "1.0-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/1.0-test.ogg"
+bytes = 7684577
+sha256 = "9a882710314bcc1d2b4cdefb7f89911f4375acd1feb9e64a12eca9f7202377d3"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/1.0.1-test.ogg"
+name = "1.0.1-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/1.0.1-test.ogg"
+bytes = 2330979
+sha256 = "8c9423e00826d6d2457d78c09d6e2a94bcdf9216af796bb22a4c4f450c2e72bb"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/48k-mono.ogg"
+name = "48k-mono.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/48k-mono.ogg"
+bytes = 44925
+sha256 = "f51459d9bdd04ca3ec6f6732b8a01efcdc83e5c6fc79c7d5347527bfd4948e9e"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/beta3-test.ogg"
+name = "beta3-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/beta3-test.ogg"
+bytes = 5180338
+sha256 = "7fc791a4d5a0d3b7cef2448093ccf2ae54600acc81667be90c6b209c366c32ea"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/beta4-test.ogg"
+name = "beta4-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/beta4-test.ogg"
+bytes = 1793859
+sha256 = "bc367c0d4dcdbf1f0a2f81abf74cc52c8f0ab8366d150a75830782ca2dba080a"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/bimS-silence.ogg"
+name = "bimS-silence.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/bimS-silence.ogg"
+bytes = 1265388
+sha256 = "e2a38871d390ed651faf0fec5253a6873530da4f2503d85021c99325dfd23813"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/chain-test1.ogg"
+name = "chain-test1.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/chain-test1.ogg"
+bytes = 737999
+sha256 = "d9c37533a1f456d2a996755a43d112ef46b6ef953319913907bc79f1c014d79e"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/chain-test2.ogg"
+name = "chain-test2.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/chain-test2.ogg"
+bytes = 737999
+sha256 = "5b5bf834e93e9a93b7114be084161e972f33d2031963518492ba2c91dc4418a7"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/chain-test3.ogg"
+name = "chain-test3.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/chain-test3.ogg"
+bytes = 74706
+sha256 = "ed039ba775d1b31e805d26d6413a3ef2c6663bf4c5ea47ce1462f8f23c84d8dc"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/combustion.ogg"
+name = "combustion.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/combustion.ogg"
+bytes = 2676824
+sha256 = "5f58888fd5061c1202a4a93ae13a13f73a5c096a62fee17918a87c6627dabfd8"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/highrate-test.ogg"
+name = "highrate-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/highrate-test.ogg"
+bytes = 6064834
+sha256 = "0942c88369f84b125388cc8437575b66d67bc97baaeeb997b6602144821509df"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/lsp-test.ogg"
+name = "lsp-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/lsp-test.ogg"
+bytes = 262483
+sha256 = "ad1b07b68576ae2c85178475ef3607e1a96c09e96296cae83ee7a9726f8311eb"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/lsp-test2.ogg"
+name = "lsp-test2.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/lsp-test2.ogg"
+bytes = 312961
+sha256 = "7b00f893a93071bdf243b8a22c1758a6ab09c1ab8eee89ca21659d98ec0f53ea"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/lsp-test3.ogg"
+name = "lsp-test3.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/lsp-test3.ogg"
+bytes = 443035
+sha256 = "7a5c4064fc31285f6fea0b2424a0d415a8b18ef13d1aa1ef931a429ab9a593d1"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/lsp-test4.ogg"
+name = "lsp-test4.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/lsp-test4.ogg"
+bytes = 412770
+sha256 = "cb0b28931dfc8ef8b2d320f3028fab548171e7c6e94006f0c23532478a8d3596"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/make.ogg"
+name = "make.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/make.ogg"
+bytes = 5892845
+sha256 = "28d14448873bc08aa2d57ead5ef4705ed3f00a730a377e2f637dc85233ec17b7"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/mono.ogg"
+name = "mono.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/mono.ogg"
+bytes = 3214194
+sha256 = "d8abca95445a07186c9a158d4f573f38918985dd2498a9bc8d1811bd72fe1d1a"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/moog.ogg"
+name = "moog.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/moog.ogg"
+bytes = 3728645
+sha256 = "bd5b51bb1d6855e0e990e3ebdd230fc16265407809bd6db44aea691ada498943"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/one-entry-codebook-test.ogg"
+name = "one-entry-codebook-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/one-entry-codebook-test.ogg"
+bytes = 512000
+sha256 = "789b5146f2a7c0864a228ee4a870606a32c4169e22097be65129623705c54749"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/out-of-spec-blocksize.ogg"
+name = "out-of-spec-blocksize.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/out-of-spec-blocksize.ogg"
+bytes = 1335785
+sha256 = "0970e66291744815f2ca0dec7523f5bbc112907c5c75978a0f91d3b0ed6f03b2"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/rc1-test.ogg"
+name = "rc1-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/rc1-test.ogg"
+bytes = 1609673
+sha256 = "ccfac6ac7c75615bec0632b94bcf088c027c0b112cd136c997d04f037252cd3d"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/rc2-test.ogg"
+name = "rc2-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/rc2-test.ogg"
+bytes = 1728661
+sha256 = "4adcda786dfeea4188d7b1df35571dbe29c687f2d1cac680ed115353abfe1637"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/rc2-test2.ogg"
+name = "rc2-test2.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/rc2-test2.ogg"
+bytes = 1252564
+sha256 = "24ade471eefe1c7642f73a6810e56266b34c2d7d30a3b5ad05a34c098128226c"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/rc3-test.ogg"
+name = "rc3-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/rc3-test.ogg"
+bytes = 337446
+sha256 = "edd984e84c7c2a59af7801f3e8d2db11a6619134fd8d0274d1289e70bf60cde7"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/singlemap-test.ogg"
+name = "singlemap-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/singlemap-test.ogg"
+bytes = 59328
+sha256 = "50d8077608a4192b8f8505aec0217be8b6c25def4068899afc19c17f30e1d521"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/sleepzor.ogg"
+name = "sleepzor.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/sleepzor.ogg"
+bytes = 3125699
+sha256 = "01c67ecaf7a58b5ac5f1fe3bd060b5d61536595e97927a1b1cf0129a62b5cfcf"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/test-short.ogg"
+name = "test-short.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/test-short.ogg"
+bytes = 29781
+sha256 = "183510552403021fb90ce43796fcc88e16c8bb4ae5d0d72a316b8e51afc395fa"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/test-short2.ogg"
+name = "test-short2.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/test-short2.ogg"
+bytes = 147456
+sha256 = "6bd3f59e0fa77904edd35c73dadd6558e2a36d78c9d7bc5db223862bf092fcc2"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+[[file]]
+id = "vorbis/xiph/unused-mode-test.ogg"
+name = "unused-mode-test.ogg"
+url = "https://people.xiph.org/~xiphmont/test-vectors/vorbis/unused-mode-test.ogg"
+bytes = 118879
+sha256 = "e27ae6fc2f7c0037c28328801c46d966abcee3050e3ebd40bf097f7986f50f94"
+licence = "unstated (xiph.org test vectors); fetched, never redistributed"
+expect = "data"
+
+# MP3: the Layer III streams (l3_*.mpg) and their 24-bit reference decodes (l3_*.wav) from the
+# ISO/IEC 14496-26 conformance bitstreams, one download each from standards.iso.org. A few
+# streams have several references (l3_10201_*, l3_10501_*). Pass criterion, ISO/IEC 11172-4:
+# against the reference the decoder's RMS difference is below 2^-15/sqrt(12) and the maximum
+# difference is at most 2^-14 (full accuracy).
+
+[[file]]
+id = "mp3/iso/l3_10101.mpg"
+name = "l3_10101.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10101.mpg"
+bytes = 95760
+sha256 = "965065cdcac3f45a61a9f54b4f94d59d0334f4b5cb74840a5aec7d405e2e050f"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10101.wav"
+name = "l3_10101.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10101.wav"
+bytes = 515170
+sha256 = "01542019a93ebb46bc6e708e7a61461d2326c06decd8baf65feeeb6ac9af5ba9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10102.mpg"
+name = "l3_10102.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10102.mpg"
+bytes = 166661
+sha256 = "a64212281a8896d90e00f06c9b21f2c8f21ef9cb7367cae692a92ea421984441"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10102.wav"
+name = "l3_10102.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10102.wav"
+bytes = 1413730
+sha256 = "4932c905e0ed52b01b24521d083b49a8656b75352909937b9de160ef14e72d3d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10103.mpg"
+name = "l3_10103.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10103.mpg"
+bytes = 63840
+sha256 = "dd0383075710570648b8961f3cd0ce692f07a679b265fc4997e50883b3958299"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10103.wav"
+name = "l3_10103.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10103.wav"
+bytes = 515170
+sha256 = "3ff2af391ee0ad8c0afcd43052b0ebadb892b7c5a18aaf728cb8680e8f0dbbbd"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10104.mpg"
+name = "l3_10104.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10104.mpg"
+bytes = 24659
+sha256 = "4f3382de1d9265013d42249ff108023d4a90ecf3c0136489d199243a90a5d0f9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10104.wav"
+name = "l3_10104.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10104.wav"
+bytes = 404578
+sha256 = "d2fa3fb5254482743ea2260d9fe334ef43892442a64dfe411f598bd2dff09d33"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10105.mpg"
+name = "l3_10105.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10105.mpg"
+bytes = 13374
+sha256 = "1d12956840638bf6b81164fc510c3e8269eeb038a51dc4548469e21a71e52b69"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10105.wav"
+name = "l3_10105.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10105.wav"
+bytes = 217954
+sha256 = "f1eae3697a579729e1577539f2b48987d8ea81a18dcfad6a759c8d6aeb5a2358"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10106.mpg"
+name = "l3_10106.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10106.mpg"
+bytes = 15673
+sha256 = "1eaddd5978137a3fec4511eb6a833a948d5cb3d393cc0946fcaadf61a089cd2e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10106.wav"
+name = "l3_10106.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10106.wav"
+bytes = 259244
+sha256 = "4e2f7a7984d449f36ab9d384df7305492bc25c851742fbe28912590ed3f016b3"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10107.mpg"
+name = "l3_10107.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10107.mpg"
+bytes = 166080
+sha256 = "fd341df347f72e101147412db2bb66cb9c6f3d1b4dd03af3d1a3b43370c0df2d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10107.wav"
+name = "l3_10107.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10107.wav"
+bytes = 1195930
+sha256 = "d4d2724d77657813ada4a047d14518bf6476c2cc343a410df680fea5474db45c"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10201.mpg"
+name = "l3_10201.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10201.mpg"
+bytes = 53498
+sha256 = "fb90396d9bb13311be35284d061e19196830d213d823e05297b18172c88d90ce"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10201_0.wav"
+name = "l3_10201_0.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10201_0.wav"
+bytes = 34714
+sha256 = "ea886313fd57f3919d4c18764fff583293a950bb91d70fc01c175430416afa95"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10201_1_AA.wav"
+name = "l3_10201_1_AA.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10201_1_AA.wav"
+bytes = 691354
+sha256 = "83c67b6c2b9cbb9b4ac3328fd5a8fa3cda136a3b6c1826965f7cba520c3479fe"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10201_1_noAA.wav"
+name = "l3_10201_1_noAA.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10201_1_noAA.wav"
+bytes = 691354
+sha256 = "57ff61f43fa01d0222fa0c5feaf7b3ebde45956c232a6fd7faa2de6fb6449a04"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10201_2.wav"
+name = "l3_10201_2.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10201_2.wav"
+bytes = 62362
+sha256 = "128464b0a550b682647b03c251a0f4518d88d10dfa3541eed2773883f388ea29"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10202.mpg"
+name = "l3_10202.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10202.mpg"
+bytes = 12538
+sha256 = "21999b77716aeba047c7f55c2c1ce17b54c780b6dc007912f251b7ea189676ef"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10202.wav"
+name = "l3_10202.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10202.wav"
+bytes = 200674
+sha256 = "31c8ec878b5aaa5f9d2d92602b8eb384abc7bc477b40dd00f6e8a6b2ee3cae23"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10203.mpg"
+name = "l3_10203.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10203.mpg"
+bytes = 35944
+sha256 = "d050b73afc38a285348ef512ffb71de7745d97015396bb87e9d19b73e68fcc08"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10203.wav"
+name = "l3_10203.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10203.wav"
+bytes = 594476
+sha256 = "8e4f3566cfbc415fea56091cfaf96d7dbf09ecfb0c0d0984e97e80cbc5c84e5a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10204.mpg"
+name = "l3_10204.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10204.mpg"
+bytes = 133120
+sha256 = "64775e23c29aa84e27f68777460f88e0717af2ed64e732d287a20c5a92c9fa3e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10204.wav"
+name = "l3_10204.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10204.wav"
+bytes = 2184380
+sha256 = "a3e93e9335240b7659f28f3668bbd47825e93feaba73f91e6dd7a9aec44a274e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10205.mpg"
+name = "l3_10205.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10205.mpg"
+bytes = 63738
+sha256 = "4ccd38ac11746d6912c46a50d05662f737b019a265a87ed99dc1abbfda10ecd3"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10205.wav"
+name = "l3_10205.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10205.wav"
+bytes = 421676
+sha256 = "7df3bce033939b36ffb57e5618a2ccc8e9e5e723714e00611280cbf8f13c1317"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10206.mpg"
+name = "l3_10206.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10206.mpg"
+bytes = 41495
+sha256 = "3b93f3675821a5af4826abcff7097fa2e42efcc46154e02c992995f7e31dbc8e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10206.wav"
+name = "l3_10206.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10206.wav"
+bytes = 746722
+sha256 = "8cec797cf12ad03f3d25bb40d45517a45b925a4b5d628a7013c5bdc167fdc5b5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10207.mpg"
+name = "l3_10207.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10207.mpg"
+bytes = 166080
+sha256 = "60f62b5f258d382595fa75d4eea2e2dd51a5698d7a42aa3fefd5929b9dd98ff9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10207.wav"
+name = "l3_10207.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10207.wav"
+bytes = 2391706
+sha256 = "78c076369a74c9d620e5ca86cab00535bd941d0db68b9cb9abbbc2a3d675e953"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_b00.wav"
+name = "l3_10501_b00.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10501_b00.wav"
+bytes = 1195820
+sha256 = "865f6e860d39b0ae1cd316f085448a42e8eea55a2d29a9dd9bc9f278855df868"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_b01+b02.mpg"
+name = "l3_10501_b01+b02.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/compressedMpeg12/add-opt/l3_10501_b01%2Bb02.mpg"
+bytes = 166080
+sha256 = "423e041637ffc29e409310427fc796bcbc2943c64241c518e4020a95559c841b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_b01.wav"
+name = "l3_10501_b01.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10501_b01.wav"
+bytes = 1195820
+sha256 = "172e97776f162afd09157240ae3470b1d5b553dad88da43dd6fa2c88ce41b07d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_b01_b02.mpg"
+name = "l3_10501_b01_b02.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10501_b01_b02.mpg"
+bytes = 166080
+sha256 = "423e041637ffc29e409310427fc796bcbc2943c64241c518e4020a95559c841b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_f00.mpg"
+name = "l3_10501_f00.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_10501_f00.mpg"
+bytes = 166080
+sha256 = "fd341df347f72e101147412db2bb66cb9c6f3d1b4dd03af3d1a3b43370c0df2d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_f00.wav"
+name = "l3_10501_f00.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10501_f00.wav"
+bytes = 1195930
+sha256 = "e821387ab408098270cc99bc3f0b75d6b7f03d6e11d956e0700c8c8113d483ef"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_f01+f02.mpg"
+name = "l3_10501_f01+f02.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/compressedMpeg12/add-opt/l3_10501_f01%2Bf02.mpg"
+bytes = 166080
+sha256 = "60f62b5f258d382595fa75d4eea2e2dd51a5698d7a42aa3fefd5929b9dd98ff9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_f01.wav"
+name = "l3_10501_f01.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10501_f01.wav"
+bytes = 1195820
+sha256 = "110312679a543ea97ee16d8be523967d34954701237941036e5a02a400ac86f4"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_10501_f02.wav"
+name = "l3_10501_f02.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_10501_f02.wav"
+bytes = 1195820
+sha256 = "08b9b3b2e7b7a9aaf23d6255408ac16614adedf3a70703adf9aa18308bfeb04e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20140.mpg"
+name = "l3_20140.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20140.mpg"
+bytes = 154224
+sha256 = "69577544aa28b87f6217ad2060f4cec3b1835593c659683ed8437429a74d3640"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20140.wav"
+name = "l3_20140.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20140.wav"
+bytes = 822716
+sha256 = "4482260919ade0b5fff2e2d1c84a500189ea46e70cb5aaf21e69fc0973110060"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20141.mpg"
+name = "l3_20141.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20141.mpg"
+bytes = 111908
+sha256 = "d636dc9e1108daac730fa23da1b45142c4cda610f0fd50d83cdab0a04264f876"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20141.wav"
+name = "l3_20141.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20141.wav"
+bytes = 822716
+sha256 = "1ea18da2752a385177615ce8a800d10f5565dcf9d61e1fc7c81f5b80105a38b4"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20142.mpg"
+name = "l3_20142.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20142.mpg"
+bytes = 102816
+sha256 = "0bb8dda0f56562889d157a2cd37478d58eb7f18df533ec1187d6fbc5b54f1e7a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20142.wav"
+name = "l3_20142.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20142.wav"
+bytes = 822716
+sha256 = "1eb51d08ab4bdc90366cc944155b9fc42a832f64f07845cce93024209f75c0c9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20143.mpg"
+name = "l3_20143.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20143.mpg"
+bytes = 81408
+sha256 = "856df786497a394091212086edbb77cc5f5c5572f0381f96be4273d2a7dccabf"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20143.wav"
+name = "l3_20143.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20143.wav"
+bytes = 366524
+sha256 = "801918827f9655f5d1bedeba92aa8b628c2b30bbaf1e7708bacb3b066334359d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20244.mpg"
+name = "l3_20244.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20244.mpg"
+bytes = 120999
+sha256 = "d61b64a058f202a9d075f6c58a83b9ef88eb1aab2a7144c9ab6d788fe58fccec"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20244.wav"
+name = "l3_20244.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20244.wav"
+bytes = 1334204
+sha256 = "4ede05c3b03a2d0bf67f55733ef596bb13a9fc31e842b4c3fb2c48a69cca4511"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20245.mpg"
+name = "l3_20245.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20245.mpg"
+bytes = 391105
+sha256 = "384ccca2d558a3505bb2e7c2860e12aa3b651473ace655cda3a2c8cfb1b2fc53"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20245.wav"
+name = "l3_20245.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20245.wav"
+bytes = 2841020
+sha256 = "22f224b6a56bdf252a515c6b5645d5731b1d33b3a2466fded374b3ac8e129ca2"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20246.mpg"
+name = "l3_20246.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20246.mpg"
+bytes = 130613
+sha256 = "c44f835c6efbfad67359aa327d78f0feaf22c443e191d68f80e6d2fefd6d8af5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20246.wav"
+name = "l3_20246.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20246.wav"
+bytes = 864188
+sha256 = "10924547d482d5d0f526a680953398687eae1ed630fac28991b7392b709f6950"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20247.mpg"
+name = "l3_20247.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20247.mpg"
+bytes = 120999
+sha256 = "21202cfa6210ff7b03b3cb2699f09820228d42ab1d529f4164b750f2eb8f762b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20247.wav"
+name = "l3_20247.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20247.wav"
+bytes = 1334170
+sha256 = "6f2ff34143db15d34a6ab94f8182a749af3d7d816072a71df9fe202b0120f289"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20248.mpg"
+name = "l3_20248.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_20248.mpg"
+bytes = 120999
+sha256 = "354f49ea821a5e354fc75bf4d30c9391410bb6d45285c7bf3e06e412150db443"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_20248.wav"
+name = "l3_20248.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_20248.wav"
+bytes = 1334170
+sha256 = "efa1e4da004dd304e81de18a5436e42d7bc15c0281a687a658adb0fa059fbc16"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25101.mpg"
+name = "l3_25101.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25101.mpg"
+bytes = 81408
+sha256 = "311a12f52d2a648c6e1020dd759053c49dd75ec610887788cc15febc3044e387"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25101.wav"
+name = "l3_25101.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25101.wav"
+bytes = 366380
+sha256 = "071f37eb11e447f7c20129240d15a7d5395b482ff0255329667d36994a7f9813"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25102.mpg"
+name = "l3_25102.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25102.mpg"
+bytes = 44064
+sha256 = "4d7bdbd3c4cb4334cbb4b0a47be6310146ed77a2f22747d9a8bc33761de7477e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25102.wav"
+name = "l3_25102.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25102.wav"
+bytes = 235052
+sha256 = "9e79849b1c2269e3e8dd28639d1a4b2e0d6b5c7f8803c383cc38b348e0f6b30a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25103.mpg"
+name = "l3_25103.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25103.mpg"
+bytes = 43259
+sha256 = "84ff4246c531e6483fcb46f4d9a58ab96d740b2d9a19753d8d5b74e23460fef3"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25103.wav"
+name = "l3_25103.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25103.wav"
+bytes = 317996
+sha256 = "f8b2ee2b080bc0f8cb220f4a2f1d23a2ade50e1f595b000224e788b288ee49e2"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25104.mpg"
+name = "l3_25104.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25104.mpg"
+bytes = 32832
+sha256 = "0e6988509207e2724c7f68ee576463ba845b7d9047dc011b157c0be2e79766cd"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25104.wav"
+name = "l3_25104.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25104.wav"
+bytes = 262700
+sha256 = "c1751343331f7d7714c1f8d135e4b9ac6ca06a1bb1d9fa016bee8b35bda7f5be"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25201.mpg"
+name = "l3_25201.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25201.mpg"
+bytes = 81502
+sha256 = "2b39e8218624f209f4ee3402f3f6472932b743e1948a40964c2ba86a4cac8836"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25201.wav"
+name = "l3_25201.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25201.wav"
+bytes = 673964
+sha256 = "0992c6748d56d6aef51dcfbbbcf7cd0915ae4592315ff8215746e675f5982a2c"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25202.mpg"
+name = "l3_25202.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25202.mpg"
+bytes = 81502
+sha256 = "772fda6c9b80b1e536ec77b4c903b366389a0cb9a8ff8482105e23714d04557b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25202.wav"
+name = "l3_25202.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25202.wav"
+bytes = 673964
+sha256 = "f9d450af9e410044a4204e6c0d5ea85dc21963cf01ab10aa67a6d5cc317ffa14"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25203.mpg"
+name = "l3_25203.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25203.mpg"
+bytes = 81502
+sha256 = "631185592590d922fd97be635c3ba95c265810353da1c6cf63638292fbfed039"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25203.wav"
+name = "l3_25203.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25203.wav"
+bytes = 673964
+sha256 = "03d058af1d63348f384d228e2f1057c1d80363a9f1a712d7dcd3ef67fc223bb9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25204.mpg"
+name = "l3_25204.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25204.mpg"
+bytes = 40392
+sha256 = "5c2195c845ee6793846c99fa5e929090aa9401fac6297f09f6f7df7e6dfc0c34"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25204.wav"
+name = "l3_25204.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25204.wav"
+bytes = 352556
+sha256 = "f42b272c7732a4c21d518f8995809b3229a2b3982a37c6c903b89b5b62dd630b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25205.mpg"
+name = "l3_25205.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25205.mpg"
+bytes = 39654
+sha256 = "4bafbb18e17d924ab81602bf415dd52fcb653052411c1c91d79c10905647e641"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25205.wav"
+name = "l3_25205.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25205.wav"
+bytes = 476972
+sha256 = "e657cc06ed0a6c3e14c755e7073f26d29e7347190859ef8045cf4094c7cfc850"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25206.mpg"
+name = "l3_25206.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25206.mpg"
+bytes = 38016
+sha256 = "bc4e283a626a8a49a3b66c66e7b95f35dd9c60f1c5f3e5e9e6e3fffe949fc246"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25206.wav"
+name = "l3_25206.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25206.wav"
+bytes = 497708
+sha256 = "88d00c3115d7be8b1833ebfccbca1978f6dce649770434919ceb4ae8e9402f0f"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25207.mpg"
+name = "l3_25207.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25207.mpg"
+bytes = 29376
+sha256 = "1f5253905a5feec8ba2eff0a2d8e7c929429d300ecbddf664d6c911239a287dd"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25207.wav"
+name = "l3_25207.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25207.wav"
+bytes = 352556
+sha256 = "6db83bb491d57c4976756646f560868ee063c41da25cac1caa44522be988a84c"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25208.mpg"
+name = "l3_25208.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25208.mpg"
+bytes = 29257
+sha256 = "c53b18b20ccc21a2c6bcdfdd271142fd54785d512ff195e82df19e84b3fce364"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25208.wav"
+name = "l3_25208.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25208.wav"
+bytes = 483884
+sha256 = "b8d4e45db5fa80deec45de7da069c4d14e73f6d470fa845bb375649563c74a9e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25209.mpg"
+name = "l3_25209.mpg"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMpeg12/add-opt/l3_25209.mpg"
+bytes = 29184
+sha256 = "faa6305f9d19bc1a475830d8389f35a18cc3d516c4047a0b3fe0d16dff6f7499"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "mp3/iso/l3_25209.wav"
+name = "l3_25209.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD3/mpeg4audio-conformance/referencesWav/l3_25209.wav"
+bytes = 525356
+sha256 = "157edf4f13ae312add646cfb3daaf710d9df1b89a67c9b25f20be279c54c7a25"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+# AAC: the AAC-LC streams (al*_44.mp4) with their reference decodes (.wav), and the informative
+# ADTS/ADIF versions (al18_*, ap*_*) of the ISO/IEC 14496-26 conformance bitstreams, one
+# download each from standards.iso.org. An ADTS or ADIF stream's reference is the .wav of the
+# matching official .mp4, which is not always fetched here. Pass criterion: the decoded PCM
+# against the reference WAV within the thresholds of ISO/IEC 14496-4.
+
+[[file]]
+id = "aac/iso/al00_44.mp4"
+name = "al00_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al00_44.mp4"
+bytes = 63029
+sha256 = "27017a8c971a09502587b5bd1157277fcab20433b1f2fcd31fb35f21d533f372"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al00_44.wav"
+name = "al00_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al00_44.wav"
+bytes = 986324
+sha256 = "fa1eb1a8ac484d06797f1e30a18f9ff942efa117a6311e54f664aeaeb90e5cb0"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al00sf_44.mp4"
+name = "al00sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al00sf_44.mp4"
+bytes = 63049
+sha256 = "98d82cede933ea914f65ad12e7cf693fb3dbf88050a38cd0c66b8addfd74ce7b"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al00sf_44.wav"
+name = "al00sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al00sf_44.wav"
+bytes = 930394
+sha256 = "9f7ae7bc964744e7c8ad18470f584ce54bee5c79cc8c44ddb80daadb253e8022"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al01_44.mp4"
+name = "al01_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al01_44.mp4"
+bytes = 69531
+sha256 = "286d7c78f919e0d3ac5456e394ec94d64a937d5d8664fdf41307bc653826dbf1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al01_44.wav"
+name = "al01_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al01_44.wav"
+bytes = 1084628
+sha256 = "d635b9f404ed84f4b95625dd0402a0d52c14c4f44c6f2fe4226e47aedf9cdc01"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al01sf_44.mp4"
+name = "al01sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al01sf_44.mp4"
+bytes = 69415
+sha256 = "9726df605aedf67e62a8c18ce87b8e88e3c1276e1d8a3522ca4219d1cab51fe2"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al01sf_44.wav"
+name = "al01sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al01sf_44.wav"
+bytes = 1022554
+sha256 = "c3ba2d5ebe14e55d0ab5dbbb322da95aac4cf17ff4d75cfbd1402d11f2c9ddd1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al02_44.mp4"
+name = "al02_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al02_44.mp4"
+bytes = 69329
+sha256 = "1c00ddfd0a09cbc892db404c279e3b6a00db24a0db21337f797c4a4a39bedac1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al02_44.wav"
+name = "al02_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al02_44.wav"
+bytes = 1084628
+sha256 = "67ad0252a0eabeef17dd0860f636f76ac5b31f6e67d59b3862fa9ec8bc8f0bf7"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al02sf_44.mp4"
+name = "al02sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al02sf_44.mp4"
+bytes = 69235
+sha256 = "03a56d499703786dfe25603d7ea85a7561f26281c9818bd0def7b0f7cd7eab55"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al02sf_44.wav"
+name = "al02sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al02sf_44.wav"
+bytes = 1022554
+sha256 = "dd36b9856082e76ada0cc53138d9069c0640ab0d4bd3c98cf0c0a276f8fe30e3"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al03_44.mp4"
+name = "al03_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al03_44.mp4"
+bytes = 69531
+sha256 = "031768c6496907055bde4c138808850327bae81f06ee062b7e2866b1ca8227d5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al03_44.wav"
+name = "al03_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al03_44.wav"
+bytes = 1084628
+sha256 = "db4755ffd03b4141d9962a613ca3ca0f69616fe7526eb890566f9c3ea824e346"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al03sf_44.mp4"
+name = "al03sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al03sf_44.mp4"
+bytes = 69415
+sha256 = "9b27041685de9f97d65b5d59f568eea5187fd9918a3cfaf45494c39347215888"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al03sf_44.wav"
+name = "al03sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al03sf_44.wav"
+bytes = 1022554
+sha256 = "fa71b5b42002a879a6d91bf72f7b926ebbd230e86b5427603396a449946d5884"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al04_44.mp4"
+name = "al04_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al04_44.mp4"
+bytes = 69537
+sha256 = "e98388671459a44e499e3ddbfb93ffb9bc027bb4a434dbba9ee9a918600dfebf"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al04_44.wav"
+name = "al04_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al04_44.wav"
+bytes = 1084628
+sha256 = "3b7477bf259d8212f119551a333947176ae0544731d74c0bc2f1b5abdda9ee23"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al04sf_44.mp4"
+name = "al04sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al04sf_44.mp4"
+bytes = 69422
+sha256 = "4a6ec0ba2a568f45903f9c53a3af74c250c0354e7026e6a7a3d4c4db91fbae9c"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al04sf_44.wav"
+name = "al04sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al04sf_44.wav"
+bytes = 1022554
+sha256 = "13b6a45857dd208f8cc9ef39703dd9c2f3e2962acfc41ae52fc2bf87f1233f65"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al05_44.mp4"
+name = "al05_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al05_44.mp4"
+bytes = 122175
+sha256 = "cb322e5b75b3ef3a5e421f030521ed81028dc73d565f5250df3928b86c389de4"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al05_44.wav"
+name = "al05_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al05_44.wav"
+bytes = 1954004
+sha256 = "c2c09696c3d3a13611803819af5a2f46d5b18cc48d930736c4dd582e646bbc3e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al05sf_44.mp4"
+name = "al05sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al05sf_44.mp4"
+bytes = 122076
+sha256 = "04feb9e1933c7931420628310c720a5a881fd1b2c36aeccdd401b900c632e9fe"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al05sf_44.wav"
+name = "al05sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al05sf_44.wav"
+bytes = 1843354
+sha256 = "a44b3e607dd1dcb942abc708097d867cfee445a4f839e1e9dd7f2821911e44df"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al06_44.mp4"
+name = "al06_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al06_44.mp4"
+bytes = 201421
+sha256 = "c7c36aa972bea86c09bde15360866a60f014523291346857236b8ed7e0f932d1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al06sf_44.mp4"
+name = "al06sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al06sf_44.mp4"
+bytes = 201304
+sha256 = "28f284398839932fd0fa91e5b89faf489826cd1b03e10ba0ee9414659d319f9f"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al07_44.mp4"
+name = "al07_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al07_44.mp4"
+bytes = 436407
+sha256 = "65537ff50e3920c2e9b6f9c6d5b8b3e7612529e00c03101de1e0b14b4ee4b167"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al07sf_44.mp4"
+name = "al07sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al07sf_44.mp4"
+bytes = 437899
+sha256 = "21d1705181e289f9b1d6d477934532612e8bae4c56d70c5a52f8ec0b06e39c28"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al08_44.mp4"
+name = "al08_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al08_44.mp4"
+bytes = 3157384
+sha256 = "a4948bb11cbd955f72e62621535311b5f23c48847758551b742a8575055bb72a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al08sf_44.mp4"
+name = "al08sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al08sf_44.mp4"
+bytes = 3160141
+sha256 = "1e7391fb7cb7f2c459643edef69e76048b636f5bf4449f5745b3ff90e11e9490"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al14_44.mp4"
+name = "al14_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al14_44.mp4"
+bytes = 19640
+sha256 = "82d2054a7fa5c177d60a38b4431b6a3b72909bee30e60ffb3fa371313ccd95bb"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al14_44.wav"
+name = "al14_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al14_44.wav"
+bytes = 307400
+sha256 = "7087e756bbb536c3ddf65402e32035b0567e77ae0e3b13f28fdf74fef7c3dc67"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al14sf_44.mp4"
+name = "al14sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al14sf_44.mp4"
+bytes = 19601
+sha256 = "db80ca37bb6bee5b8be3050a3564beac04aa0c631b0baac2a59f70a8e2b84495"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al14sf_44.wav"
+name = "al14sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al14sf_44.wav"
+bytes = 288154
+sha256 = "3e9611ed50c9c5e70f878989ebb06c6bfc5d3ee788ed26931c516be4235bb431"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al16_44.mp4"
+name = "al16_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al16_44.mp4"
+bytes = 309997
+sha256 = "73804b16c278ef2876525d56c810f2a1414f8eff458a1068f64f0b1b39715747"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al16sf_44.mp4"
+name = "al16sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al16sf_44.mp4"
+bytes = 310265
+sha256 = "8b3cea5a30855aa46b76bbb17e3b018f23de00699b60a84f1509e664864a8377"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al17_44.mp4"
+name = "al17_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al17_44.mp4"
+bytes = 122850
+sha256 = "9d26cd8f1066385b06f6e53f6cf2c85e2d3eb72c970e1ae50f0d46d1c1a3bc18"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al17_44.wav"
+name = "al17_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al17_44.wav"
+bytes = 1972432
+sha256 = "c7b343c0240a1b1e3c3d0b39bc28dc24ffb71c6bf2f90aaa4f218dc691c9a133"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al17sf_44.mp4"
+name = "al17sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al17sf_44.mp4"
+bytes = 122851
+sha256 = "27f9bdd775fb05ff98ec19bdd23a0a4fe11d44e65fa2ea9de173ea19b14ca6a1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al17sf_44.wav"
+name = "al17sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al17sf_44.wav"
+bytes = 1860634
+sha256 = "d457d35688a175ac3200d6874602d61e5330a0f54bd03d588a7f21292b779e93"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_08.adif"
+name = "al18_08.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/al18_08.adif"
+bytes = 1800311
+sha256 = "5d6c28c972c00b8e29b931166352af308b0018ec56e489ee7bf3e02a609d1fc6"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_08.adts"
+name = "al18_08.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/al18_08.adts"
+bytes = 1819985
+sha256 = "aa14b36b960aae53b1a135ae0397b997dac2daed969bbfe79e78685deb7e378e"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_22.adif"
+name = "al18_22.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/al18_22.adif"
+bytes = 1045021
+sha256 = "6aa7af854d2c365dc02514442886f9ba8ef6ed167dba23d3c1765952879e9858"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_22.adts"
+name = "al18_22.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/al18_22.adts"
+bytes = 1064695
+sha256 = "6c728a5bbad893afd1159fe886341b5b31ee7c008a4d750785f1eeeca72ced34"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_32.adif"
+name = "al18_32.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/al18_32.adif"
+bytes = 720042
+sha256 = "1afd5f81a3ea59026a9897aa5ed1ba6f22b68b77c423e042664aba329ad0211d"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_32.adts"
+name = "al18_32.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/al18_32.adts"
+bytes = 745342
+sha256 = "2365ded3ea8b09bdd56fbf367ab1219dd571482104d80f50ac50c1da21230ac5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_44.mp4"
+name = "al18_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al18_44.mp4"
+bytes = 546969
+sha256 = "4730cf09e9b599f5376fa398e9901876b527114e08b4b857d80270375de85e21"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_44.wav"
+name = "al18_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al18_44.wav"
+bytes = 8641736
+sha256 = "09150b2962ccab2d47c85b6a3298d0b02c9ff521ebc41823db9b7cb589ceaca6"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_64.adif"
+name = "al18_64.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/al18_64.adif"
+bytes = 359953
+sha256 = "e0e3094d5a747b616c70b627683f47f3a5472cd65288fa86922a5daa3a8ff8e9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_64.adts"
+name = "al18_64.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/al18_64.adts"
+bytes = 385253
+sha256 = "8225dce468028d324ebd16ff7ebe678c0384e7ea538111b49a3869352f3e43c1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_96.adif"
+name = "al18_96.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/al18_96.adif"
+bytes = 239923
+sha256 = "d15afb4a16cec6203c9048a6484c584fb9911d23fda156de2d17c9005e1cb132"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18_96.adts"
+name = "al18_96.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/al18_96.adts"
+bytes = 259597
+sha256 = "73ba89ee858f728c4d5923bd7f4813f9195c8eeaeb358e257143153e52707471"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18sf_44.mp4"
+name = "al18sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al18sf_44.mp4"
+bytes = 545549
+sha256 = "3147f05cf14df4793b80c745d2dc90d6ccf324696d856dbf0e066e69127af4f5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al18sf_44.wav"
+name = "al18sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al18sf_44.wav"
+bytes = 8101594
+sha256 = "8f166152aec4c95d17f660ba232f55109bb9585c8696ff010db8c1c5aa755974"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al19_44.mp4"
+name = "al19_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al19_44.mp4"
+bytes = 546969
+sha256 = "7719829144c52f65cd0765e8e646369585183b8a2cf57c30b211112428b1e8c4"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al19_44.wav"
+name = "al19_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al19_44.wav"
+bytes = 8641736
+sha256 = "7b39e1b3ff50b3a4dace0f4f395eea4b9c5e714ce3bb1a8ce552c6ad25a70e8a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al19sf_44.mp4"
+name = "al19sf_44.mp4"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedMp4/al19sf_44.mp4"
+bytes = 545549
+sha256 = "17b45a832ebc7349d98dca1b8881d9f50c7f3e69104238f87292da7e021c1ab5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/al19sf_44.wav"
+name = "al19sf_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/al19sf_44.wav"
+bytes = 8101594
+sha256 = "477a1b3490f3a6d56cc507bcd56ef85d97e2859c872d6516d6e21de432e1b0aa"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/ap01_48.adif"
+name = "ap01_48.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/ap01_48.adif"
+bytes = 120503
+sha256 = "e597aea831eeaf9b4a083c9d77d152d7fcc071fe4606a11fc03070ac650ef0ce"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/ap01_48.adts"
+name = "ap01_48.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/ap01_48.adts"
+bytes = 126831
+sha256 = "64c73b197b450da6af2a326d8b6827a6e7d439b2522eb7f54c84fec1d53a5b23"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/ap02_48.adif"
+name = "ap02_48.adif"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdif/add-opt/ap02_48.adif"
+bytes = 303222
+sha256 = "46c381021edbe29877c66d49c07608ef86e3e80cdd01f66022ae391cb38ef3ff"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso/ap02_48.adts"
+name = "ap02_48.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/mpeg4audio-conformance/compressedAdts/add-opt/ap02_48.adts"
+bytes = 309449
+sha256 = "3427608cf48ad4ff01f85ab4c22d70a907e2622f5db3e85087a4113251b116b9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"

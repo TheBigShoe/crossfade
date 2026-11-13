@@ -3,6 +3,7 @@
 //! crate; nothing in the engine depends on it.
 #![forbid(unsafe_code)]
 
+mod archive;
 mod cache;
 mod cli;
 mod fetch;
@@ -13,7 +14,12 @@ mod testutil;
 
 pub use cache::{Cache, Problem};
 pub use cli::{Defaults, run};
-pub use fetch::{CurlDownloader, Downloader, Event, Failure, Outcome, Summary, fetch, seed};
+pub use fetch::{
+    CurlDownloader, Downloader, Event, Failure, Outcome, Received, Summary, fetch, seed, selected,
+};
 
-pub use manifest::{Entry, Expect, Manifest, ManifestError};
-pub use require::{RequireError, require, require_from, try_require, workspace_root};
+pub use manifest::{Archive, ArchiveFormat, Entry, Expect, Manifest, ManifestError, Source};
+pub use require::{
+    RequireError, require, require_all, require_all_from, require_from, try_require,
+    try_require_all, workspace_root,
+};

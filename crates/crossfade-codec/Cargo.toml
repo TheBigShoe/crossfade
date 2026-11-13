@@ -10,6 +10,7 @@ license.workspace = true
 crossfade-core.workspace = true
 crossfade-flac.workspace = true
 crossfade-vorbis.workspace = true
+crossfade-alac.workspace = true
 
 [lints]
 workspace = true
