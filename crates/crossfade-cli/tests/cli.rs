@@ -187,7 +187,9 @@ fn every_help_names_all_readable_inputs() {
         ["concat", "--help"],
     ] {
         let help = text(&run(&args).stdout).to_lowercase();
-        for want in ["wav", "flac", "aiff", "vorbis", "mp3", "m4a", "alac", "aac"] {
+        for want in [
+            "wav", "flac", "aiff", "vorbis", "opus", "mp3", "m4a", "alac", "aac",
+        ] {
             assert!(help.contains(want), "{want} missing from {args:?}: {help}");
         }
         assert!(

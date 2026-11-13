@@ -1575,6 +1575,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-format",
  "crossfade-graph",
+ "crossfade-opus",
  "crossfade-testkit",
  "crossfade-vorbis",
  "ctrlc",

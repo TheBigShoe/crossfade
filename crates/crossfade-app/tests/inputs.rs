@@ -170,9 +170,10 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
     let InputState::Failed(opus) = probe_path("talk.opus", &mut io, &Limits::default()) else {
         panic!("expected Failed");
     };
+    // Opus in Ogg is read now: this stub is a broken Opus stream, not a refusal.
     assert_eq!(
         opus,
-        "This Ogg file holds Opus audio. Crossfade recognises Opus but cannot open it yet."
+        "malformed input: ogg opus: invalid header: an identification header is cut short"
     );
     let InputState::Failed(film) = probe_path("film.ogv", &mut io, &Limits::default()) else {
         panic!("expected Failed");
@@ -180,7 +181,7 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
     assert_eq!(
         film,
         "This Ogg file holds Theora video, which Crossfade cannot open. \
-         Inside Ogg it opens FLAC and Vorbis audio."
+         Inside Ogg it opens FLAC, Vorbis and Opus audio."
     );
     let InputState::Failed(vorbis) = probe_path("song.ogg", &mut io, &Limits::default()) else {
         panic!("expected Failed");

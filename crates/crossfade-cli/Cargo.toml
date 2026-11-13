@@ -21,8 +21,9 @@ serde_json.workspace = true
 [dev-dependencies]
 # Only to name a `FormatId` when building a `ProbeReport` by hand.
 crossfade-format.workspace = true
-# Builds Ogg Vorbis inputs for the tests.
+# Builds Ogg Vorbis and Ogg Opus inputs for the tests.
 crossfade-vorbis.workspace = true
+crossfade-opus.workspace = true
 assert_cmd.workspace = true
 crossfade-testkit.workspace = true
 insta.workspace = true
