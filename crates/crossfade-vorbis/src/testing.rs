@@ -630,7 +630,22 @@ pub fn yields(ident: &[u8], setup: &[u8], audio: &[Vec<u8>]) -> Vec<i64> {
 /// setup headers on the second, then the audio packets with granule positions from [`yields`]
 /// and `layout`. Every page carries its CRC.
 pub fn ogg_file(headers: [&[u8]; 3], audio: &[Vec<u8>], layout: &OggLayout) -> Vec<u8> {
-    let ys = yields(headers[0], headers[2], audio);
+    ogg_file_with_yields(
+        headers,
+        audio,
+        &yields(headers[0], headers[2], audio),
+        layout,
+    )
+}
+
+/// As [`ogg_file`], with the granules counting `ys` frames for each packet (an encoder that
+/// counts differently from the decoder).
+pub fn ogg_file_with_yields(
+    headers: [&[u8]; 3],
+    audio: &[Vec<u8>],
+    ys: &[i64],
+    layout: &OggLayout,
+) -> Vec<u8> {
     let mut out = Vec::new();
     let mut sequence = 0u32;
     let mut page = |packets: &[&[u8]], granule: i64, flags: u8, out: &mut Vec<u8>| {
@@ -690,4 +705,73 @@ pub fn ogg_crc(data: &[u8]) -> u32 {
         }
     }
     crc
+}
+
+/// A small valid stream for readers' and front ends' tests: see [`sample_stream`].
+#[derive(Debug, Clone)]
+pub struct SampleStream {
+    /// Identification, comment (vendor "crossfade test", TITLE=Tone, ARTIST=Nobody) and setup.
+    pub headers: [Vec<u8>; 3],
+    pub audio: Vec<Vec<u8>>,
+    pub setup: Setup,
+}
+
+/// `channels` channels at 32 kHz, block sizes 256 and 2048, one audio packet per letter of
+/// `seq` (S short, L long, X a packet whose mode does not exist), each with a residue type 2
+/// spectrum drawn from `seed` and a quiet flat floor per channel.
+pub fn sample_stream(channels: u8, seq: &str, seed: u64) -> SampleStream {
+    let book = Book {
+        dims: 2,
+        ..Book::flat(3)
+    }
+    .with_values(-2, &(0..16).map(|v| v % 5).collect::<Vec<_>>());
+    let mut setup = simple_setup(2, book.clone(), 512, 16);
+    // A third mode, so that mode 3 does not exist (two mode bits).
+    setup.modes.push(Mode {
+        long: false,
+        mapping: 0,
+    });
+    let words = book.codewords();
+    let mut x = seed;
+    let modes: Vec<u8> = seq
+        .bytes()
+        .filter(|&b| b != b'X')
+        .map(|b| u8::from(b == b'L'))
+        .collect();
+    let mut audio = vec![];
+    let mut k = 0;
+    for b in seq.bytes() {
+        if b == b'X' {
+            audio.push(vec![0b110]);
+            continue;
+        }
+        let m = modes[k];
+        let prev = k.checked_sub(1).is_none_or(|j| modes[j] == 1);
+        let next = modes.get(k + 1).is_none_or(|&n| n == 1);
+        k += 1;
+        let mut wr = setup.start_packet(m, prev, next);
+        for c in 0..channels {
+            wr.put_bit(true);
+            wr.put(170 + 10 * u64::from(c % 8), 8);
+            wr.put(150, 8);
+        }
+        let half = if m == 1 { 1024 } else { 128 };
+        for _ in 0..(512.min(half * usize::from(channels)) / 16) {
+            wr.put_bit(false);
+            for _ in 0..8 {
+                x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                Book::encode_with(&words, &mut wr, (x >> 61) as u32);
+            }
+        }
+        audio.push(wr.into_bytes());
+    }
+    SampleStream {
+        headers: [
+            ident(channels, 32_000, [256, 2048]),
+            comment("crossfade test", &["TITLE=Tone", "ARTIST=Nobody"]),
+            setup.write(channels),
+        ],
+        audio,
+        setup,
+    }
 }

@@ -341,7 +341,19 @@ fn the_first_flac_stream_wins_when_there_are_two() {
 
 #[test]
 fn vorbis_and_opus_are_recognised_and_handed_to_their_mappings() {
-    for (prefix, name) in [(&b"\x01vorbis"[..], "vorbis"), (b"OpusHead", "opus")] {
+    // Vorbis is read: this identification packet (all zeros after the signature) says no
+    // channels.
+    let pages = testutil::pages(
+        1,
+        0,
+        &[fake_first_packet(b"\x01vorbis"), vec![1; 10]],
+        &[1, 255],
+    );
+    assert_eq!(
+        malformed(open_bytes(testutil::bytes(&pages)).map(|_| ())),
+        "ogg vorbis: zero channels"
+    );
+    for (prefix, name) in [(&b"OpusHead"[..], "opus")] {
         let pages = testutil::pages(1, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255]);
         match open_bytes(testutil::bytes(&pages)) {
             Err(Error::Unsupported { what }) => assert_eq!(
@@ -379,7 +391,12 @@ fn the_first_flac_vorbis_or_opus_stream_is_chosen() {
             what: format!("{name} in ogg is recognised, but reading it is not built yet"),
         })
     };
-    assert_eq!(bos(&[&skeleton, &vorbis, &flac]), refused("vorbis"));
+    assert_eq!(
+        bos(&[&skeleton, &vorbis, &flac]),
+        Err(Error::Malformed {
+            what: "ogg vorbis: zero channels".into()
+        })
+    );
     assert_eq!(bos(&[&theora, &opus, &vorbis, &flac]), refused("opus"));
     assert_eq!(bos(&[&skeleton, &theora, &flac, &opus]), Ok(CodecId::Flac));
 }

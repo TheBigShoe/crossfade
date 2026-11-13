@@ -1490,6 +1490,7 @@ dependencies = [
  "crossfade-format",
  "crossfade-graph",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "ctrlc",
  "insta",
  "proptest",
@@ -1558,6 +1559,7 @@ dependencies = [
  "crossfade-corpus",
  "crossfade-flac",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "proptest",
  "sha2 0.10.9",
 ]
@@ -1574,6 +1576,7 @@ dependencies = [
  "crossfade-loudness",
  "crossfade-resample",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "insta",
  "libm",
  "proptest",

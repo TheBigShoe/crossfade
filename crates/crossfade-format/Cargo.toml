@@ -13,6 +13,8 @@ crossfade-core.workspace = true
 crossfade-flac.workspace = true
 # The MP4 reader checks an ALAC track's config and takes its channel layout from it.
 crossfade-alac.workspace = true
+# The Ogg Vorbis mapping parses the headers and times packets by their block sizes.
+crossfade-vorbis.workspace = true
 
 [lints]
 workspace = true
