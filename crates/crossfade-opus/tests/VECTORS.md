@@ -60,7 +60,7 @@ sample of the durations below (for example testvector01: 5,660,160 bytes = 1,415
 - **Hybrid alone** (needs both layers): testvector05 (SWB), testvector06 (FB), 10 and 20 ms,
   code 0, mono then stereo (from packet 1020 in 05).
 
-## Mode switches (stage 3: redundancy and transitions)
+## Mode switches (redundancy and transitions)
 
 - testvector08 and testvector09: five SILK packets (0-4, stereo), then CELT to the end; one
   SILK to CELT switch, then many stereo and bandwidth switches inside CELT. A CELT-only decoder

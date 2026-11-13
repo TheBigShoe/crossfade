@@ -1,6 +1,6 @@
 [package]
 name = "crossfade-opus"
-description = "Opus (RFC 6716, updated by RFC 8251) in pure Rust: the range decoder, packet and Ogg header parsing, and the decoder's frame."
+description = "Opus (RFC 6716, updated by RFC 8251) in pure Rust: a decoder (SILK, CELT, hybrid, concealment, multistream) and Ogg Opus header parsing."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
