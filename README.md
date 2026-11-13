@@ -40,8 +40,11 @@ against whole process, best of 11 runs (milliseconds):
 | Decode (level 5 file) | 21.4 | 45.8 | 70.3 | |
 
 Files are the same size as the reference's or smaller, and the thread count
-never changes a byte. [docs/performance.md](docs/performance.md) has the full
-tables, the method, the caveats and the script that repeats the measurement.
+never changes a byte. MP3, AAC and ALAC decode faster than `mpg123` and macOS's
+`afconvert` too. [docs/performance.md](docs/performance.md) has every result on
+one page, what the reference tools are and how to get them, and the scripts
+that repeat the measurement; the full tables are in
+[docs/performance-details.md](docs/performance-details.md).
 
 ## Command line
 
