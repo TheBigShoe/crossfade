@@ -90,7 +90,8 @@ pub struct Decoder {
     ms: MsMask,
     noise: Noise,
     scratch: Scratch,
-    pcm: Vec<f32>,
+    /// The frame's output, one channel after another, before interleaving.
+    planar: Vec<f32>,
 }
 
 impl Decoder {
@@ -160,7 +161,7 @@ impl Decoder {
             },
             noise: Noise::new(),
             scratch: Scratch::new(),
-            pcm: vec![0.0; FRAME_LEN],
+            planar: vec![0.0; FRAME_LEN * channels],
         })
     }
 
@@ -284,10 +285,8 @@ impl Decoder {
                 return Err(malformed("raw data block ends inside an element"));
             }
         }
-        let base = out.len();
-        out.resize(base + FRAME_LEN * self.channels, 0.0);
-        let out = &mut out[base..];
-        for ch in 0..self.channels {
+        let planar = self.planar.as_chunks_mut::<FRAME_LEN>().0;
+        for (ch, pcm) in planar.iter_mut().enumerate() {
             let (spec, seq, shape) = &mut self.frame[ch];
             if !self.decoded[ch] {
                 // A channel the block left out: silence, still overlapping the last frame.
@@ -300,12 +299,10 @@ impl Decoder {
                 *shape,
                 &mut self.overlap[ch],
                 &mut self.scratch,
-                &mut self.pcm,
+                pcm,
             );
-            for (o, &s) in out[ch..].iter_mut().step_by(self.channels).zip(&self.pcm) {
-                *o = s;
-            }
         }
+        interleave(planar, out);
         Ok(())
     }
 
@@ -385,6 +382,25 @@ impl Decoder {
         spec.copy_from_slice(&ics.spec);
         (*s, *w) = (seq, shape);
         self.decoded[ch] = true;
+    }
+}
+
+/// Appends the channels of `planar` to `out`, interleaved.
+fn interleave(planar: &[[f32; FRAME_LEN]], out: &mut Vec<f32>) {
+    match planar {
+        [mono] => out.extend_from_slice(mono),
+        // The common case gets a loop that vectorises.
+        [left, right] => out.extend(left.iter().zip(right).flat_map(|(&l, &r)| [l, r])),
+        _ => {
+            let base = out.len();
+            out.resize(base + FRAME_LEN * planar.len(), 0.0);
+            for (ch, pcm) in planar.iter().enumerate() {
+                let dst = out[base + ch..].iter_mut().step_by(planar.len());
+                for (o, &s) in dst.zip(pcm) {
+                    *o = s;
+                }
+            }
+        }
     }
 }
 

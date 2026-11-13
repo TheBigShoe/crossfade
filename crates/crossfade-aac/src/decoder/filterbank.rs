@@ -295,7 +295,8 @@ impl Scratch {
 }
 
 /// Turns one frame's spectrum into 1024 output samples (`out`), overlapping with the previous
-/// frame and keeping this frame's second half for the next.
+/// frame and keeping this frame's second half for the next. Windowing and overlap-add are one
+/// pass.
 pub(crate) fn synthesize(
     spec: &[f32],
     sequence: u8,
@@ -307,9 +308,12 @@ pub(crate) fn synthesize(
     let t = tables();
     let prev = usize::from(state.shape);
     let cur = usize::from(shape);
-    let (wl_prev, wl_cur) = (&t.windows.long[prev], &t.windows.long[cur]);
-    let (ws_prev, ws_cur) = (&t.windows.short[prev], &t.windows.short[cur]);
-    let time = &mut scratch.time;
+    let (wl_prev, wl_cur) = (&t.windows.long[prev][..1024], &t.windows.long[cur][..1024]);
+    let (ws_prev, ws_cur) = (&t.windows.short[prev][..128], &t.windows.short[cur][..128]);
+    let time = &mut scratch.time[..2048];
+    let saved = &mut state.saved[..1024];
+    // Always zipped last, so no zip draws a place it does not fill.
+    let mut out = out[..1024].iter_mut();
     if sequence == EIGHT_SHORT {
         time.fill(0.0);
         for w in 0..8 {
@@ -329,34 +333,44 @@ pub(crate) fn synthesize(
                 time[at + 128 + i] += x * wv;
             }
         }
+        for ((&a, &b), o) in time[..1024].iter().zip(&*saved).zip(&mut out) {
+            *o = a + b;
+        }
+        saved.copy_from_slice(&time[1024..]);
     } else {
         t.long.run(spec, time, &mut scratch.re, &mut scratch.im);
-        let (head, tail) = time.split_at_mut(1024);
+        let (head, tail) = time.split_at(1024);
+        // This frame's rising half, windowed, plus the last frame's falling half.
         if sequence == LONG_STOP {
-            head[..448].fill(0.0);
-            for (x, &wv) in head[448..576].iter_mut().zip(ws_prev.iter()) {
-                *x *= wv;
+            // Zero, then 0 + saved, as the plain window-then-add order gives.
+            for (&b, o) in saved[..448].iter().zip(&mut out) {
+                *o = 0.0 + b;
+            }
+            let rise = head[448..576].iter().zip(ws_prev);
+            for (((&x, &wv), &b), o) in rise.zip(&saved[448..576]).zip(&mut out) {
+                *o = x * wv + b;
+            }
+            for ((&x, &b), o) in head[576..].iter().zip(&saved[576..]).zip(&mut out) {
+                *o = x + b;
             }
         } else {
-            for (x, &wv) in head.iter_mut().zip(wl_prev.iter()) {
-                *x *= wv;
+            for (((&x, &wv), &b), o) in head.iter().zip(wl_prev).zip(&*saved).zip(&mut out) {
+                *o = x * wv + b;
             }
         }
         if sequence == LONG_START {
-            for (x, &wv) in tail[448..576].iter_mut().zip(ws_cur.iter().rev()) {
-                *x *= wv;
+            saved[..448].copy_from_slice(&tail[..448]);
+            let fall = tail[448..576].iter().zip(ws_cur.iter().rev());
+            for (s, (&x, &wv)) in saved[448..576].iter_mut().zip(fall) {
+                *s = x * wv;
             }
-            tail[576..].fill(0.0);
+            saved[576..].fill(0.0);
         } else {
-            for (x, &wv) in tail.iter_mut().zip(wl_cur.iter().rev()) {
-                *x *= wv;
+            for (s, (&x, &wv)) in saved.iter_mut().zip(tail.iter().zip(wl_cur.iter().rev())) {
+                *s = x * wv;
             }
         }
     }
-    for ((o, &a), &b) in out.iter_mut().zip(&time[..1024]).zip(&state.saved) {
-        *o = a + b;
-    }
-    state.saved.copy_from_slice(&time[1024..]);
     state.shape = shape;
 }
 
