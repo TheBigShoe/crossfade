@@ -68,6 +68,7 @@
 //! go in `celt/tables.rs`, private to this module. Nothing else in the crate shares them;
 //! the range decoder needs none.
 
+mod bands;
 mod cwrs;
 mod ec;
 mod laplace;
