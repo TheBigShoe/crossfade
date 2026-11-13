@@ -97,15 +97,17 @@ fn the_factories_build_big_endian_and_signed_8_bit_pcm() {
 }
 
 #[test]
-fn opus_has_no_decoder_yet_and_is_refused_by_name() {
-    let audio = AudioSpec::new(44100, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
-    // MP3 and Vorbis have decoders; AAC has one behind the `aac` feature, and its own refusal
-    // without it (tests/aac.rs).
-    let info = StreamInfo::new(0, CodecId::Opus, audio, TimeBase::new(1, 48000).unwrap());
-    assert_eq!(
+fn opus_has_a_decoder_from_its_header() {
+    // MP3, Vorbis and Opus have decoders; AAC has one behind the `aac` feature, and its own
+    // refusal without it (tests/aac.rs).
+    let audio = AudioSpec::new(48000, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
+    let mut info = StreamInfo::new(0, CodecId::Opus, audio, TimeBase::new(1, 48000).unwrap());
+    info.extradata = crossfade_opus::testing::ogg::opus_head(2, 312, 0, None);
+    assert!(decoder_for(&info).is_ok());
+    // Without its header, the stream is refused.
+    info.extradata.clear();
+    assert!(matches!(
         decoder_for(&info).err(),
-        Some(Error::Unsupported {
-            what: "no decoder for opus".into()
-        })
-    );
+        Some(Error::Malformed { .. })
+    ));
 }

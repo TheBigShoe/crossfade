@@ -7,6 +7,7 @@ mod aac;
 pub mod alac;
 pub mod flac;
 pub mod mp3;
+pub mod opus;
 pub mod pcm;
 pub mod vorbis;
 
@@ -55,6 +56,9 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Mp3 {
         return mp3::decoder(stream);
+    }
+    if stream.codec == CodecId::Opus {
+        return opus::decoder(stream);
     }
     #[cfg(feature = "aac")]
     if stream.codec == CodecId::Aac {

@@ -39,7 +39,7 @@ fn channel(s: Speaker) -> Option<Channel> {
 }
 
 /// Vorbis's speakers for `channels`, as the engine names them, in Vorbis's order.
-fn speakers(channels: u8) -> Option<Vec<Channel>> {
+pub(crate) fn speakers(channels: u8) -> Option<Vec<Channel>> {
     crossfade_vorbis::speakers(channels)?
         .iter()
         .map(|&s| channel(s))

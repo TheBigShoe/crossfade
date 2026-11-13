@@ -353,17 +353,17 @@ fn vorbis_and_opus_are_recognised_and_handed_to_their_mappings() {
         malformed(open_bytes(testutil::bytes(&pages)).map(|_| ())),
         "ogg vorbis: zero channels"
     );
-    {
-        let (prefix, name) = (&b"OpusHead"[..], "opus");
-        let pages = testutil::pages(1, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255]);
-        match open_bytes(testutil::bytes(&pages)) {
-            Err(Error::Unsupported { what }) => assert_eq!(
-                what,
-                format!("{name} in ogg is recognised, but reading it is not built yet")
-            ),
-            other => panic!("{name}: {:?}", other.err()),
-        }
-    }
+    // Opus too: this identification header has no channels.
+    let pages = testutil::pages(
+        1,
+        0,
+        &[fake_first_packet(b"OpusHead"), vec![1; 10]],
+        &[1, 255],
+    );
+    assert_eq!(
+        malformed(open_bytes(testutil::bytes(&pages)).map(|_| ())),
+        "ogg opus: invalid header: an identification header has no channels"
+    );
 }
 
 /// The first stream, in page order, whose codec has a mapping is the one read.
@@ -387,18 +387,16 @@ fn the_first_flac_vorbis_or_opus_stream_is_chosen() {
         pages.extend(streams.iter().flat_map(|s| s[1..].iter().cloned()));
         open_bytes(testutil::bytes(&pages)).map(|d| d.streams()[0].codec)
     };
-    let refused = |name: &str| {
-        Err(Error::Unsupported {
-            what: format!("{name} in ogg is recognised, but reading it is not built yet"),
-        })
-    };
+    let opus_refused = Err(Error::Malformed {
+        what: "ogg opus: invalid header: an identification header has no channels".into(),
+    });
     assert_eq!(
         bos(&[&skeleton, &vorbis, &flac]),
         Err(Error::Malformed {
             what: "ogg vorbis: zero channels".into()
         })
     );
-    assert_eq!(bos(&[&theora, &opus, &vorbis, &flac]), refused("opus"));
+    assert_eq!(bos(&[&theora, &opus, &vorbis, &flac]), opus_refused);
     assert_eq!(bos(&[&skeleton, &theora, &flac, &opus]), Ok(CodecId::Flac));
 }
 
@@ -420,7 +418,7 @@ fn the_chosen_stream_reaches_its_mapping_after_the_beginning_pages() {
     )
     .unwrap();
     assert_eq!(mapping, Mapping::Vorbis);
-    assert_eq!((stream.serial, &stream.id), (6, &id));
+    assert_eq!(stream.id, id);
     let mut p = Vec::new();
     assert!(stream.packets.next_packet(&mut p).unwrap());
     assert_eq!(p, [1; 300]);

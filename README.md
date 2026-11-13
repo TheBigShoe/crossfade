@@ -4,7 +4,7 @@ An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
 Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC) and
-reads those and lossy audio too (MP3, AAC, Vorbis; Opus is not built yet), with
+reads those and lossy audio too (MP3, AAC, Vorbis, Opus), with
 processing: sample rate and channel conversion, gain, loudness normalising,
 trim, fades and joining files. Lossy encoders and video are planned. It has
 only been run on macOS so far.
@@ -16,7 +16,8 @@ only been run on macOS so far.
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags; true depth below the container (valid bits) and speaker layout (channel mask) |
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
-| Ogg | FLAC and Vorbis | FLAC only | `.oga` and `.ogg`: gapless from the granule positions (priming and padding cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link; Opus is recognised and refused by name |
+| Ogg | FLAC, Vorbis and Opus | FLAC only | `.oga`, `.ogg` and `.opus`: gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link |
+| Opus | yes (in Ogg) | no | Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |
 | Vorbis | yes (in Ogg) | no | Our own decoder, the same bits on every platform: Xiph's 29 test files decode, within 9e-6 of lewton. Output is 32-bit float (16-bit by default when written to an integer container), 1 to 8 channels in WAVE speaker order |
 | MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
 | ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
@@ -57,10 +58,11 @@ crossfade convert song.wav -o song.flac --threads 1   # one thread (the default 
 crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
 crossfade convert song.mp3 -o song.flac
+crossfade convert song.opus -o song.flac
 crossfade probe song.m4a
 ```
 
-Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC and Vorbis), MP3, MP4/M4A (ALAC;
+Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC, Vorbis and Opus), MP3, MP4/M4A (ALAC;
 AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
 FLAC, AIFF, Ogg FLAC. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
@@ -143,10 +145,9 @@ just ci       # formatting, lints, tests, and the conformance tier
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and the Xiph Vorbis, MP3 and AAC (ISO/IEC 14496-26 and 13818-4) test vectors, and compares
-the results with a committed record. The corpus also holds the official Opus
-(RFC 8251) vectors for the decoder to come; none is committed, `corpus.toml` only lists
-where each one lives. `just corpus` takes them all; to fetch one codec, run
+the Xiph Vorbis, MP3, AAC (ISO/IEC 14496-26 and 13818-4) and Opus (RFC 8251) test
+vectors, and compares the results with a committed record. None is committed: `corpus.toml`
+only lists where each one lives. `just corpus` takes them all; to fetch one codec, run
 `cargo run --release -p crossfade-corpus -- fetch --only flac/` (the flag
 repeats, and `verify`, `list` and `seed` take it too).
 

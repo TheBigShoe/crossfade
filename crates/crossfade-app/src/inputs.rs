@@ -53,11 +53,6 @@ pub fn refusal(error: &Error) -> String {
     let Error::Unsupported { what } = error else {
         return error.to_string();
     };
-    // Opus in Ogg is recognised but has no decoder yet.
-    if what.starts_with("opus in ogg is recognised") {
-        return "This Ogg file holds Opus audio. Crossfade recognises Opus but cannot open it yet."
-            .into();
-    }
     // The cargo feature is no advice for someone using the app.
     if what.starts_with("aac decoding is not part of this build") {
         return "This build of Crossfade does not include AAC decoding.".into();
@@ -75,7 +70,7 @@ pub fn refusal(error: &Error) -> String {
         other => format!("{other} data"),
     };
     format!(
-        "This Ogg file holds {holds}, which Crossfade cannot open. Inside Ogg it opens FLAC and Vorbis audio."
+        "This Ogg file holds {holds}, which Crossfade cannot open. Inside Ogg it opens FLAC, Vorbis and Opus audio."
     )
 }
 

@@ -26,6 +26,9 @@ Wall time of the whole command, in milliseconds. Lower is better.
 - The thread count never changes a byte of output.
 - Vorbis has no reference tool in this list. In process it decodes 1.7 to 3.6
   times faster than the `lewton` crate on Xiph's test files.
+- Opus has no reference tool installed to race. On one thread it decodes the
+  RFC 8251 vectors at 400 to 1,700 times real time in process, and
+  `crossfade convert` turns 25 to 30 s of Opus into FLAC in 0.03 to 0.09 s.
 
 ## The reference test
 
@@ -105,7 +108,7 @@ The AAC rows need a build with the `aac` feature, which the script turns on
   format requires and which cannot be split across threads. For MP3 and AAC,
   the dithered conversion to 16-bit is about a fifth of the time.
 - **Not measured.** Linux, Windows and x86 machines. Vorbis against libvorbis
-  (no tool installed). Opus (no decoder yet).
+  and Opus against libopus (no tool installed).
 
 Everything is safe Rust: every crate forbids `unsafe`, so there are no
 hand-written SIMD intrinsics.

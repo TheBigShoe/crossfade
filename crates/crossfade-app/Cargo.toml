@@ -18,6 +18,8 @@ serde_json.workspace = true
 crossfade-testkit.workspace = true
 # Hand-built probe reports name their container.
 crossfade-format.workspace = true
+# Builds an Ogg Opus input for the player's test.
+crossfade-opus.workspace = true
 proptest.workspace = true
 insta.workspace = true
 

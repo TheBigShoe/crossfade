@@ -7,7 +7,7 @@ Join media files end to end into one
 Usage: crossfade concat [OPTIONS] --output <OUTPUT> <INPUTS> <INPUTS>...
 
 Arguments:
-  <INPUTS> <INPUTS>...  Files to read, in order (at least two): wav, flac, aiff/aifc, ogg (FLAC or Vorbis), mp3, mp4/m4a (ALAC; AAC in a build with the aac feature) or .aac (ADTS, same build)
+  <INPUTS> <INPUTS>...  Files to read, in order (at least two): wav, flac, aiff/aifc, ogg/opus (FLAC, Vorbis or Opus), mp3, mp4/m4a (ALAC; AAC in a build with the aac feature) or .aac (ADTS, same build)
 
 Options:
   -o, --output <OUTPUT>

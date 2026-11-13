@@ -227,6 +227,22 @@ treat them as rough.
   million samples per second against 55. Residue decoding is about 43% of the
   time, the IMDCT 26%, floor curves and coupling 22%.
 
+## Opus decoding
+
+No reference tool is installed here (`opusdec` is not), so there is nothing to race; the
+figures are ours alone, taken while a fuzzer ran on one core.
+
+- **In process**, one thread, best of 2 s of rounds (`cargo run --release -p crossfade-opus
+  --example celt_bench -- <files>`), each RFC 8251 vector decoded to stereo: SILK-only 02,
+  03, 04 at 1,702, 1,340 and 1,092 times real time; hybrid 05, 06 at 535 and 505; CELT 01,
+  07, 11 at 407, 593 and 526; the switching vectors 08, 09, 10, 12 at 702, 410, 414 and
+  1,391.
+- **Whole process**, `crossfade convert x.opus -o x.flac` (16-bit, dithered, FLAC on
+  several threads), best of 5 by `/usr/bin/time` (10 ms resolution), on vectors wrapped into
+  Ogg Opus by `--example opus_ogg`: testvector01 (29.5 s, CELT FB stereo) 0.09 s,
+  testvector06 (25.0 s, hybrid FB) 0.06 s, testvector12 (26.6 s, SILK and hybrid mono)
+  0.03 s.
+
 ## MP3 decoding
 
 Our own Layer III decoder (`crossfade-mp3`) against `mpg123` 1.33.7 and

@@ -92,3 +92,21 @@ pub fn write_packet(
     }
     out
 }
+
+/// `packet` (valid, in its usual framing) re-framed self-delimited (Appendix B), as every
+/// stream's packet but the last of a multistream packet is. Panics on an invalid packet.
+pub fn self_delimited(packet: &[u8]) -> Vec<u8> {
+    let p = crate::Packet::parse(packet).expect("a valid packet");
+    let toc = p.toc();
+    let frames = p.frames();
+    let packing = match toc.code() {
+        0 => Packing::One,
+        1 => Packing::TwoEqual,
+        2 => Packing::TwoDifferent,
+        _ => Packing::Signalled {
+            vbr: packet[1] & 0x80 != 0,
+            padding: (packet[1] & 0x40 != 0).then_some(p.padding().len()),
+        },
+    };
+    write_packet(toc.config(), toc.stereo(), frames, packing, true)
+}

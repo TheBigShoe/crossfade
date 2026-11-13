@@ -681,3 +681,24 @@ fn seeks_made_while_nothing_pulls_play_the_last_target_first() {
     r.player.play();
     assert_eq!(pull(&r, 100), expected(&bytes, 6000, STEREO_48K)[..200]);
 }
+
+#[test]
+fn an_ogg_opus_file_plays_what_its_session_decodes() {
+    use crossfade_opus::testing::ogg::{self as w, OggLayout};
+    let mut audio = w::packets(9, true, 20, 50, 1);
+    audio.extend(w::packets(31, true, 20, 80, 2));
+    let bytes = w::ogg_file(
+        &w::opus_head(2, 312, 0, None),
+        &w::opus_tags("t", &[]),
+        &audio,
+        &OggLayout::default(),
+    );
+    let mut r = rig(io_with(&[("a.opus", bytes.clone())]), STEREO_48K);
+    r.player.load("a.opus");
+    r.player.settle();
+    assert_eq!(r.player.state(), State::Ready);
+    assert_eq!(r.player.duration(), Some(40 * 960 - 312));
+    r.player.play();
+    let got = pull(&r, 20_000);
+    assert_eq!(got, expected(&bytes, 0, STEREO_48K)[..40_000]);
+}

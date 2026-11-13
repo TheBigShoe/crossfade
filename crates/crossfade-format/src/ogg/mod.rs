@@ -60,7 +60,6 @@ pub(crate) struct LogicalStream {
     /// beginning-of-stream page, and knowing the stream's serial number and the sequence number
     /// its next page must carry.
     pub(crate) packets: PacketReader,
-    pub(crate) serial: u32,
     /// The identification packet: the whole body of the stream's first page.
     pub(crate) id: Vec<u8>,
 }
@@ -141,12 +140,5 @@ fn choose(
     };
     let mut packets = PacketReader::new(pages, serial, limits.max_packet_bytes);
     packets.resume(sequence.wrapping_add(1), loaded);
-    Ok((
-        mapping,
-        LogicalStream {
-            packets,
-            serial,
-            id,
-        },
-    ))
+    Ok((mapping, LogicalStream { packets, id }))
 }

@@ -1,6 +1,8 @@
 //! The CELT layer (RFC 6716 section 4.3; libopus `celt/`): the MDCT codec used alone in CELT
-//! mode and above 8 kHz in hybrid mode. Not built yet: [`CeltDecoder::decode`] returns
-//! [`Error::Unsupported`].
+//! mode and above 8 kHz in hybrid mode. A port of the RFC 6716 reference decoder's float build
+//! (`celt/celt.c`, `bands.c`, `rate.c`, `cwrs.c`, `vq.c`, `quant_bands.c`, `laplace.c`,
+//! `mdct.c`, `kiss_fft.c`, `pitch.c`, `celt_lpc.c`; 3-clause BSD, see the crate's `COPYING`)
+//! with RFC 8251's changes.
 //!
 //! # The contract with the top level
 //!
@@ -68,8 +70,25 @@
 //! go in `celt/tables.rs`, private to this module. Nothing else in the crate shares them;
 //! the range decoder needs none.
 
-use crate::error::{Error, Result};
-use crate::range::RangeDecoder;
+mod bands;
+mod cwrs;
+mod decoder;
+mod ec;
+mod fft;
+mod laplace;
+mod lpc;
+mod maths;
+mod mdct;
+mod quant_bands;
+mod rate;
+mod tables;
+#[cfg(test)]
+mod test_util;
+mod vq;
+
+pub(crate) use decoder::CeltDecoder;
+/// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
+pub(crate) use tables::{OVERLAP, WINDOW};
 
 /// What the top level tells CELT about one frame (the `celt_decoder_ctl`s `opus_decode_frame`
 /// issues before `celt_decode_with_ec`, and its arguments).
@@ -85,33 +104,4 @@ pub(crate) struct CeltFrame {
     pub(crate) stream_channels: usize,
     /// Add into `out` (hybrid: SILK wrote it first) instead of overwriting it.
     pub(crate) accumulate: bool,
-}
-
-/// The CELT decoder's state for one stream (libopus `CELTDecoder`).
-#[derive(Debug, Clone)]
-pub(crate) struct CeltDecoder {
-    /// Output channels, 1 or 2 (`CC`).
-    #[expect(dead_code, reason = "read once the CELT decoder is built")]
-    channels: usize,
-}
-
-impl CeltDecoder {
-    /// A decoder writing `channels` (1 or 2) output channels (`celt_decoder_init` at 48 kHz).
-    pub(crate) fn new(channels: usize) -> Self {
-        Self { channels }
-    }
-
-    /// Forgets the stream, as `OPUS_RESET_STATE` does.
-    pub(crate) fn reset(&mut self) {}
-
-    /// Decodes (`Some`) or conceals (`None`) one frame into `out` (`frame.frame_size *
-    /// channels` interleaved samples), per the module's contract (`celt_decode_with_ec`).
-    pub(crate) fn decode(
-        &mut self,
-        _dec: Option<&mut RangeDecoder<'_>>,
-        _frame: &CeltFrame,
-        _out: &mut [f32],
-    ) -> Result<()> {
-        Err(Error::Unsupported("celt decoding is not built yet"))
-    }
 }

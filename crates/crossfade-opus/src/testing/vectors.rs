@@ -146,12 +146,12 @@ mod tests {
 
     #[test]
     fn decodes_and_checks_every_packet() {
-        // Two DTX packets (a TOC alone): silence, final range 0, and a lost one before any
-        // audio, which yields nothing.
+        // Two DTX packets (a TOC alone): silence, final range 0, and a lost one between,
+        // which conceals the last packet's 20 ms: silence too, before any audio.
         let file = bit(&[(&[31 << 3], 0), (&[], 0), (&[(1 << 3) | 0b100], 0)]);
         let mut lines = vec![];
         let pcm = decode_vector(&file, 2, |l| lines.push(l.to_string())).unwrap();
-        assert_eq!(pcm, vec![0; 2 * 960 * 2]);
+        assert_eq!(pcm, vec![0; 3 * 960 * 2]);
         assert_eq!(lines.len(), 3);
         assert!(
             lines[0].contains("config 31 CELT FB 20 ms mono code 0"),
@@ -174,11 +174,12 @@ mod tests {
     }
 
     #[test]
-    fn reports_a_layer_that_is_not_built() {
-        let file = bit(&[(&[(31 << 3) | 0b100, 1, 2, 3], 0x1234)]);
-        assert_eq!(
-            decode_vector(&file, 2, |_| {}).unwrap_err(),
-            "packet 0 (config 31 CELT FB 20 ms stereo code 0): opus: celt decoding is not built yet"
+    fn reports_a_decoding_error_with_its_packet() {
+        let file = bit(&[(&[(15 << 3) | 0b100, 1, 2, 3], 0x1234)]);
+        assert!(
+            decode_vector(&file, 2, |_| {})
+                .unwrap_err()
+                .starts_with("packet 0 (config 15 Hybrid FB 20 ms stereo code 0): ")
         );
     }
 }

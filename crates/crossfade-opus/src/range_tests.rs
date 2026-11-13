@@ -71,6 +71,24 @@ fn the_celt_silence_frame_decodes_silence() {
 }
 
 #[test]
+fn bits_can_be_counted_as_read_without_reading_them() {
+    // CELT's silence flag: `dec->nbits_total += tell - ec_tell(dec)`. The count moves, the
+    // range and what decodes next do not.
+    let frame = [0x5A, 0xC3, 0x0F, 0x99];
+    let mut plain = RangeDecoder::new(&frame);
+    let mut marked = RangeDecoder::new(&frame);
+    marked.mark_read_to(32);
+    assert_eq!(marked.tell(), 32);
+    assert_eq!(
+        marked.tell_frac(),
+        plain.tell_frac() + 8 * (32 - plain.tell()) as u32
+    );
+    assert_eq!(marked.rng(), plain.rng());
+    assert_eq!(marked.dec_bit_logp(1), plain.dec_bit_logp(1));
+    assert_eq!(marked.tell() - plain.tell(), 32 - 1);
+}
+
+#[test]
 fn raw_bits_are_read_lsb_first_from_the_end() {
     // RFC 6716 4.1.4: the first value's LSB in the last byte's LSB, on to the penultimate byte.
     let buf = [0x3C, 0x81, 0xA5];

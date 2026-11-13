@@ -48,6 +48,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-flac",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-vorbis",
 ]
 
@@ -81,6 +82,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-flac",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-vorbis",
 ]
 
