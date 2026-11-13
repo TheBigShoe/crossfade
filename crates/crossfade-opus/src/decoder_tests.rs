@@ -38,13 +38,13 @@ fn each_mode_goes_to_its_layer() {
         d.decode(Some(&celt), &mut out),
         Err(Error::Unsupported("celt decoding is not built yet"))
     );
-    assert_eq!(
-        d.decode(Some(&silk), &mut out),
-        Err(Error::Unsupported("silk decoding is not built yet"))
-    );
+    // SILK decodes any bytes; hybrid gets past SILK to the part not built.
+    assert_eq!(d.decode(Some(&silk), &mut out), Ok(960));
+    assert_eq!(out.len(), 960 * 2);
+    out.clear();
     assert_eq!(
         d.decode(Some(&hybrid), &mut out),
-        Err(Error::Unsupported("silk decoding is not built yet"))
+        Err(Error::Unsupported("hybrid decoding is not built yet"))
     );
     assert!(out.is_empty());
 }
