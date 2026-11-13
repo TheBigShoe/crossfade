@@ -77,7 +77,7 @@ fn probe_shows_an_ogg_vorbis_file() {
     let shown = text(&out.stdout);
     assert!(shown.starts_with("Input: ogg, "), "{shown}");
     assert!(
-        shown.contains(&format!("audio, vorbis, 32000 Hz, stereo, f32, ")),
+        shown.contains("audio, vorbis, 32000 Hz, stereo, f32, "),
         "{shown}"
     );
     assert!(shown.contains(&format!("({frames} frames)")), "{shown}");

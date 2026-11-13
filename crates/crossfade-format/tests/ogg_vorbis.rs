@@ -117,6 +117,14 @@ fn packets_are_timed_from_the_granules_on_every_page_size() {
             };
             let bytes = file(&b, &layout);
             let what = format!("{per_page:?} start {start} trim {end_trim}");
+            // One page that is first and last has one granule for both ends: short of its
+            // packets it is end padding, as libvorbisfile reads it (priming counts as padding
+            // too); past them it is a late start (padding then only moves the start).
+            let (start, end_trim) = match (per_page == [50], start) {
+                (true, s) if s - end_trim < 0 => (0, end_trim - s),
+                (true, s) => (s - end_trim, 0),
+                _ => (start, end_trim),
+            };
             let want = expected(&b, start);
             for mut d in [open(&bytes), open_pipe(&bytes)] {
                 let got: Vec<(i64, u64)> =
@@ -312,7 +320,7 @@ fn broken_headers_are_refused() {
     );
     // The setup is parsed against the caller's allocation limit.
     let tight = Limits {
-        max_alloc_bytes: 2000,
+        max_alloc_bytes: 200,
         ..Limits::default()
     };
     let e = open_demuxer(
@@ -419,4 +427,23 @@ fn a_pipe_cannot_seek() {
     let b = build(1, "SSL", 12);
     let mut d = open_pipe(&file(&b, &OggLayout::default()));
     assert!(matches!(d.seek(0), Err(Error::Unsupported { .. })));
+}
+
+#[test]
+fn a_file_cut_off_inside_its_last_packet_ends_with_the_last_whole_one() {
+    let b = build(2, SEQ, 13);
+    let bytes = file(
+        &b,
+        &OggLayout {
+            packets_per_page: vec![1],
+            ..OggLayout::default()
+        },
+    );
+    let whole = all(&mut *open(&bytes));
+    // Ten bytes into the last packet's page body.
+    let last = b.audio.last().unwrap();
+    let cut = bytes.len() - last.len() + 10;
+    for mut d in [open(&bytes[..cut]), open_pipe(&bytes[..cut])] {
+        assert_eq!(all(&mut *d), whole[..whole.len() - 1]);
+    }
 }

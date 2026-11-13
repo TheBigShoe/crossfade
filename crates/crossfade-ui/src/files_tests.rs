@@ -433,7 +433,8 @@ fn every_readable_container_opens_like_a_wav_whatever_its_extension(cx: &mut Tes
 }
 
 #[gpui_test]
-fn an_ogg_file_holding_vorbis_shows_the_refusal_in_plain_words(cx: &mut TestAppContext) {
+fn an_ogg_file_holding_a_broken_vorbis_stream_shows_the_error(cx: &mut TestAppContext) {
+    // Vorbis in Ogg is read now; the fixture is only an identification-packet stub.
     for name in ["voice.ogg", "voice.oga"] {
         let rig = rig_with_file(cx, name, &fixtures::ogg_vorbis());
         assert!(has(cx, rig.window, "inspector-error"));
@@ -442,10 +443,7 @@ fn an_ogg_file_holding_vorbis_shows_the_refusal_in_plain_words(cx: &mut TestAppC
             .read_with(cx, |w, _| w.inspector_error().map(str::to_owned));
         assert_eq!(
             error.as_deref(),
-            Some(
-                "This Ogg file holds Vorbis audio, which Crossfade cannot open yet. \
-                 Only FLAC inside Ogg can be opened."
-            )
+            Some("malformed input: ogg vorbis: identification header too short")
         );
         assert!(!rig.workspace.read_with(cx, |w, _| w.can_convert()));
     }

@@ -353,7 +353,8 @@ fn vorbis_and_opus_are_recognised_and_handed_to_their_mappings() {
         malformed(open_bytes(testutil::bytes(&pages)).map(|_| ())),
         "ogg vorbis: zero channels"
     );
-    for (prefix, name) in [(&b"OpusHead"[..], "opus")] {
+    {
+        let (prefix, name) = (&b"OpusHead"[..], "opus");
         let pages = testutil::pages(1, 0, &[fake_first_packet(prefix), vec![1; 10]], &[1, 255]);
         match open_bytes(testutil::bytes(&pages)) {
             Err(Error::Unsupported { what }) => assert_eq!(
