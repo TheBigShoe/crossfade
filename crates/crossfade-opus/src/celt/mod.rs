@@ -73,6 +73,7 @@ mod cwrs;
 mod ec;
 mod fft;
 mod laplace;
+mod lpc;
 mod maths;
 mod mdct;
 mod quant_bands;
