@@ -1,7 +1,9 @@
-# Performance
+# Performance: full tables and history
 
-How fast Crossfade converts FLAC, measured against the reference `flac` tool,
-and how to repeat the measurement.
+The long form of [performance.md](performance.md): every table, how each
+result was reached step by step, and what is left to gain. Start with the
+short report; come here for the numbers behind a line of it. The reference
+tools and how to get them are described there.
 
 ## Summary
 
