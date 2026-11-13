@@ -79,7 +79,10 @@ fn bits_can_be_counted_as_read_without_reading_them() {
     let mut marked = RangeDecoder::new(&frame);
     marked.mark_read_to(32);
     assert_eq!(marked.tell(), 32);
-    assert_eq!(marked.tell_frac(), plain.tell_frac() + 8 * (32 - plain.tell()) as u32);
+    assert_eq!(
+        marked.tell_frac(),
+        plain.tell_frac() + 8 * (32 - plain.tell()) as u32
+    );
     assert_eq!(marked.rng(), plain.rng());
     assert_eq!(marked.dec_bit_logp(1), plain.dec_bit_logp(1));
     assert_eq!(marked.tell() - plain.tell(), 32 - 1);
