@@ -376,10 +376,15 @@ impl Decoder {
 
     /// Keeps the left (or right) element's spectrum for output channel `ch`.
     fn keep(&mut self, ch: usize, left: bool) {
-        let ics = if left { &self.left } else { &self.right };
+        let ics = if left {
+            &mut self.left
+        } else {
+            &mut self.right
+        };
         let (seq, shape) = (ics.info.window_sequence, ics.info.window_shape);
         let (spec, s, w) = &mut self.frame[ch];
-        spec.copy_from_slice(&ics.spec);
+        // A swap, not a copy: reading an element rewrites its whole spectrum first.
+        std::mem::swap(spec, &mut ics.spec);
         (*s, *w) = (seq, shape);
         self.decoded[ch] = true;
     }
