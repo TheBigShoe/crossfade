@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod actions;
+pub mod audio_out;
 pub mod chrome;
 pub mod config;
 pub mod convert_sheet;
