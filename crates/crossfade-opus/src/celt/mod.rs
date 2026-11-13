@@ -71,6 +71,7 @@
 mod ec;
 mod laplace;
 mod maths;
+mod rate;
 mod tables;
 #[cfg(test)]
 mod test_util;
