@@ -75,6 +75,10 @@ fn comb_filter(
     tapset1: usize,
     overlap: usize,
 ) {
+    // No filter on either side: nothing to add (libopus's early return).
+    if g0 == 0.0 && g1 == 0.0 {
+        return;
+    }
     let t0 = t0 as usize;
     let t1 = t1 as usize;
     let g00 = g0 * COMB_GAINS[tapset0][0];
@@ -105,6 +109,9 @@ fn comb_filter(
 
 /// The steady part of [`comb_filter`]: taps `g10`, `g11`, `g12` at lag `t`.
 fn comb_filter_const(buf: &mut [f32], at: usize, t: usize, n: usize, g10: f32, g11: f32, g12: f32) {
+    if g10 == 0.0 && g11 == 0.0 && g12 == 0.0 {
+        return;
+    }
     for x in at..at + n {
         buf[x] = buf[x]
             + g10 * buf[x - t]

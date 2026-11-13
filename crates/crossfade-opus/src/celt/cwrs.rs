@@ -1,6 +1,7 @@
 //! The PVQ codebook index (`celt/cwrs.c`): the `i`-th vector of `n` integers whose absolute
-//! values sum to `k`, through the U(N, K) recurrence (the reference's generic, small-footprint
-//! path, exact for every size the pulse cache allows: V(N, K) fits in 32 bits there).
+//! values sum to `k`. Decoding uses libopus's table of U(N, K) (built here at compile time);
+//! the reference's small-footprint recurrence is kept for sizes past the table and as the
+//! tests' oracle. Exact for every size the pulse cache allows: V(N, K) fits in 32 bits there.
 
 use super::ec::Ec;
 
