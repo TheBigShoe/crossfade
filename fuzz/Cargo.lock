@@ -71,6 +71,7 @@ dependencies = [
  "crossfade-alac",
  "crossfade-core",
  "crossfade-flac",
+ "crossfade-vorbis",
 ]
 
 [[package]]

@@ -138,3 +138,10 @@ path = "fuzz_targets/alac_decode.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ogg_vorbis_demux"
+path = "fuzz_targets/ogg_vorbis_demux.rs"
+test = false
+doc = false
+bench = false
