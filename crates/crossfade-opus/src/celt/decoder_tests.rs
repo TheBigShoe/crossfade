@@ -126,7 +126,10 @@ fn concealment_has_the_frame_length_and_stays_bounded() {
                 for _ in 0..10 {
                     let out = conceal(&mut d, &f);
                     assert_eq!(out.len(), size * cc);
-                    assert!(out.iter().all(|v| v.is_finite() && v.abs() <= 4.0 * peak.max(0.01)));
+                    assert!(
+                        out.iter()
+                            .all(|v| v.is_finite() && v.abs() <= 4.0 * peak.max(0.01))
+                    );
                 }
             }
         }
@@ -256,7 +259,10 @@ fn hybrid_frames_code_only_the_bands_above_8_khz() {
                 }
             }
         }
-        assert!(high > 0.0 && low < 1e-3 * high, "cc {cc}: low {low} high {high}");
+        assert!(
+            high > 0.0 && low < 1e-3 * high,
+            "cc {cc}: low {low} high {high}"
+        );
     }
 }
 
@@ -268,19 +274,35 @@ fn accumulate_adds_to_what_is_there() {
         let mut plain = CeltDecoder::new(cc);
         let mut acc = CeltDecoder::new(cc);
         let (_, want, _) = decode_bytes(&mut plain, &data, &f);
-        let base: Vec<f32> = (0..480 * cc).map(|i| (i as f32 * 0.01).sin() * 0.25).collect();
+        let base: Vec<f32> = (0..480 * cc)
+            .map(|i| (i as f32 * 0.01).sin() * 0.25)
+            .collect();
         let mut out = base.clone();
         let mut dec = RangeDecoder::new(&data);
-        acc.decode(Some(&mut dec), &CeltFrame { accumulate: true, ..f }, &mut out)
-            .unwrap();
+        acc.decode(
+            Some(&mut dec),
+            &CeltFrame {
+                accumulate: true,
+                ..f
+            },
+            &mut out,
+        )
+        .unwrap();
         for ((&o, &b), &w) in out.iter().zip(&base).zip(&want) {
             assert_eq!(o, b + w);
         }
         // And for a concealed frame.
         let mut out = base.clone();
         plain.decode(None, &f, &mut vec![0.0; 480 * cc]).unwrap();
-        acc.decode(None, &CeltFrame { accumulate: true, ..f }, &mut out)
-            .unwrap();
+        acc.decode(
+            None,
+            &CeltFrame {
+                accumulate: true,
+                ..f
+            },
+            &mut out,
+        )
+        .unwrap();
         assert!(out.iter().zip(&base).any(|(o, b)| o != b));
     }
 }

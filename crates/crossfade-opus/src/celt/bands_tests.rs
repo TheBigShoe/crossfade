@@ -154,6 +154,10 @@ fn hybrid_folding_repeats_the_first_band_into_the_second() {
         let dot: f32 = source.iter().zip(b18).map(|(a, b)| a * b).sum();
         let ns = source.iter().map(|v| v * v).sum::<f32>().sqrt();
         let nb = b18.iter().map(|v| v * v).sum::<f32>().sqrt();
-        assert!(dot / (ns * nb) > 0.99, "lm {lm}: correlation {}", dot / (ns * nb));
+        assert!(
+            dot / (ns * nb) > 0.99,
+            "lm {lm}: correlation {}",
+            dot / (ns * nb)
+        );
     }
 }
