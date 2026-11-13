@@ -98,6 +98,7 @@ dependencies = [
  "crossfade-graph",
  "crossfade-loudness",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-resample",
  "crossfade-vorbis",
  "libfuzzer-sys",
@@ -125,6 +126,13 @@ dependencies = [
 
 [[package]]
 name = "crossfade-mp3"
+version = "0.0.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "crossfade-opus"
 version = "0.0.0"
 dependencies = [
  "libm",
