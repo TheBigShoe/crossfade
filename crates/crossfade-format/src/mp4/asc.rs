@@ -174,5 +174,10 @@ mod tests {
         assert!(parse(&[0x17, 0x80, 0x00, 0x00, 0x10]).is_err());
         let seven = parse(&[0x12, 0x38]).unwrap();
         assert_eq!(seven.layout.channels(), 8);
+        // Configuration 11 is 6.1 (WAVE mask 0x70F), as afconvert writes it.
+        assert_eq!(
+            parse(&[0x11, 0xD8]).unwrap().layout,
+            ChannelLayout::from_mask(0x70F, 7).unwrap()
+        );
     }
 }

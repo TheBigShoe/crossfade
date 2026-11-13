@@ -57,12 +57,22 @@ fn the_two_byte_config_of_lc_stereo_at_44100() {
 }
 
 #[test]
-fn channel_configurations_one_to_seven_give_their_channel_counts() {
-    for (config, channels) in [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 8)] {
+fn channel_configurations_one_to_seven_and_eleven_give_their_channel_counts() {
+    // 11 is 6.1 (14496-3 Table 1.19 as amended): C, L R, Ls Rs, Cs, LFE.
+    for (config, channels) in [
+        (1, 1),
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (5, 5),
+        (6, 6),
+        (7, 8),
+        (11, 7),
+    ] {
         let c = AudioSpecificConfig::parse(&ga(2, 3, config).bytes()).unwrap();
         assert_eq!(c.channels(), channels, "{config}");
     }
-    for config in 8..16 {
+    for config in [8, 9, 10, 12, 13, 14, 15] {
         assert_eq!(
             AudioSpecificConfig::parse(&ga(2, 3, config).bytes()),
             Err(Error::Unsupported(format!(
