@@ -130,7 +130,7 @@ impl SilkState {
             let Some(dec) = dec.as_deref_mut() else {
                 return Err(Error::Corrupt("silk: no data"));
             };
-            self.decode_header(dec, n_int, lost)?;
+            timed(Stage::Entropy, || self.decode_header(dec, n_int, lost))?;
         }
 
         let f0 = self.channels[0].n_frames_decoded;
@@ -228,9 +228,11 @@ impl SilkState {
         let api = ctl.n_channels_api;
         let mut resampled = [0i16; MAX_API_FRAME];
         for n in 0..api.min(n_int) {
-            self.channels[n]
-                .resampler
-                .process(&mut resampled[..n_out], &tmp[n][1..1 + n_out_dec]);
+            timed(Stage::Resampler, || {
+                self.channels[n]
+                    .resampler
+                    .process(&mut resampled[..n_out], &tmp[n][1..1 + n_out_dec]);
+            });
             for (o, &s) in out[n..].iter_mut().step_by(api).zip(&resampled[..n_out]) {
                 *o = s;
             }
@@ -238,9 +240,11 @@ impl SilkState {
         if api == 2 && n_int == 1 {
             if stereo_to_mono {
                 // The right channel's resampler may still hold the old stereo signal.
-                self.channels[1]
-                    .resampler
-                    .process(&mut resampled[..n_out], &tmp[0][1..1 + n_out_dec]);
+                timed(Stage::Resampler, || {
+                    self.channels[1]
+                        .resampler
+                        .process(&mut resampled[..n_out], &tmp[0][1..1 + n_out_dec]);
+                });
                 for (o, &s) in out[1..].iter_mut().step_by(2).zip(&resampled[..n_out]) {
                     *o = s;
                 }
@@ -384,14 +388,16 @@ fn decode_frame(
     match dec {
         Some(dec) if coded => {
             let mut pulses = [0i16; MAX_FRAME_LENGTH];
-            decode_indices(st, dec, f, lost == LostFlag::DecodeLbrr, cond);
-            decode_pulses(
-                dec,
-                &mut pulses,
-                st.indices.signal_type.into(),
-                st.indices.quant_offset_type.into(),
-                l,
-            );
+            timed(Stage::Entropy, || {
+                decode_indices(st, dec, f, lost == LostFlag::DecodeLbrr, cond);
+                decode_pulses(
+                    dec,
+                    &mut pulses,
+                    st.indices.signal_type.into(),
+                    st.indices.quant_offset_type.into(),
+                    l,
+                );
+            });
             decode_parameters(st, &mut ctrl, cond);
             decode_core(st, &mut ctrl, out, &pulses);
             update_out_buf(st, out);
@@ -417,4 +423,46 @@ fn update_out_buf(st: &mut ChannelState, frame: &[i16]) {
     st.out_buf
         .copy_within(st.frame_length..st.frame_length + mv, 0);
     st.out_buf[mv..mv + st.frame_length].copy_from_slice(frame);
+}
+
+/// The stages the profile (an ignored test) times.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Stage {
+    Entropy,
+    Resampler,
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn timed<T>(_: Stage, f: impl FnOnce() -> T) -> T {
+    f()
+}
+
+#[cfg(test)]
+pub(super) use profile::timed;
+
+/// Per-thread time spent in each stage, test builds only.
+#[cfg(test)]
+pub(super) mod profile {
+    use super::Stage;
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    thread_local! {
+        static SPENT: Cell<[Duration; 2]> = const { Cell::new([Duration::ZERO; 2]) };
+    }
+
+    pub(in crate::silk) fn timed<T>(stage: Stage, f: impl FnOnce() -> T) -> T {
+        let t = Instant::now();
+        let r = f();
+        let mut s = SPENT.get();
+        s[stage as usize] += t.elapsed();
+        SPENT.set(s);
+        r
+    }
+
+    /// Entropy decoding and resampling time so far, and resets them.
+    pub(in crate::silk) fn take() -> [Duration; 2] {
+        SPENT.replace([Duration::ZERO; 2])
+    }
 }

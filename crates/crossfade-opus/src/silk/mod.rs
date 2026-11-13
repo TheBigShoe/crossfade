@@ -71,6 +71,25 @@
 //! SILK's tables (the iCDFs of RFC 6716 4.2.7, the NLSF codebooks, the LTP and pitch tables,
 //! the resampler's coefficients and `delay_matrix_dec`, ...) go in `silk/tables*.rs`, private
 //! to this module. Nothing else in the crate shares them; the range decoder needs none.
+//!
+//! # What the joining stage can rely on
+//!
+//! - **Lost frames.** A loss conceals with the rate and coded channels of the last frame with
+//!   data (`DecControl`'s, which survive [`SilkDecoder::reset`] as in libopus). Before any
+//!   such frame there is nothing to conceal: [`Error::Corrupt`] and silence. A loss of less
+//!   than 10 ms conceals 10 ms, advancing SILK's state by 10 ms, and writes its first
+//!   `frame_size` samples (libopus's `max(F10, frame_size)` buffer); a loss of 15 or 30 ms
+//!   is an error and silence, as in libopus (the top level asks for 10 or 20 ms chunks).
+//!   After a reset the concealment is silent: it has no signal to extend.
+//! - **Delay.** The resampler delays its input by `delay_matrix_dec`: 0, 4 and 7 input
+//!   samples at 8, 12 and 16 kHz (0, 16 and 21 samples at 48 kHz), on top of its filters' own
+//!   delay; with it the output equals libopus's sample for sample, so it lines up with CELT
+//!   exactly as libopus's does.
+//! - **Final range.** SILK leaves the range decoder after its last symbol. In SILK-only mode
+//!   the top level must then read the redundancy flags whenever `tell + 17 <= 8 * len`
+//!   (redundancy is implied there): the SILK packets just before a switch to CELT carry such a
+//!   redundant CELT frame (testvectors 08 and 09 packet 4, 12 packet 136), and their stored
+//!   final range includes it.
 
 // The loops index as libopus's do, so each line can be checked against the C.
 #![allow(clippy::needless_range_loop)]

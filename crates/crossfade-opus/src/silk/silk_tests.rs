@@ -334,3 +334,51 @@ proptest::proptest! {
         }
     }
 }
+
+/// The stage profile behind the speed figures: SILK's time on the SILK-only vectors split into
+/// entropy decoding (header, LBRR, indices, pulses), resampling, and the rest (parameters,
+/// synthesis, PLC update, CNG, stereo). Run in release:
+/// `cargo test --release -p crossfade-opus --lib silk_stage_profile -- --ignored --nocapture`.
+#[test]
+#[ignore = "a measurement; needs the corpus (`just corpus`)"]
+fn silk_stage_profile() {
+    use crate::Decoder;
+    use crate::testing::bitfile::read_bit_file;
+    use std::time::{Duration, Instant};
+    let dir = std::env::var_os("CROSSFADE_CORPUS_DIR").map_or_else(
+        || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.corpus-cache"),
+        std::path::PathBuf::from,
+    );
+    for n in ["02", "03", "04"] {
+        let name = format!("testvector{n}.bit");
+        let bytes = std::fs::read(dir.join("opus/rfc8251").join(&name).join(&name)).unwrap();
+        let packets = read_bit_file(&bytes).unwrap();
+        let mut best = (Duration::MAX, [Duration::ZERO; 2]);
+        let mut samples = 0;
+        for _ in 0..10 {
+            let mut d = Decoder::new(2).unwrap();
+            let mut out = vec![];
+            super::dec_api::profile::take();
+            let t = Instant::now();
+            samples = 0;
+            for p in packets.iter().filter(|p| !p.data.is_empty()) {
+                out.clear();
+                samples += d.decode(Some(p.data), &mut out).unwrap();
+            }
+            let total = t.elapsed();
+            let stages = super::dec_api::profile::take();
+            if total < best.0 {
+                best = (total, stages);
+            }
+        }
+        let (total, [entropy, resampler]) = best;
+        let pct = |d: Duration| 100.0 * d.as_secs_f64() / total.as_secs_f64();
+        println!(
+            "testvector{n}: {:.0}x real time; entropy {:.0}%, synthesis {:.0}%, resampler {:.0}%",
+            samples as f64 / 48_000.0 / total.as_secs_f64(),
+            pct(entropy),
+            100.0 - pct(entropy) - pct(resampler),
+            pct(resampler),
+        );
+    }
+}
