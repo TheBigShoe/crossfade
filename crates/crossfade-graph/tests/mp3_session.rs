@@ -37,6 +37,7 @@ fn seek_then_decode_equals_decode_then_slice_through_a_decode_session() {
         "mpeg1-32k",
         "mpeg2",
         "mpeg2-8k",
+        "mpeg2-8k-burst",
         "mpeg25",
         "free",
     ] {

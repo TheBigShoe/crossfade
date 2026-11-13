@@ -20,9 +20,15 @@ which is `lame --quiet <options> <name>.wav <name>.mp3` with:
 | `mpeg1-32k.mp3` | 32 kHz mono, 1 s | `-b 32 -m m --resample 32` | the lowest MPEG-1 bitrate; frames too small for an info frame |
 | `mpeg2.mp3` | 22.05 kHz stereo, 1 s | `-b 64 --resample 22.05` | MPEG-2 (LSF) with an info frame |
 | `mpeg2-8k.mp3` | 16 kHz mono, 1 s | `-b 8 -m m --resample 16` | the lowest MPEG-2 bitrate |
+| `mpeg2-8k-burst.mp3` | 16 kHz mono, 3.7 s of silence with 60 ms noise bursts | `-b 8 -m m --resample 16` | the bit reservoir at its largest: frames reach back 255 bytes, 11 frames |
 | `mpeg25.mp3` | 8 kHz mono, 1 s | `-b 8 -m m --resample 8` | MPEG-2.5, its lowest bitrate |
 | `free.mp3` | 44.1 kHz stereo, 0.5 s | `--freeformat -b 200` | free format (bitrate index 0) |
 | `tagged.mp3` | 44.1 kHz stereo, 0.5 s | `-b 128 --add-id3v2 --id3v2-utf16 --tt Title --ta Artist --tl Album --ty 2024 --tn 3/9 --tg Rock --tc comment` | an ID3v2.3 tag in UTF-16 with a BOM, and an ID3v1.1 tag at the end |
+
+`mpeg2-8k-burst.wav` is not made by `regen.sh`: 12 times 0.25 s of zeros, then 0.06 s of
+uniform noise of amplitude 9000, at 16 kHz mono 16-bit, noise from Python's
+`random.seed(7)` and `random.uniform(-9000, 9000)` per sample; then
+`lame --quiet -b 8 -m m --resample 16 mpeg2-8k-burst.wav mpeg2-8k-burst.mp3`.
 
 LAME 4.0 on macOS mangles non-ASCII text given on the command line, so the tags are ASCII; the
 reader's unit tests cover non-ASCII text in every ID3v2 encoding, and `mp3_fixtures.rs` puts an
