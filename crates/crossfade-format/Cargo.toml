@@ -36,6 +36,9 @@ criterion.workspace = true
 # Conformance tier only; dev-dependencies do not count against the engine purity gate.
 crossfade-corpus = { path = "../crossfade-corpus" }
 sha2.workspace = true
+# The Opus conformance tier: the decoder and its test apparatus (the vectors' readers,
+# opus_compare). Only a dev-dependency until the Ogg Opus mapping needs the parsers.
+crossfade-opus.workspace = true
 # The Vorbis conformance tier compares the decoder with lewton (MIT/Apache) on the same packets.
 lewton = { version = "=0.10.2", default-features = false }
 

@@ -1648,6 +1648,7 @@ dependencies = [
  "crossfade-corpus",
  "crossfade-flac",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-testkit",
  "crossfade-vorbis",
  "lewton",
