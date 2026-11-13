@@ -112,7 +112,12 @@ fn the_other_codecs_have_the_expected_file_counts() {
         [".mp4", ".wav", ".adts", ".adif"].map(|e| ext("aac/iso/", e)),
         [28, 20, 7, 7]
     );
-    assert_eq!(m.entries().len(), 86 + 36 + 29 + 84 + 62);
+    assert_eq!(group(&m, "aac/iso-mpeg2/").len(), 28);
+    assert_eq!(
+        [".adts", ".wav"].map(|e| ext("aac/iso-mpeg2/", e)),
+        [14, 14]
+    );
+    assert_eq!(m.entries().len(), 86 + 36 + 29 + 84 + 62 + 28);
 }
 
 #[test]
@@ -172,10 +177,24 @@ fn urls_of_the_single_file_groups_point_at_their_hosts() {
     for e in group(&m, "vorbis/") {
         assert_eq!(e.url().unwrap(), format!("{xiph}{}", e.name), "{}", e.id);
     }
+    let iso_mpeg2 = "https://standards.iso.org/ittf/PubliclyAvailableStandards/\
+                     ISO_IEC_13818-4_2004_Conformance_Testing/AAC/";
     for e in group(&m, "mp3/").into_iter().chain(group(&m, "aac/")) {
         let url = e.url().unwrap();
-        let rest = url.strip_prefix(iso).unwrap_or_else(|| panic!("{url}"));
-        assert!(rest.starts_with("DVD"), "{url}");
+        let rest = if e.id.starts_with("aac/iso-mpeg2/") {
+            let rest = url
+                .strip_prefix(iso_mpeg2)
+                .unwrap_or_else(|| panic!("{url}"));
+            assert!(
+                rest.starts_with("compressedAdts/") || rest.starts_with("referencesWav/"),
+                "{url}"
+            );
+            rest
+        } else {
+            let rest = url.strip_prefix(iso).unwrap_or_else(|| panic!("{url}"));
+            assert!(rest.starts_with("DVD"), "{url}");
+            rest
+        };
         assert_eq!(
             percent_decode(rest.rsplit('/').next().unwrap()),
             e.name,
