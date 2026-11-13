@@ -203,3 +203,120 @@ fn opus_compare_on_the_references() {
         );
     }
 }
+
+/// Pre-skip of the Ogg wrapping: what libopus's encoder writes at 48 kHz.
+const PRE_SKIP: usize = 312;
+
+/// After a seek the decoder starts afresh 80 ms early (RFC 7845 4.6); it has not converged
+/// exactly by the target. The largest difference measured on these vectors at 80 ms was
+/// 0.058 (testvector11, CELT); see the `opus_seek_convergence` example.
+const SEEK_TOLERANCE: f32 = 0.07;
+
+/// Every frame's samples through the Ogg reader and the engine's adapter, from where the reader
+/// stands, until `until` (a pts) is covered: `(pts of the first, samples)`.
+fn engine_decode(
+    demux: &mut dyn crossfade_core::Demuxer,
+    dec: &mut dyn crossfade_core::Decoder,
+    until: i64,
+) -> (i64, Vec<f32>) {
+    use crossfade_core::{AudioFrame, Packet, Samples};
+    let mut out = vec![];
+    let mut first = None;
+    let mut p = Packet::default();
+    let mut f = AudioFrame::new(&demux.streams()[0].audio);
+    while demux.read_packet(&mut p).unwrap() {
+        dec.send_packet(&p).unwrap();
+        while dec.receive_frame(&mut f).unwrap() {
+            let Samples::F32(s) = &f.samples else {
+                panic!("opus decodes to f32")
+            };
+            let start = *first.get_or_insert(f.pts);
+            assert_eq!(f.pts, start + (out.len() / 2) as i64, "frames follow on");
+            out.extend_from_slice(s);
+        }
+        if first.is_some_and(|s| s + (out.len() / 2) as i64 >= until) {
+            break;
+        }
+    }
+    (first.unwrap_or(0), out)
+}
+
+/// One vector wrapped into Ogg Opus in memory decodes through the reader and the adapter to
+/// the direct decode's samples; seeks land early enough to be within [`SEEK_TOLERANCE`].
+/// Returns the worst difference after a seek.
+fn through_ogg(bit: &[u8]) -> Result<f32, String> {
+    use crossfade_opus::testing::ogg::{OggLayout, ogg_file, opus_head, opus_tags};
+    let packets: Vec<Vec<u8>> = read_bit_file(bit)?
+        .iter()
+        .map(|p| p.data.to_vec())
+        .collect();
+    let mut direct = vec![];
+    let mut d = crossfade_opus::Decoder::new(2).map_err(|e| e.to_string())?;
+    for p in &packets {
+        d.decode(Some(p), &mut direct).map_err(|e| e.to_string())?;
+    }
+    let bytes = ogg_file(
+        &opus_head(2, PRE_SKIP as u16, 0, None),
+        &opus_tags("crossfade conformance", &[]),
+        &packets,
+        &OggLayout {
+            packets_per_page: vec![3, 1, 4],
+            ..OggLayout::default()
+        },
+    );
+    let open = || {
+        crossfade_format::open_demuxer(
+            Box::new(std::io::Cursor::new(bytes.clone())),
+            &crossfade_core::Limits::default(),
+        )
+        .map(|(_, d)| d)
+        .map_err(|e| e.to_string())
+    };
+    let mut demux = open()?;
+    let total = (direct.len() / 2 - PRE_SKIP) as i64;
+    if demux.streams()[0].frames != Some(total as u64) {
+        return Err(format!(
+            "frames {:?}, want {total}",
+            demux.streams()[0].frames
+        ));
+    }
+    let mut dec = crossfade_codec::decoder_for(&demux.streams()[0]).map_err(|e| e.to_string())?;
+    let (first, all) = engine_decode(&mut *demux, &mut *dec, i64::MAX);
+    if first != -(PRE_SKIP as i64) || all != direct {
+        return Err("the Ogg wrapping does not decode to the direct decode".into());
+    }
+    let mut worst = 0.0f32;
+    for k in 0..12 {
+        let target = total * k / 12 + 1234 * k;
+        let landed = demux.seek(target).map_err(|e| e.to_string())?;
+        if landed > target {
+            return Err(format!("seek to {target} landed at {landed}"));
+        }
+        dec.reset();
+        let (from, got) = engine_decode(&mut *demux, &mut *dec, target + 24_000);
+        let skip = (target - from) as usize * 2;
+        let at = (target + PRE_SKIP as i64) as usize * 2;
+        for (a, b) in got[skip..].iter().zip(&direct[at..]) {
+            worst = worst.max((a - b).abs());
+        }
+    }
+    if worst > SEEK_TOLERANCE {
+        return Err(format!("a seek is {worst} off the decode from the start"));
+    }
+    Ok(worst)
+}
+
+#[test]
+#[ignore = "tier 3: needs the corpus (`just corpus`)"]
+fn the_vectors_wrapped_in_ogg_decode_and_seek_through_the_engine() {
+    let vectors = selected();
+    let results = each(&vectors, |(_, bit)| through_ogg(bit));
+    let mut failures = vec![];
+    for ((n, _), r) in vectors.iter().zip(results) {
+        match r {
+            Ok(worst) => println!("testvector{n}: through Ogg, worst after a seek {worst:.3e}"),
+            Err(e) => failures.push(format!("testvector{n}: {e}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
