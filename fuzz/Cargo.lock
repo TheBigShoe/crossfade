@@ -35,6 +35,7 @@ version = "0.0.0"
 dependencies = [
  "crossfade-core",
  "crossfade-flac",
+ "crossfade-vorbis",
 ]
 
 [[package]]
@@ -49,6 +50,8 @@ name = "crossfade-dsp"
 version = "0.0.0"
 dependencies = [
  "crossfade-core",
+ "crossfade-loudness",
+ "crossfade-resample",
  "libm",
 ]
 
@@ -76,6 +79,7 @@ dependencies = [
  "crossfade-graph",
  "crossfade-loudness",
  "crossfade-resample",
+ "crossfade-vorbis",
  "libfuzzer-sys",
  "serde_json",
 ]
@@ -101,6 +105,13 @@ dependencies = [
 
 [[package]]
 name = "crossfade-resample"
+version = "0.0.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "crossfade-vorbis"
 version = "0.0.0"
 dependencies = [
  "libm",
