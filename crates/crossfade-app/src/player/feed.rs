@@ -5,8 +5,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::Thread;
 
-/// Segments in flight from the worker to the feed, at most.
-pub(crate) const PENDING_SEGMENTS: usize = 2;
+/// Segments in flight from the worker to the feed, at most. Loads and seeks made while the
+/// sink is not pulling pile up here until it next does; past this many the newest waits in
+/// the worker, and the first pull after plays one buffer of silence while it is fetched.
+pub(crate) const PENDING_SEGMENTS: usize = 8;
 
 const FRAME_BITS: u32 = 48;
 const FRAME_MASK: u64 = (1 << FRAME_BITS) - 1;
