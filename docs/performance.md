@@ -208,6 +208,23 @@ Painting itself (GPUI drawing at most one shape per column) was judged from
 offscreen renders, not timed, and has not been tried on a trackpad with an
 hour-long file.
 
+## ALAC and Vorbis decoding
+
+One measurement each, on the same machine while other work was running, so
+treat them as rough.
+
+- **ALAC** (5 minutes of 16-bit 44.1 kHz stereo in `.m4a`, made by `afconvert`,
+  whole process, best of 9, interleaved): `crossfade convert in.m4a -o out.wav`
+  138 ms, with `--threads 1` 470 ms, `afconvert -f WAVE -d LEI16` 453 ms. Packets
+  are independent, so the adapter decodes batches on up to four threads; the
+  bytes are the same at every count. On one thread the adaptive predictor is
+  about half the time.
+- **Vorbis** has no reference tool installed here to race, so the comparison is
+  in process against `lewton` 0.10.2, one thread, best of 5, on Xiph's test
+  files: 1.7 to 3.6 times faster on every file (typically 2.5), 95 to 180
+  million samples per second against 55. Residue decoding is about 43% of the
+  time, the IMDCT 26%, floor curves and coupling 22%.
+
 ## MP3 decoding
 
 Our own Layer III decoder (`crossfade-mp3`) against `mpg123` 1.33.7 and
