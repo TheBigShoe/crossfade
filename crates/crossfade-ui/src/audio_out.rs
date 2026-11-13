@@ -6,9 +6,9 @@
 //! it there, otherwise the default format, converted in the callback through a buffer
 //! allocated once.
 
-use crossfade_app::player::{AudioSink, Feed, OutputFormat};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
+use crossfade_app::player::{AudioSink, Feed, OutputFormat};
 
 /// Frames converted at a time when the device does not take `f32`; a bigger callback is
 /// served in several passes.
@@ -31,9 +31,32 @@ impl<P: FnMut(&mut [f32])> Glue<P> {
         }
     }
 
-    pub fn fill_f32(&mut self, _: &mut [f32]) {}
+    /// For a device that takes `f32`: straight through.
+    pub fn fill_f32(&mut self, out: &mut [f32]) {
+        let whole = out.len() / self.channels * self.channels;
+        (self.pull)(&mut out[..whole]);
+        out[whole..].fill(0.0);
+    }
 
-    pub fn fill<T: SizedSample + FromSample<f32>>(&mut self, _: &mut [T]) {}
+    /// For any other sample type, through the scratch buffer.
+    pub fn fill<T: SizedSample + FromSample<f32>>(&mut self, out: &mut [T]) {
+        if self.scratch.is_empty() {
+            // Only reached when the glue is built without `with_scratch`: tests.
+            self.scratch = vec![0.0; SCRATCH_FRAMES * self.channels];
+        }
+        let step = self.scratch.len();
+        for chunk in out.chunks_mut(step) {
+            let whole = chunk.len() / self.channels * self.channels;
+            let scratch = &mut self.scratch[..whole];
+            (self.pull)(scratch);
+            for (o, s) in chunk.iter_mut().zip(scratch.iter()) {
+                *o = T::from_sample(*s);
+            }
+            for o in &mut chunk[whole..] {
+                *o = T::EQUILIBRIUM;
+            }
+        }
+    }
 
     /// Allocates the scratch buffer now, before the glue moves to the audio thread.
     pub fn with_scratch(mut self) -> Self {
@@ -70,7 +93,7 @@ impl DeviceSink {
         if self.sample_format == cpal::SampleFormat::F32 {
             let mut glue = Glue::new(move |out: &mut [f32]| feed.fill(out), channels);
             return self.device.build_output_stream::<f32, _, _>(
-                self.config.clone(),
+                self.config,
                 move |out: &mut [f32], _| glue.fill_f32(out),
                 error,
                 None,
@@ -78,7 +101,7 @@ impl DeviceSink {
         }
         let mut glue = Glue::new(move |out: &mut [f32]| feed.fill(out), channels).with_scratch();
         self.device.build_output_stream::<T, _, _>(
-            self.config.clone(),
+            self.config,
             move |out: &mut [T], _| glue.fill(out),
             error,
             None,
@@ -222,7 +245,11 @@ mod tests {
         let mut out = vec![1i16; frames * 2];
         glue.fill(&mut out);
         for (i, s) in out.iter().enumerate() {
-            let want = if i % 2 == 1 { i16::from_sample(0.5f32) } else { 0 };
+            let want = if i % 2 == 1 {
+                i16::from_sample(0.5f32)
+            } else {
+                0
+            };
             assert_eq!(*s, want, "sample {i}");
         }
     }
