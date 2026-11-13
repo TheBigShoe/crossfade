@@ -2,7 +2,7 @@
 //! scalefactors, pulse and TNS data, spectral data, inverse quantisation and scaling.
 
 use super::filterbank::EIGHT_SHORT;
-use super::huffman::{Books, books};
+use super::huffman::{Books, Spectral, books};
 use super::tables::{SWB_LONG, SWB_SHORT, TNS_MAX_ORDER_LONG, TNS_MAX_ORDER_SHORT};
 use crate::Result;
 use crate::bits::BitReader;
@@ -193,43 +193,13 @@ impl Ics {
                 let gain = gains[self.sf[g][b] as usize];
                 let (lo, hi) = (usize::from(info.swb[b]), usize::from(info.swb[b + 1]));
                 let book = &books.spectral[usize::from(cb) - 1];
-                let dim = book.shape.dim;
                 for w in 0..glen {
                     let dst = (window + w) * 128 + lo;
-                    for out in self.spec[dst..dst + hi - lo].chunks_exact_mut(dim) {
-                        let sym = book.book.decode(r) as usize;
-                        let vals = &book.values[sym][..dim];
-                        let mut q = [0i32; 4];
-                        if book.shape.signed {
-                            for (q, &v) in q.iter_mut().zip(vals) {
-                                *q = i32::from(v);
-                            }
-                        } else {
-                            let nonzero = vals.iter().filter(|&&v| v != 0).count() as u32;
-                            // The sign bits of the nonzero values, first value first.
-                            let signs = r.read(nonzero);
-                            let mut left = nonzero;
-                            for (q, &v) in q.iter_mut().zip(vals) {
-                                *q = i32::from(v);
-                                if v != 0 {
-                                    left -= 1;
-                                    if (signs >> left) & 1 != 0 {
-                                        *q = -*q;
-                                    }
-                                }
-                            }
-                            if cb == ESC_HCB {
-                                for q in &mut q[..2] {
-                                    if q.abs() == 16 {
-                                        *q = q.signum() * escape(r)?;
-                                    }
-                                }
-                            }
-                        }
-                        for (o, &q) in out.iter_mut().zip(&q) {
-                            let m = pow43[q.unsigned_abs() as usize] * gain;
-                            *o = if q < 0 { -m } else { m };
-                        }
+                    let out = &mut self.spec[dst..dst + hi - lo];
+                    match cb {
+                        1..=4 => dequantised_band::<4, false>(r, book, gain, pow43, out)?,
+                        ESC_HCB => dequantised_band::<2, true>(r, book, gain, pow43, out)?,
+                        _ => dequantised_band::<2, false>(r, book, gain, pow43, out)?,
                     }
                 }
                 if r.overrun() {
@@ -368,26 +338,11 @@ impl Ics {
                 let start = group_start + usize::from(info.swb[b]) * glen;
                 let end = group_start + usize::from(info.swb[b + 1]) * glen;
                 let book = &books.spectral[usize::from(cb) - 1];
-                let dim = book.shape.dim;
-                let mut k = start;
-                while k < end {
-                    let sym = book.book.decode(r) as usize;
-                    let vals = book.values[sym];
-                    for (j, &v) in vals[..dim].iter().enumerate() {
-                        let mut v = i32::from(v);
-                        if !book.shape.signed && v != 0 && r.bit() {
-                            v = -v;
-                        }
-                        self.quant[k + j] = v;
-                    }
-                    if cb == ESC_HCB {
-                        for q in &mut self.quant[k..k + 2] {
-                            if q.abs() == 16 {
-                                *q = q.signum() * escape(r)?;
-                            }
-                        }
-                    }
-                    k += dim;
+                let out = &mut self.quant[start..end];
+                match cb {
+                    1..=4 => quantised_band::<4, false>(r, book, out)?,
+                    ESC_HCB => quantised_band::<2, true>(r, book, out)?,
+                    _ => quantised_band::<2, false>(r, book, out)?,
                 }
                 if r.overrun() {
                     return Err(malformed("spectral data runs past the end of the block"));
@@ -444,16 +399,71 @@ impl Ics {
     }
 }
 
-/// escape_sequence: N leading ones, a zero, then N + 4 bits.
-fn escape(r: &mut BitReader<'_>) -> Result<i32> {
-    let mut n = 0;
-    while r.bit() {
-        n += 1;
-        if n > 8 {
-            return Err(malformed("escape sequence longer than 8"));
+/// One codeword's coefficients, escapes read (`ESC`: book 11).
+#[inline(always)]
+fn codeword<const DIM: usize, const ESC: bool>(
+    r: &mut BitReader<'_>,
+    book: &Spectral,
+) -> Result<[i32; DIM]> {
+    let mut q = book.decode::<DIM>(r);
+    if ESC {
+        for q in &mut q {
+            if q.abs() == 16 {
+                *q = q.signum() * escape(r)?;
+            }
         }
     }
-    Ok((1 << (n + 4)) + r.read(n + 4) as i32)
+    Ok(q)
+}
+
+/// A band (one window's run of it) of codewords, dequantised with `gain`.
+#[inline(always)]
+fn dequantised_band<const DIM: usize, const ESC: bool>(
+    r: &mut BitReader<'_>,
+    book: &Spectral,
+    gain: f32,
+    pow43: &[f32; 8192],
+    out: &mut [f32],
+) -> Result<()> {
+    // A copy the loop keeps in registers.
+    let mut br = *r;
+    for out in out.as_chunks_mut::<DIM>().0 {
+        let q = codeword::<DIM, ESC>(&mut br, book)?;
+        for (o, &q) in out.iter_mut().zip(&q) {
+            // Escapes stop at 8191, so the mask never changes an index.
+            let m = pow43[q.unsigned_abs() as usize & 8191] * gain;
+            // -m for a negative q, by its sign bit: signs are random, a branch mispredicts.
+            *o = f32::from_bits(m.to_bits() ^ (q as u32 & 0x8000_0000));
+        }
+    }
+    *r = br;
+    Ok(())
+}
+
+/// A band of codewords as quantised values, in the order they come.
+fn quantised_band<const DIM: usize, const ESC: bool>(
+    r: &mut BitReader<'_>,
+    book: &Spectral,
+    out: &mut [i32],
+) -> Result<()> {
+    for out in out.as_chunks_mut::<DIM>().0 {
+        *out = codeword::<DIM, ESC>(r, book)?;
+    }
+    Ok(())
+}
+
+/// escape_sequence: N leading ones, a zero, then N + 4 bits.
+#[inline(always)]
+fn escape(r: &mut BitReader<'_>) -> Result<i32> {
+    let w = r.peek32();
+    let n = w.leading_ones();
+    if n > 8 {
+        return Err(malformed("escape sequence longer than 8"));
+    }
+    // At most 2 * 8 + 5 bits, all in the peek.
+    let v = (w << (n + 1)) >> (32 - (n + 4));
+    r.consume(2 * n + 5);
+    Ok((1 << (n + 4)) + v as i32)
 }
 
 struct Pulses {
@@ -494,15 +504,13 @@ impl Pulses {
 }
 
 /// |q|^(4/3) for 0..=8191.
-fn pow43() -> &'static [f32] {
-    static T: OnceLock<Vec<f32>> = OnceLock::new();
+fn pow43() -> &'static [f32; 8192] {
+    static T: OnceLock<Box<[f32; 8192]>> = OnceLock::new();
     T.get_or_init(|| {
-        (0..8192)
-            .map(|i| {
-                let x = f64::from(i);
-                (x * libm::cbrt(x)) as f32
-            })
-            .collect()
+        Box::new(std::array::from_fn(|i| {
+            let x = i as f64;
+            (x * libm::cbrt(x)) as f32
+        }))
     })
 }
 
