@@ -6,12 +6,12 @@ mod common;
 
 use common::{spec, wav_bytes};
 use crossfade_app::player::{
-    AudioSink, OutputFormat, Player, State, VirtualOutput, VirtualSink, clock_text,
-    device_layout, transport_text,
+    AudioSink, OutputFormat, Player, State, VirtualOutput, VirtualSink, clock_text, device_layout,
+    transport_text,
 };
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, Error, Filter, JobIo, Limits, MediaSink, MediaSource,
-    SampleFormat, Samples,
+    AudioFrame, ChannelLayout, Error, Filter, JobIo, Limits, MediaSink, MediaSource, SampleFormat,
+    Samples,
 };
 use crossfade_dsp::chain::{Chain, ChainPlan};
 use crossfade_dsp::convert::convert_format;
@@ -305,7 +305,11 @@ fn seeks_to_the_start_the_end_and_past_it() {
 
     r.player.seek(99_999);
     assert_eq!(r.player.position(), 10_000, "held to the duration");
-    assert_eq!(r.player.state(), State::Paused, "a seek after the end waits");
+    assert_eq!(
+        r.player.state(),
+        State::Paused,
+        "a seek after the end waits"
+    );
     r.player.seek(9_990);
     r.player.play();
     let tail = pull(&r, 64);
@@ -378,18 +382,21 @@ fn scrubbing_is_silent_and_release_resumes_at_the_pointer() {
     assert_eq!(r.player.position(), 5_000);
 }
 
+/// Says it has reached the gate, then waits to be let through; taken by the first read there.
+type Gate = Arc<Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>>;
+
 /// Hands out the bytes of one file up to `at`, then waits for `release` before reading on.
 struct GatedIo {
     inner: MemoryIo,
     at: u64,
-    gate: Arc<Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>>,
+    gate: Gate,
 }
 
 struct GatedSource {
     inner: Box<dyn MediaSource>,
     pos: u64,
     at: u64,
-    gate: Arc<Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>>,
+    gate: Gate,
 }
 
 impl MediaSource for GatedSource {
@@ -479,12 +486,20 @@ fn an_underrun_is_silence_counted_and_playback_recovers_without_losing_frames() 
     assert_eq!(frames(&got, 2, 0..have), frames(&want, 2, 20_000..40_960));
     assert!(frames(&got, 2, have..24_000).iter().all(|s| *s == 0.0));
     assert_eq!(r.player.underruns(), 1);
-    assert_eq!(r.player.position(), 40_960, "silence does not move the position");
+    assert_eq!(
+        r.player.position(),
+        40_960,
+        "silence does not move the position"
+    );
     assert_eq!(r.player.state(), State::Playing);
 
     release.send(()).unwrap();
     let next = pull(&r, 1000);
-    assert_eq!(next, frames(&want, 2, 40_960..41_960), "nothing was skipped");
+    assert_eq!(
+        next,
+        frames(&want, 2, 40_960..41_960),
+        "nothing was skipped"
+    );
     assert_eq!(r.player.position(), 41_960);
     assert_eq!(r.player.underruns(), 1);
 }
@@ -555,7 +570,11 @@ fn another_rate_and_layout_converts_and_the_position_maps_back_exactly() {
     assert!(got.chunks(2).all(|f| f[0] == f[1]), "mono to both sides");
     assert_eq!(r.player.position(), 1000);
     pull(&r, 1);
-    assert_eq!(r.player.position(), 1000, "a third of a source frame is not one yet");
+    assert_eq!(
+        r.player.position(),
+        1000,
+        "a third of a source frame is not one yet"
+    );
     pull(&r, 2);
     assert_eq!(r.player.position(), 1001);
 
@@ -603,7 +622,9 @@ fn a_surround_file_is_mixed_down_for_a_stereo_device() {
 #[test]
 fn dropping_the_player_stops_the_sink_and_the_worker() {
     let r = loaded(stereo(48_000), STEREO_48K);
-    let Rig { mut player, out, .. } = r;
+    let Rig {
+        mut player, out, ..
+    } = r;
     player.play();
     assert!(out.is_running());
     drop(player);
@@ -649,6 +670,3 @@ fn the_readout_is_short() {
     );
     assert_eq!(transport_text(5, None, 10), "0:00.5");
 }
-
-#[allow(dead_code)]
-fn _spec_is_used(_: AudioSpec) {}

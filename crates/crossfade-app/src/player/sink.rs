@@ -101,10 +101,9 @@ impl VirtualOutput {
     /// (measured from zero). Time while the sink is stopped passes without pulling.
     pub fn run_until(&self, clock: &dyn Clock) -> Vec<f32> {
         let now = clock.now();
-        let total = u64::try_from(
-            now.as_nanos() * u128::from(self.format.sample_rate) / 1_000_000_000,
-        )
-        .unwrap_or(u64::MAX);
+        let total =
+            u64::try_from(now.as_nanos() * u128::from(self.format.sample_rate) / 1_000_000_000)
+                .unwrap_or(u64::MAX);
         let mut out = Vec::new();
         loop {
             let (step, running) = {
