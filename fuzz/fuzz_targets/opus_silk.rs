@@ -42,7 +42,8 @@ fuzz_target!(|data: &[u8]| {
                     if let Some(p) = p {
                         assert_eq!(n, Packet::parse(p).unwrap().duration());
                     }
-                    assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+                    // Not bounded by full scale: spare bytes carry a redundant CELT frame.
+                    assert!(out.iter().all(|s| s.is_finite()));
                 }
                 Err(_) => assert!(out.is_empty()),
             }

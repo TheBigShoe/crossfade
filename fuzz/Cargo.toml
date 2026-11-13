@@ -197,3 +197,17 @@ path = "fuzz_targets/opus_silk.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "opus_decode"
+path = "fuzz_targets/opus_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ogg_opus_demux"
+path = "fuzz_targets/ogg_opus_demux.rs"
+test = false
+doc = false
+bench = false
