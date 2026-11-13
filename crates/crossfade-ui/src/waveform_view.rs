@@ -20,7 +20,7 @@ use crate::actions::{
 };
 use crate::chrome::LABEL_SIZE;
 use crate::prelude::*;
-use crate::workspace::IoFactory;
+use crate::workspace::{AudioOutput, IoFactory};
 
 /// The height of the waveform lanes' background.
 const STRIP_HEIGHT: Pixels = px(132.);
@@ -44,7 +44,7 @@ pub struct WaveformStrip {
 }
 
 impl WaveformStrip {
-    pub fn new(io: IoFactory, cx: &mut Context<Self>) -> Self {
+    pub fn new(io: IoFactory, _audio: AudioOutput, cx: &mut Context<Self>) -> Self {
         let (sender, receiver) = async_channel::unbounded::<()>();
         let wake = Arc::new(Wake::default());
         let acknowledge = Arc::clone(&wake);
@@ -87,6 +87,38 @@ impl WaveformStrip {
             analyzer.wait();
         }
     }
+
+    /// The player's state, when there is a player.
+    pub fn player_state(&self) -> Option<crossfade_app::player::State> {
+        None
+    }
+
+    /// The playback position in source frames.
+    pub fn position(&self) -> Option<u64> {
+        None
+    }
+
+    /// Waits for the player's worker to catch up (tests and screenshots).
+    pub fn settle(&self) {}
+
+    pub fn is_following(&self) -> bool {
+        false
+    }
+
+    pub fn is_scrubbing(&self) -> bool {
+        false
+    }
+
+    /// The transport's time readout.
+    pub fn transport_text(&self) -> Option<String> {
+        None
+    }
+
+    pub fn toggle_playback(&mut self, _: &mut Context<Self>) {}
+
+    pub fn to_start(&mut self, _: &mut Context<Self>) {}
+
+    pub fn to_end(&mut self, _: &mut Context<Self>) {}
 
     /// The line under the ruler as plain text.
     pub fn readout_text(&self) -> Option<String> {

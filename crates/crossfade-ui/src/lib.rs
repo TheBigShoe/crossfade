@@ -43,6 +43,8 @@ mod test_support;
 #[cfg(test)]
 mod theme_bridge_tests;
 #[cfg(test)]
+mod playback_tests;
+#[cfg(test)]
 mod waveform_tests;
 #[cfg(test)]
 mod wiring_tests;
@@ -50,7 +52,7 @@ mod wiring_tests;
 mod workspace_tests;
 
 pub use convert_sheet::{ConvertDialog, ConvertEvent};
-pub use workspace::{Workspace, WorkspaceOptions, init, open_main_window};
+pub use workspace::{AudioOutput, Workspace, WorkspaceOptions, init, open_main_window};
 
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports

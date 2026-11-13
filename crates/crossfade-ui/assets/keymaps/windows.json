@@ -13,8 +13,12 @@
       "ctrl-o": "crossfade::OpenFiles",
       "ctrl-enter": "crossfade::Convert",
       "ctrl-j": "crossfade::ToggleQueue",
-      "ctrl-,": "crossfade::OpenSettings"
+      "ctrl-,": "crossfade::OpenSettings",
       // crossfade::About has no default binding.
+      // Playback: from the files list or the waveform strip.
+      "space": "crossfade::TogglePlayback",
+      "home": "crossfade::PlaybackToStart",
+      "end": "crossfade::PlaybackToEnd"
     }
   },
   {
