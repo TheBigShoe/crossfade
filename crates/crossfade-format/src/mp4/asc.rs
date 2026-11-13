@@ -29,6 +29,8 @@ pub(super) fn layout(config: u8) -> Result<ChannelLayout, Error> {
         5 => (0x607, 5),
         6 => (0x60F, 6),
         7 => (0x6CF, 8),
+        // 6.1 (14496-3 Table 1.19 as amended): C, L R, Ls Rs, Cs, LFE.
+        11 => (0x70F, 7),
         n => {
             return Err(Error::Unsupported {
                 what: format!("mp4: aac channel configuration {n} is not supported"),

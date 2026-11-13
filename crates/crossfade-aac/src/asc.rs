@@ -28,7 +28,7 @@ pub struct AudioSpecificConfig {
     /// The table index for the rate: as coded, or for an explicit rate the index whose tables
     /// the standard assigns to it (14496-3 Table 4.82).
     pub sampling_index: u8,
-    /// 0 (the program config element says) or 1 to 7.
+    /// 0 (the program config element says), 1 to 7, or 11 (6.1).
     pub channel_configuration: u8,
     pub program_config: Option<ProgramConfig>,
     /// 960-sample frames instead of 1024.
@@ -66,7 +66,7 @@ impl AudioSpecificConfig {
                 object_type_name(object_type)
             )));
         }
-        if channel_configuration > 7 {
+        if channel_configuration > 7 && channel_configuration != 11 {
             return Err(unsupported(format!(
                 "channel configuration {channel_configuration} is not supported"
             )));
@@ -138,6 +138,7 @@ impl AudioSpecificConfig {
         match (self.channel_configuration, &self.program_config) {
             (0, Some(pce)) => pce.channels(),
             (7, _) => 8,
+            (11, _) => 7,
             (c, _) => u16::from(c),
         }
     }

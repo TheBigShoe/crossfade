@@ -20,6 +20,7 @@
 //! | 5 | C, L R, Ls Rs | L R C Ls Rs (side) |
 //! | 6 | C, L R, Ls Rs, LFE | L R C LFE Ls Rs (side) |
 //! | 7 | C, Lc Rc, L R, Ls Rs, LFE | L R C LFE Lc Rc Ls Rs (side) |
+//! | 11 | C, L R, Ls Rs, Cs, LFE | L R C LFE Cs (back centre) Ls Rs (side) |
 //!
 //! With a program config element, channels come in its order (front, side, back elements,
 //! then LFEs), unpositioned.
@@ -413,6 +414,16 @@ fn config_slots(config: u8) -> Option<(Vec<Slot>, u32)> {
                 s(Lfe, 3, 0),
             ],
             0x6CF,
+        ),
+        11 => (
+            vec![
+                s(Single, 2, 0),
+                s(Pair, 0, 1),
+                s(Pair, 5, 6),
+                s(Single, 4, 0),
+                s(Lfe, 3, 0),
+            ],
+            0x70F,
         ),
         _ => return None,
     };
