@@ -100,22 +100,22 @@ impl Quantiser {
         *out = match self.format {
             SampleFormat::U8 => {
                 let mut v = reuse!(U8);
-                self.ints(input, 8, |x| v.push((x as i8 as u8) ^ 0x80));
+                self.ints(input, 8, &mut v, |x| (x as i8 as u8) ^ 0x80);
                 Samples::U8(v)
             }
             SampleFormat::S16 => {
                 let mut v = reuse!(S16);
-                self.ints(input, 16, |x| v.push(x as i16));
+                self.ints(input, 16, &mut v, |x| x as i16);
                 Samples::S16(v)
             }
             SampleFormat::S24 => {
                 let mut v = reuse!(S24);
-                self.ints(input, 24, |x| v.push(x));
+                self.ints(input, 24, &mut v, |x| x);
                 Samples::S24(v)
             }
             SampleFormat::S32 => {
                 let mut v = reuse!(S32);
-                self.ints(input, 32, |x| v.push(x));
+                self.ints(input, 32, &mut v, |x| x);
                 Samples::S32(v)
             }
             SampleFormat::F32 => {
@@ -131,21 +131,123 @@ impl Quantiser {
         };
     }
 
-    fn ints(&mut self, input: &[f64], bits: u32, mut push: impl FnMut(i32)) {
+    /// Appends `input` to `out` as `bits`-bit integers. The generator runs a block ahead of
+    /// the arithmetic, so the arithmetic is one branch-free loop that vectorises; the draws
+    /// are the same, one per sample in order.
+    fn ints<T: Copy + Default>(
+        &mut self,
+        input: &[f64],
+        bits: u32,
+        out: &mut Vec<T>,
+        to: impl Fn(i32) -> T,
+    ) {
+        const BLOCK: usize = 64;
         let scale = (1u64 << (bits - 1)) as f64;
         let (lo, hi) = (-scale, scale - 1.0);
-        for &x in input {
-            // NaN is silence, as in `convert`.
-            let v = if x.is_nan() { 0.0 } else { x * scale };
-            let rounded = v.round();
-            if !(lo..=hi).contains(&rounded) {
-                self.clipped += 1;
+        // Rounding is half away from zero, so `v` rounds outside lo..=hi exactly when it is at
+        // most lo - 0.5 or at least hi + 0.5 (both exact in f64).
+        let (below, above) = (lo - 0.5, hi + 0.5);
+        let start = out.len();
+        out.resize(start + input.len(), T::default());
+        let out = &mut out[start..];
+        let mut clipped = 0u64;
+        let mut noise = [0f64; BLOCK];
+        for (x, o) in input.chunks(BLOCK).zip(out.chunks_mut(BLOCK)) {
+            let noise = &mut noise[..x.len()];
+            match self.dither {
+                Dither::Tpdf => noise.iter_mut().for_each(|d| *d = self.rng.tpdf()),
+                Dither::None => noise.fill(0.0),
             }
-            let y = match self.dither {
-                Dither::Tpdf => (v + self.rng.tpdf()).round(),
-                Dither::None => rounded,
-            };
-            push(y.clamp(lo, hi) as i32);
+            let dither = self.dither == Dither::Tpdf;
+            for ((&x, o), &d) in x.iter().zip(o.iter_mut()).zip(noise.iter()) {
+                // NaN is silence, as in `convert`.
+                let v = if x.is_nan() { 0.0 } else { x * scale };
+                clipped += u64::from(v <= below || v >= above);
+                let y = if dither { (v + d).round() } else { v.round() };
+                *o = to(y.clamp(lo, hi) as i32);
+            }
+        }
+        self.clipped += clipped;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// The quantiser as it was before it was made to vectorise: one sample at a time.
+    struct Reference {
+        rng: SplitMix64,
+        clipped: u64,
+    }
+
+    impl Reference {
+        fn ints(&mut self, input: &[f64], bits: u32, dither: Dither, mut push: impl FnMut(i32)) {
+            let scale = (1u64 << (bits - 1)) as f64;
+            let (lo, hi) = (-scale, scale - 1.0);
+            for &x in input {
+                let v = if x.is_nan() { 0.0 } else { x * scale };
+                let rounded = v.round();
+                if !(lo..=hi).contains(&rounded) {
+                    self.clipped += 1;
+                }
+                let r = self.rng.next();
+                let d = ((r >> 32) as f64 - (r & 0xFFFF_FFFF) as f64) * (1.0 / 4_294_967_296.0);
+                let y = match dither {
+                    Dither::Tpdf => (v + d).round(),
+                    Dither::None => rounded,
+                };
+                push(y.clamp(lo, hi) as i32);
+            }
+        }
+    }
+
+    /// Mostly ordinary samples, with the edges: exact half steps, full scale and past it,
+    /// infinities and NaN.
+    fn sample() -> impl Strategy<Value = f64> {
+        prop_oneof![
+            8 => -1.2f64..1.2,
+            1 => (-70000i32..70000).prop_map(|k| f64::from(k) / 65536.0),
+            1 => proptest::sample::select(vec![
+                -1.0, 1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0, -0.0,
+                1.0 - 0.5 / 32768.0, -1.0 - 0.5 / 32768.0, 1.0 - 1.5 / 32768.0,
+            ]),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        /// The same bytes and clip count as the reference, chunk by chunk, every format.
+        #[test]
+        fn quantises_as_the_reference(
+            chunks in proptest::collection::vec(proptest::collection::vec(sample(), 0..300), 1..5),
+            format in 0usize..4,
+            tpdf in proptest::bool::ANY,
+        ) {
+            let (format, bits) = [
+                (SampleFormat::U8, 8),
+                (SampleFormat::S16, 16),
+                (SampleFormat::S24, 24),
+                (SampleFormat::S32, 32),
+            ][format];
+            let dither = if tpdf { Dither::Tpdf } else { Dither::None };
+            let mut q = Quantiser::new(format, dither);
+            let mut r = Reference { rng: SplitMix64(SEED), clipped: 0 };
+            for chunk in &chunks {
+                let mut out = Samples::new(format);
+                q.quantise(chunk, &mut out);
+                let mut want = Vec::new();
+                r.ints(chunk, bits, dither, |x| want.push(x));
+                let got: Vec<i32> = match out {
+                    Samples::U8(v) => v.iter().map(|&b| i32::from((b ^ 0x80) as i8)).collect(),
+                    Samples::S16(v) => v.iter().map(|&s| i32::from(s)).collect(),
+                    Samples::S24(v) | Samples::S32(v) => v,
+                    other => panic!("{other:?}"),
+                };
+                prop_assert_eq!(got, want);
+                prop_assert_eq!(q.clipped(), r.clipped);
+            }
         }
     }
 }
