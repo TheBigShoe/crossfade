@@ -15,6 +15,11 @@ crossfade-aac.workspace = true
 # The MP4 reader checks an ALAC track's config and takes its channel layout from it.
 crossfade-alac.workspace = true
 
+[features]
+# Test-only: lets this crate's tests (the AAC conformance tier) decode AAC. The reader itself
+# never decodes; AAC decoding stays behind the codec's off-by-default feature.
+aac = ["crossfade-codec/aac"]
+
 [lints]
 workspace = true
 
