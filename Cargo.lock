@@ -1550,6 +1550,7 @@ dependencies = [
  "crossfade-format",
  "crossfade-graph",
  "crossfade-loudness",
+ "crossfade-opus",
  "crossfade-testkit",
  "insta",
  "proptest",
