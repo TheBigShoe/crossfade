@@ -16,7 +16,10 @@ fn vector(name: &str) -> Vec<u8> {
     );
     let path = dir.join("opus/rfc8251").join(name).join(name);
     std::fs::read(&path).unwrap_or_else(|e| {
-        panic!("{}: {e} (run `just corpus`, or set CROSSFADE_CORPUS_DIR)", path.display())
+        panic!(
+            "{}: {e} (run `just corpus`, or set CROSSFADE_CORPUS_DIR)",
+            path.display()
+        )
     })
 }
 
