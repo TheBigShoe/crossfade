@@ -97,15 +97,15 @@ fn the_factories_build_big_endian_and_signed_8_bit_pcm() {
 }
 
 #[test]
-fn the_compressed_codecs_without_a_decoder_yet_are_refused_by_name() {
+fn opus_has_no_decoder_yet_and_is_refused_by_name() {
     let audio = AudioSpec::new(44100, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
-    for codec in [CodecId::Vorbis, CodecId::Opus, CodecId::Mp3, CodecId::Aac] {
-        let info = StreamInfo::new(0, codec, audio.clone(), TimeBase::new(1, 44100).unwrap());
-        assert_eq!(
-            decoder_for(&info).err(),
-            Some(Error::Unsupported {
-                what: format!("no decoder for {}", codec.name())
-            })
-        );
-    }
+    // MP3 and Vorbis have decoders; AAC has one behind the `aac` feature, and its own refusal
+    // without it (tests/aac.rs).
+    let info = StreamInfo::new(0, CodecId::Opus, audio, TimeBase::new(1, 48000).unwrap());
+    assert_eq!(
+        decoder_for(&info).err(),
+        Some(Error::Unsupported {
+            what: "no decoder for opus".into()
+        })
+    );
 }

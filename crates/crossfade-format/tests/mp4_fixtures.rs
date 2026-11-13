@@ -188,7 +188,7 @@ fn moov_first_works_on_a_pipe_and_moov_last_needs_a_seekable_input() {
 }
 
 #[test]
-fn aac_in_mp4_is_described_and_its_decoder_refused() {
+fn aac_in_mp4_is_described_and_its_decoder_refused_unless_built_in() {
     // afinfo: 2 ch, 44100 Hz, aac, 1024 frames/packet, 12 packets,
     // "audio 10007 valid frames + 2112 priming + 169 remainder = 12288".
     let mut d = open(fixture("aac-stereo16.m4a"), false).unwrap();
@@ -203,12 +203,17 @@ fn aac_in_mp4_is_described_and_its_decoder_refused() {
     assert_eq!(p.len(), 12);
     assert_eq!(p[0].pts, -2112);
     assert!(p.iter().all(|p| p.duration == 1024));
-    assert_eq!(
-        decoder_for(&s).err(),
-        Some(Error::Unsupported {
-            what: "no decoder for aac".into()
-        })
-    );
+    // A build with the `aac` feature decodes it (tests/aac_mp4.rs); one without says why not.
+    if let Err(e) = decoder_for(&s) {
+        assert_eq!(
+            e,
+            Error::Unsupported {
+                what: "aac decoding is not part of this build (AAC is patent-encumbered); build \
+                       with --features aac"
+                    .into()
+            }
+        );
+    }
 }
 
 /// Seeks the demuxer, resets the decoder, decodes from there and drops what lies before

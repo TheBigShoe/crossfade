@@ -1,0 +1,15 @@
+[package]
+name = "crossfade-mp3"
+description = "MPEG audio Layer III (MP3) in pure Rust: frame-header parsing, info frames (Xing, LAME, VBRI) and a decoder that gives the same bits on every platform."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# libm only: std's transcendental functions are not guaranteed to give the same bits on every
+# platform, and the decoder's tables are computed with them.
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true

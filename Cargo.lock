@@ -1451,6 +1451,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
+name = "crossfade-aac"
+version = "0.0.0"
+dependencies = [
+ "libm",
+ "proptest",
+]
+
+[[package]]
 name = "crossfade-alac"
 version = "0.0.0"
 dependencies = [
@@ -1490,6 +1498,7 @@ dependencies = [
  "crossfade-format",
  "crossfade-graph",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "ctrlc",
  "insta",
  "proptest",
@@ -1500,10 +1509,13 @@ dependencies = [
 name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
+ "crossfade-aac",
  "crossfade-alac",
  "crossfade-core",
  "crossfade-flac",
+ "crossfade-mp3",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "proptest",
 ]
 
@@ -1551,12 +1563,16 @@ name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
  "criterion 0.5.1",
+ "crossfade-aac",
  "crossfade-alac",
  "crossfade-codec",
  "crossfade-core",
  "crossfade-corpus",
  "crossfade-flac",
+ "crossfade-mp3",
  "crossfade-testkit",
+ "crossfade-vorbis",
+ "lewton",
  "proptest",
  "sha2 0.10.9",
 ]
@@ -1573,6 +1589,7 @@ dependencies = [
  "crossfade-loudness",
  "crossfade-resample",
  "crossfade-testkit",
+ "crossfade-vorbis",
  "insta",
  "libm",
  "proptest",
@@ -1587,6 +1604,13 @@ dependencies = [
  "criterion 0.5.1",
  "libm",
  "proptest",
+]
+
+[[package]]
+name = "crossfade-mp3"
+version = "0.0.0"
+dependencies = [
+ "libm",
 ]
 
 [[package]]
@@ -1625,6 +1649,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "crossfade-vorbis"
+version = "0.0.0"
+dependencies = [
+ "lewton",
+ "libm",
+ "ogg",
+ "proptest",
 ]
 
 [[package]]
@@ -4318,6 +4352,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
+name = "lewton"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "777b48df9aaab155475a83a7df3070395ea1ac6902f5cd062b8f2b028075c030"
+dependencies = [
+ "byteorder",
+ "tinyvec",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5344,6 +5388,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ogg"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdab8dcd8d4052eaacaf8fb07a3ccd9a6e26efadb42878a413c68fc4af1dee2b"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]

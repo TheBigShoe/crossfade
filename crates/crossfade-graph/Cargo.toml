@@ -16,6 +16,8 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [dev-dependencies]
+# Builds Ogg Vorbis inputs for the session tests.
+crossfade-vorbis.workspace = true
 crossfade-loudness.workspace = true
 crossfade-resample.workspace = true
 insta.workspace = true
@@ -23,6 +25,9 @@ libm.workspace = true
 crossfade-testkit.workspace = true
 criterion.workspace = true
 proptest.workspace = true
+
+[features]
+aac = ["crossfade-codec/aac"]
 
 [lints]
 workspace = true

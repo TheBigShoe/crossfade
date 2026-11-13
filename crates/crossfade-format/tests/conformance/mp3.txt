@@ -1,0 +1,49 @@
+# Frozen results of the MP3 conformance run (tests/conformance_mp3.rs); do not edit by hand.
+# Rewrite with `CROSSFADE_BLESS=1 just conformance` after a deliberate decoder change.
+# Columns (tab-separated): stream, reference, samples per channel compared, accuracy by the
+# ISO/IEC 11172-4 rule (full, limited or FAIL), RMS and largest difference (worst channel).
+l3_10101.mpg	l3_10101.wav	171648	full	3.611e-8	1.043e-7
+l3_10102.mpg	l3_10102.wav	471168	full	3.610e-8	1.043e-7
+l3_10103.mpg	l3_10103.wav	171648	full	3.611e-8	1.043e-7
+l3_10104.mpg	l3_10104.wav	134784	full	3.273e-8	1.043e-7
+l3_10105.mpg	l3_10105.wav	72576	full	3.452e-8	6.706e-8
+l3_10106.mpg	l3_10106.wav	86400	full	3.482e-8	2.384e-7
+l3_10107.mpg	l3_10107.wav	398592	full	3.465e-8	1.490e-7
+l3_10201.mpg	l3_10201_0.wav	11520	full	3.516e-8	8.196e-8
+l3_10201.mpg	l3_10201_1_AA.wav	115200	full	3.619e-8	1.490e-7
+l3_10201.mpg	l3_10201_2.wav	20736	full	3.402e-8	8.196e-8
+l3_10202.mpg	l3_10202.wav	33408	full	4.794e-8	1.788e-7
+l3_10203.mpg	l3_10203.wav	99072	full	3.531e-8	8.196e-8
+l3_10204.mpg	l3_10204.wav	362880	full	1.172e-7	7.153e-7
+l3_10205.mpg	l3_10205.wav	70272	full	3.486e-8	1.118e-7
+l3_10206.mpg	l3_10206.wav	248832	full	3.626e-8	2.384e-7
+l3_10207.mpg	l3_10207.wav	398592	full	3.588e-8	2.086e-7
+l3_10501_b01+b02.mpg	l3_10501_b00.wav	398592	full	3.513e-8	1.490e-7
+l3_10501_b01+b02.mpg	l3_10501_b01.wav	398592	full	3.566e-8	1.192e-7
+l3_10501_b01_b02.mpg	l3_10501_b00.wav	398592	full	3.513e-8	1.490e-7
+l3_10501_b01_b02.mpg	l3_10501_b01.wav	398592	full	3.566e-8	1.192e-7
+l3_10501_f00.mpg	l3_10501_f00.wav	398592	full	3.465e-8	1.490e-7
+l3_10501_f01+f02.mpg	l3_10501_f01.wav	398592	full	3.594e-8	3.576e-7
+l3_10501_f01+f02.mpg	l3_10501_f02.wav	398592	full	3.530e-8	1.490e-7
+l3_20140.mpg	l3_20140.wav	274176	full	4.458e-8	1.788e-7
+l3_20141.mpg	l3_20141.wav	274176	full	4.399e-8	1.788e-7
+l3_20142.mpg	l3_20142.wav	274176	full	4.291e-8	1.788e-7
+l3_20143.mpg	l3_20143.wav	122112	full	3.690e-8	3.204e-7
+l3_20244.mpg	l3_20244.wav	222336	full	5.027e-8	4.098e-7
+l3_20245.mpg	l3_20245.wav	473472	full	4.846e-8	5.811e-7
+l3_20246.mpg	l3_20246.wav	144000	full	6.018e-8	7.451e-7
+l3_20247.mpg	l3_20247.wav	222336	full	3.704e-8	3.129e-7
+l3_20248.mpg	l3_20248.wav	222336	full	3.693e-8	4.619e-7
+l3_25101.mpg	l3_25101.wav	122112	full	5.654e-8	3.502e-7
+l3_25102.mpg	l3_25102.wav	78336	full	6.497e-8	2.980e-7
+l3_25103.mpg	l3_25103.wav	105984	full	7.285e-8	4.023e-7
+l3_25104.mpg	l3_25104.wav	87552	full	7.012e-8	4.470e-7
+l3_25201.mpg	l3_25201.wav	112320	full	6.858e-8	4.014e-7
+l3_25202.mpg	l3_25202.wav	112320	full	5.661e-8	4.172e-7
+l3_25203.mpg	l3_25203.wav	112320	full	5.634e-8	3.576e-7
+l3_25204.mpg	l3_25204.wav	58752	full	7.656e-8	4.582e-7
+l3_25205.mpg	l3_25205.wav	79488	full	7.291e-8	4.023e-7
+l3_25206.mpg	l3_25206.wav	82944	full	7.508e-8	4.023e-7
+l3_25207.mpg	l3_25207.wav	58752	full	1.842e-7	2.027e-6
+l3_25208.mpg	l3_25208.wav	80640	full	1.855e-7	2.146e-6
+l3_25209.mpg	l3_25209.wav	87552	full	1.825e-7	2.384e-6

@@ -30,7 +30,8 @@ Each ALAC file is `afconvert --no-filler -f m4af -d alac <src>.wav <out>.m4a` (2
 | `alac-ch8.m4a` | `ch8` | 7.1 (C Lc Rc L R Ls Rs LFE), 24-bit | eight channels |
 | `alac-noise16.m4a` | `noise16` | 2 ch, full-scale white noise | escape (uncompressed) frames |
 | `alac-silence.m4a` | `silence` | 1 ch, 9000 zeros | zero runs |
-| `aac-stereo16.m4a` | `stereo16` | see below | the reader only: no AAC decoder here |
+| `aac-stereo16.m4a` | `stereo16` | see below | AAC LC, gapless from `iTunSMPB` (decoded with `--features aac`) |
+| `aac-ch3.m4a` .. `aac-ch8.m4a` | `ch3` .. `ch8` | 3.0, 4.0, 5.0, 5.1, 6.1 (channel configuration 11), 7.1; 48 kHz | AAC channel order against the WAVE masks |
 
 `afinfo aac-stereo16.m4a`:
 
@@ -42,5 +43,9 @@ audio packets: 12
 audio 10007 valid frames + 2112 priming + 169 remainder = 12288
 Channel layout: Stereo (L R)
 ```
+
+The multichannel AAC files are `afconvert --no-filler -f m4af -d aac -l <tag> chN.wav
+aac-chN.m4a` with `<tag>` `AAC_3_0`, `AAC_4_0`, `AAC_5_0`, `AAC_5_1`, `AAC_6_1`, `AAC_7_1` for
+`ch3` .. `ch8` (without `-l` afconvert refuses more than two channels for AAC).
 
 Its `esds` holds the AudioSpecificConfig `12 10` (AAC LC, 44.1 kHz, channel configuration 2).

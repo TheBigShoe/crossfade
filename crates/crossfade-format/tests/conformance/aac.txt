@@ -1,0 +1,44 @@
+# ISO/IEC 14496-26 AAC streams through the readers and the AAC decoder.
+# Rewrite with `CROSSFADE_BLESS=1 just conformance` after a deliberate decoder change.
+aac/iso/al00_44.mp4 pass: 1 ch, 330752 frames, offset 2048, rms 3.56e-8, max 1.04e-7, energy 0.000 dB, worst block 0.00 dB, sha256 335b02edad90d8ca
+aac/iso/al00sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al01_44.mp4 pass: 1 ch, 363520 frames, offset 2048, rms 3.47e-8, max 1.19e-7, energy 0.000 dB, worst block 0.00 dB, sha256 9185be1fdeb37a4f
+aac/iso/al01sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al02_44.mp4 pass: 1 ch, 363520 frames, offset 2048, rms 3.47e-8, max 1.19e-7, energy 0.000 dB, worst block 0.00 dB, sha256 06f34a9eb3f0a586
+aac/iso/al02sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al03_44.mp4 pass: 1 ch, 363520 frames, offset 2048, rms 3.47e-8, max 1.19e-7, energy 0.000 dB, worst block 0.00 dB, sha256 a8758b2a4ca45247
+aac/iso/al03sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al04_44.mp4 pass: 1 ch, 363520 frames, offset 2048, rms 3.47e-8, max 1.19e-7, energy 0.000 dB, worst block 0.00 dB, sha256 2f805ef8d4f6d2f2
+aac/iso/al04sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al05_44.mp4 pass: 2 ch, 327680 frames, offset 2048, rms 4.09e-8, max 2.98e-7, energy 0.000 dB, worst block 0.00 dB, sha256 4bc704557e3457be
+aac/iso/al05sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al06_44.mp4 decoded: 3 ch, 363520 frames, sha256 07dfd2862ca79763 (no reference in the corpus)
+aac/iso/al06sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al07_44.mp4 refused: aac: coupling channel elements are not supported
+aac/iso/al07sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al08_44.mp4 decoded: 48 ch, 363520 frames, sha256 a83108f2382295b7 (no reference in the corpus)
+aac/iso/al08sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al14_44.mp4 pass: 2 ch, 51200 frames, offset 0, rms 5.37e-8, max 8.94e-7, energy 0.000 dB, worst block 0.00 dB, sha256 85e7da7d2e356c4f
+aac/iso/al14sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al16_44.mp4 decoded: 3 ch, 282624 frames, sha256 db8a0431eb6e1f68 (no reference in the corpus)
+aac/iso/al16sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al17_44.mp4 pass: 2 ch, 330752 frames, offset 2048, rms 3.54e-8, max 1.04e-7, energy 0.000 dB, worst block 0.00 dB, sha256 e7c428f8d9244cc7
+aac/iso/al17sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al18_08.adif refused: ADIF has no reader
+aac/iso/al18_08.adts decoded: 1 ch, 2880512 frames, sha256 56d3cd6cc714fc68 (no reference in the corpus)
+aac/iso/al18_22.adif refused: ADIF has no reader
+aac/iso/al18_22.adts decoded: 1 ch, 2880512 frames, sha256 5fb410ee2ed07274 (no reference in the corpus)
+aac/iso/al18_32.adif refused: ADIF has no reader
+aac/iso/al18_32.adts decoded: 1 ch, 2880512 frames, sha256 924fdf7bf1e83f43 (no reference in the corpus)
+aac/iso/al18_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 1600, rms 2.48e-2, max 1.09e-1, energy 0.000 dB, worst block 1.73 dB, sha256 c062886df853563e
+aac/iso/al18_64.adif refused: ADIF has no reader
+aac/iso/al18_64.adts decoded: 1 ch, 2880512 frames, sha256 558787de0f640dcb (no reference in the corpus)
+aac/iso/al18_96.adif refused: ADIF has no reader
+aac/iso/al18_96.adts decoded: 1 ch, 2880512 frames, sha256 d26a364fa3bca945 (no reference in the corpus)
+aac/iso/al18sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/al19_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 0, rms 2.85e-2, max 1.70e-1, energy 0.000 dB, worst block 0.19 dB, sha256 2e8b50dd983c4674
+aac/iso/al19sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
+aac/iso/ap01_48.adif refused: ADIF has no reader
+aac/iso/ap01_48.adts refused: aac: AAC LTP (long term prediction) is not supported
+aac/iso/ap02_48.adif refused: ADIF has no reader
+aac/iso/ap02_48.adts refused: aac: AAC LTP (long term prediction) is not supported

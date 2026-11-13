@@ -390,7 +390,8 @@ fn aac_takes_rate_and_channels_from_its_audio_specific_config() {
         entry: mp4a_entry(0x40, &[0x11, 0x80], 2, 48000),
         ..File::alac(1)
     };
-    assert!(message(open_bytes(pce.bytes(), false)).contains("channel configuration 0"));
+    // Channel configuration 0 and no program config element: the config is cut off.
+    assert!(message(open_bytes(pce.bytes(), false)).contains("cut off"));
     let none = File {
         entry: sound_entry(b"mp4a", 2, 48000, &esds(0x40, &[])[..14]),
         ..File::alac(1)
