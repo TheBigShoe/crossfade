@@ -129,3 +129,41 @@ fn the_largest_sizes_the_cache_allows_round_trip() {
         }
     }
 }
+
+#[test]
+fn the_table_form_agrees_with_the_recurrence() {
+    // V from the table equals the recurrence's, and both forms give the same vector for
+    // indices spread over every V(n, k) that fits in 32 bits, n up to the largest band.
+    for n in 2..=176usize {
+        for k in 1..=MAX_PULSES {
+            if v128(n, k) >= 1 << 32 {
+                break;
+            }
+            let mut row = [0u32; MAX_PULSES + 2];
+            let v = ncwrs_urow(n, k, &mut row);
+            assert_eq!(v, u(n, k) + u(n, k + 1), "V({n}, {k})");
+            let step = (v / 97).max(1);
+            let mut i = 0u32;
+            while i < v {
+                let mut a = vec![0; n];
+                let mut b = vec![0; n];
+                let mut row = [0u32; MAX_PULSES + 2];
+                ncwrs_urow(n, k, &mut row);
+                cwrsi(k, i, &mut a, &mut row);
+                cwrsi_table(n, k, i, &mut b);
+                assert_eq!(a, b, "n {n} k {k} i {i}");
+                i = match i.checked_add(step) {
+                    Some(next) => next,
+                    None => break,
+                };
+            }
+            let mut a = vec![0; n];
+            let mut b = vec![0; n];
+            let mut row = [0u32; MAX_PULSES + 2];
+            ncwrs_urow(n, k, &mut row);
+            cwrsi(k, v - 1, &mut a, &mut row);
+            cwrsi_table(n, k, v - 1, &mut b);
+            assert_eq!(a, b, "n {n} k {k} last");
+        }
+    }
+}
