@@ -282,6 +282,15 @@ impl<'a> RangeDecoder<'a> {
         tell_frac(self.nbits_total, self.rng)
     }
 
+    /// Counts every bit up to `bits` as read, so that [`tell`](Self::tell) gives `bits` from
+    /// now on: what CELT does on a silence flag (`dec->nbits_total += tell - ec_tell(dec)`).
+    /// Nothing is read and the range is unchanged.
+    pub fn mark_read_to(&mut self, bits: i32) {
+        self.nbits_total = self
+            .nbits_total
+            .wrapping_add(bits.wrapping_sub(self.tell()));
+    }
+
     /// The range: after the last symbol of a frame, the "final range" an encoder reports.
     pub fn rng(&self) -> u32 {
         self.rng

@@ -1,32 +1,29 @@
-//! CELT's view of the frame's range decoder: the decoder itself plus the bits a silence flag
-//! pretends were read (`dec->nbits_total += tell - ec_tell(dec)` in `celt_decode_with_ec`),
-//! which `tell` and `tell_frac` count from then on.
+//! CELT's view of the frame's range decoder: its calls under the names `celt_decoder.c` uses,
+//! with `tell_frac` in the `opus_int32` the reference's callers hold it in.
 
 use crate::range::RangeDecoder;
 
 pub(super) struct Ec<'a, 'b> {
     dec: &'a mut RangeDecoder<'b>,
-    /// Whole bits added to the decoder's count.
-    extra: i32,
 }
 
 impl<'a, 'b> Ec<'a, 'b> {
     pub(super) fn new(dec: &'a mut RangeDecoder<'b>) -> Self {
-        Self { dec, extra: 0 }
+        Self { dec }
     }
 
     pub(super) fn tell(&self) -> i32 {
-        self.dec.tell().wrapping_add(self.extra)
+        self.dec.tell()
     }
 
     /// `ec_tell_frac` as the reference's callers hold it, in an `opus_int32`.
     pub(super) fn tell_frac(&self) -> i32 {
-        (self.dec.tell_frac() as i32).wrapping_add(self.extra.wrapping_mul(8))
+        self.dec.tell_frac() as i32
     }
 
     /// Counts every bit up to `total` as read.
     pub(super) fn pretend_read_to(&mut self, total: i32) {
-        self.extra = self.extra.wrapping_add(total.wrapping_sub(self.tell()));
+        self.dec.mark_read_to(total);
     }
 
     /// The frame's length in bytes (`dec->storage`).
