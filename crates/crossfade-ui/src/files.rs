@@ -74,8 +74,8 @@ fn summary_of(doc: &ProbeDocument) -> String {
         inspector::format_name(&doc.format),
         kilohertz(stream.sample_rate),
         stream.layout.clone(),
-        inspector::depth(stream),
     ];
+    parts.extend(inspector::depth(stream));
     parts.extend(stream.duration_seconds.map(clock));
     parts.join(" \u{b7} ")
 }

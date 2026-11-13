@@ -7,6 +7,7 @@ pub mod command;
 pub mod fsio;
 pub mod inputs;
 pub mod inspector;
+pub mod player;
 pub mod queue;
 pub mod runner;
 pub mod sheet;

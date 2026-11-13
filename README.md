@@ -108,7 +108,9 @@ just run
 
 Open or drop files to inspect them (a zoomable waveform and a loudness readout
 appear under the file name; scroll to pan, pinch or Cmd/Ctrl-scroll to zoom,
-double-click to fit), convert with the same options the command
+double-click to fit), play them through the default output device (Space plays
+and pauses, Home and End jump, a click on the waveform seeks and a drag scrubs;
+the playhead follows playback until you scroll), convert with the same options the command
 line has (sample rate, channels, and an Adjust section for gain or loudness
 normalise, trim and fades), and watch a queue with progress, cancel and retry.
 A normalising job shows Measuring first; a finished job says how many samples
