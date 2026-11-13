@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod actions;
+pub mod audio_out;
 pub mod chrome;
 pub mod config;
 pub mod convert_sheet;
@@ -30,6 +31,8 @@ mod gate;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod playback_tests;
+#[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
 mod quit_tests;
@@ -49,7 +52,7 @@ mod wiring_tests;
 mod workspace_tests;
 
 pub use convert_sheet::{ConvertDialog, ConvertEvent};
-pub use workspace::{Workspace, WorkspaceOptions, init, open_main_window};
+pub use workspace::{AudioOutput, Workspace, WorkspaceOptions, init, open_main_window};
 
 pub mod prelude {
     //! The only door to GPUI and gpui-kit. Every other file imports

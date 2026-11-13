@@ -148,6 +148,55 @@ impl ChannelLayout {
         })
     }
 
+    /// The layout of `channels` channels in the order Vorbis, Opus and FLAC in Ogg share for 1
+    /// to 8 channels, stored in WAVE mask order (decoders reorder into it). The speakers, in
+    /// the codec's own order:
+    ///
+    /// | channels | speakers |
+    /// |---|---|
+    /// | 1 | C |
+    /// | 2 | L R |
+    /// | 3 | L C R |
+    /// | 4 | L R BL BR |
+    /// | 5 | L C R BL BR |
+    /// | 6 | L C R BL BR LFE |
+    /// | 7 | L C R SL SR BC LFE |
+    /// | 8 | L C R SL SR BL BR LFE |
+    ///
+    /// Any other count has no standard order and is unpositioned; zero is an error.
+    pub fn vorbis_order(channels: u8) -> Result<Self, Error> {
+        use Channel::*;
+        let positions = match channels {
+            1 => vec![FrontCenter],
+            2 => vec![FrontLeft, FrontRight],
+            3 => vec![FrontLeft, FrontRight, FrontCenter],
+            4 => vec![FrontLeft, FrontRight, BackLeft, BackRight],
+            5 => vec![FrontLeft, FrontRight, FrontCenter, BackLeft, BackRight],
+            6 => vec![FrontLeft, FrontRight, FrontCenter, Lfe, BackLeft, BackRight],
+            7 => vec![
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                Lfe,
+                BackCenter,
+                SideLeft,
+                SideRight,
+            ],
+            8 => vec![
+                FrontLeft,
+                FrontRight,
+                FrontCenter,
+                Lfe,
+                BackLeft,
+                BackRight,
+                SideLeft,
+                SideRight,
+            ],
+            n => return Self::unpositioned(u16::from(n)),
+        };
+        Self::from_positions(positions)
+    }
+
     /// The layout a WAVE channel mask describes, positions in bit order. `None` unless every set
     /// bit is a defined position and their count is `channels`.
     pub fn from_mask(mask: u32, channels: u16) -> Option<Self> {

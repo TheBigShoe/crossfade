@@ -53,13 +53,13 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-vorbis` | Standalone Vorbis I decoding, only `libm` (the same bits on every platform): `Ident`, `Comments` and `Setup` parsing (every length and index checked, degenerate values refused, allocations charged to a caller's budget first), `Modes` (a packet's block size from its first bits) and `packet_frames`, the `Decoder` (packet in, interleaved `f32` out, `reset`), `speakers` (the channel table), `pack_headers`/`unpack_headers` (Xiph lacing), its own `Error`; a hidden `testing` module (bitstream writer, Ogg files) for tests. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
-| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder, `crossfade-alac`'s decoder (`alac`: ALAC order to WAVE order, 20-bit left-justified in `S24`, independent packets decoded in batches on up to four scoped threads), `crossfade-mp3`'s decoder (`mp3`: `F32`, silence without error for frames whose main data precedes the first packet) and, with the off-by-default feature `aac`, `crossfade-aac`'s decoder (`aac`: interleaved `F32`; without the feature AAC is refused by name) to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz), and from `crossfade-vorbis`'s decoder (`vorbis`: headers from `extradata` in Xiph lacing, `F32` out in `vorbis::layout`'s order, undecodable packets skipped); `decoder_for` / `encoder_for` |
+| `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder, `crossfade-alac`'s decoder (`alac`: ALAC order to WAVE order, 20-bit left-justified in `S24`, independent packets decoded in batches on up to four scoped threads), `crossfade-mp3`'s decoder (`mp3`: `F32`, silence without error for frames whose main data precedes the first packet) and, with the off-by-default feature `aac`, `crossfade-aac`'s decoder (`aac`: interleaved `F32`; without the feature AAC is refused by name) to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz), and from `crossfade-vorbis`'s decoder (`vorbis`: headers from `extradata` in Xiph lacing, `F32` out in `ChannelLayout::vorbis_order`'s order, undecodable packets skipped); `decoder_for` / `encoder_for` |
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
 | `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `DecodeSession` (one input decoded frame by frame on its timeline, with exact `seek`), `decode_frames` (a decode-only pass for analysis, read through a session) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
-| `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout |
+| `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout, and the preview `player` (`Player` over an `AudioSink`: a decode thread writes converted `f32` ahead into an `rtrb` ring per load or seek, `Feed::fill` is the wait-free device side, the position counts what was pulled; `VirtualSink` for tests; `Follow` for the playhead) |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
-| `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
+| `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models (the waveform strip's transport too), `audio_out` (the default output device through `cpal`), the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
 | `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest (single files and `[[archive]]` members; `expect = "data"` for reference files), fetch/seed/verify into `.corpus-cache` (`--only <id prefix>`, repeatable), `require(id)` and `require_all(prefix)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
@@ -192,7 +192,7 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 ```sh
 just ci        # fmt-check + clippy -D warnings + cargo test --workspace + just conformance
 just corpus    # once per clone: fetch every conformance file, FLAC/Opus/Vorbis/MP3/AAC (~550 MB; needs curl and the network); one codec: crossfade-corpus fetch --only flac/
-just conformance  # tier 3, FLAC and the ISO AAC streams vs the frozen results (needs the corpus)
+just conformance  # tier 3: FLAC, seeking, MP3, AAC (ISO streams) and Vorbis (Xiph files) vs the frozen results (needs the corpus, ~30 s in release)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
@@ -228,7 +228,9 @@ UI work: views stay thin and render a `crossfade-app` model; test the model
 first, then the view with `#[gpui_test]` (headless, no display). A convert
 built in the GUI must equal `crossfade_cli::request_from_args` for the same
 intent (the parity tests). Review `just screenshots` output before handing over
-UI changes. Tests and screenshots never read or write the real config
+UI changes. Audio output (`cpal`) lives only in `crossfade-ui` and is opened only by
+`open_main_window`; tests and screenshots play through `VirtualSink`, and nothing on the
+device's callback path blocks, locks or allocates. Tests and screenshots never read or write the real config
 directory. The first GPUI build takes several minutes; a `target/` cloned from
 another checkout (`cp -Rc`) needs `cargo clean -p <each workspace crate>` first
 or stale artifacts are reused.
@@ -245,11 +247,12 @@ Run on every `cargo test`:
 - 2: snapshots (`insta`; review `.snap` files by hand, `cargo-insta` is not
   assumed)
 
-Later milestones:
+Beyond the plain `cargo test`:
 
-- 3: conformance against reference vectors (`just conformance`; the frozen results
-  in `crates/crossfade-format/tests/conformance/` are rewritten only on purpose,
-  with `CROSSFADE_BLESS=1`)
+- 3: conformance against reference vectors (`just conformance`, part of `just ci`: the
+  FLAC corpus, seeking on every codec, the MP3 and AAC ISO streams and Xiph's Vorbis files,
+  each against frozen results in `crates/crossfade-format/tests/conformance/`, rewritten
+  only on purpose, with `CROSSFADE_BLESS=1`; ~30 s with the corpus cached)
 - 4: UI (`#[gpui_test]` runs on every `cargo test`; screenshots are a review
   aid, not a gate)
 - 5: fuzzing (`cargo-fuzz`)
