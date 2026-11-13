@@ -3,10 +3,11 @@
 An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
-Crossfade is early. It handles lossless audio today, with processing: sample
-rate and channel conversion, gain, loudness normalising, trim, fades and
-joining files. Lossy codecs and video are planned. It has only been run on
-macOS so far.
+Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC) and
+reads those and lossy audio too (MP3, AAC, Vorbis; Opus is not built yet), with
+processing: sample rate and channel conversion, gain, loudness normalising,
+trim, fades and joining files. Lossy encoders and video are planned. It has
+only been run on macOS so far.
 
 ## What works
 
@@ -137,9 +138,9 @@ just ci       # formatting, lints, tests, and the conformance tier
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and compares the results with a committed record. The corpus also holds the
-official Opus (RFC 8251), Vorbis (Xiph), MP3 and AAC (ISO/IEC 14496-26) test
-vectors for the decoders to come; none is committed, `corpus.toml` only lists
+and the Xiph Vorbis, MP3 and AAC (ISO/IEC 14496-26) test vectors, and compares
+the results with a committed record. The corpus also holds the official Opus
+(RFC 8251) vectors for the decoder to come; none is committed, `corpus.toml` only lists
 where each one lives. `just corpus` takes them all; to fetch one codec, run
 `cargo run --release -p crossfade-corpus -- fetch --only flac/` (the flag
 repeats, and `verify`, `list` and `seed` take it too).
