@@ -1,6 +1,7 @@
 //! The SILK layer (RFC 6716 section 4.2; libopus `silk/`, the decoder half): the
-//! linear-prediction codec used alone in SILK mode and below 8 kHz in hybrid mode. Not built
-//! yet: [`SilkDecoder::decode`] returns [`Error::Unsupported`].
+//! linear-prediction codec used alone in SILK mode and below 8 kHz in hybrid mode: a port of
+//! libopus's decoder (the plain C paths, without the deep PLC, OSCE or DRED), its modules
+//! named after the C files they port.
 //!
 //! # The contract with the top level
 //!
@@ -70,9 +71,48 @@
 //! SILK's tables (the iCDFs of RFC 6716 4.2.7, the NLSF codebooks, the LTP and pitch tables,
 //! the resampler's coefficients and `delay_matrix_dec`, ...) go in `silk/tables*.rs`, private
 //! to this module. Nothing else in the crate shares them; the range decoder needs none.
+//!
+//! # What the joining stage can rely on
+//!
+//! - **Lost frames.** A loss conceals with the rate and coded channels of the last frame with
+//!   data (`DecControl`'s, which survive [`SilkDecoder::reset`] as in libopus). Before any
+//!   such frame there is nothing to conceal: [`Error::Corrupt`] and silence. A loss of less
+//!   than 10 ms conceals 10 ms, advancing SILK's state by 10 ms, and writes its first
+//!   `frame_size` samples (libopus's `max(F10, frame_size)` buffer); a loss of 15 or 30 ms
+//!   is an error and silence, as in libopus (the top level asks for 10 or 20 ms chunks).
+//!   After a reset the concealment is silent: it has no signal to extend.
+//! - **Delay.** The resampler delays its input by `delay_matrix_dec`: 0, 4 and 7 input
+//!   samples at 8, 12 and 16 kHz (0, 16 and 21 samples at 48 kHz), on top of its filters' own
+//!   delay; with it the output equals libopus's sample for sample, so it lines up with CELT
+//!   exactly as libopus's does.
+//! - **Final range.** SILK leaves the range decoder after its last symbol. In SILK-only mode
+//!   the top level must then read the redundancy flags whenever `tell + 17 <= 8 * len`
+//!   (redundancy is implied there): the SILK packets just before a switch to CELT carry such a
+//!   redundant CELT frame (testvectors 08 and 09 packet 4, 12 packet 136), and their stored
+//!   final range includes it.
+
+// The loops index as libopus's do, so each line can be checked against the C.
+#![allow(clippy::needless_range_loop)]
+
+mod cng;
+mod dec_api;
+mod decode_core;
+mod decode_indices;
+mod decode_parameters;
+mod decode_pulses;
+mod macros;
+mod nlsf;
+mod plc;
+mod resampler;
+mod state;
+mod stereo;
+mod tables;
+mod tables_nlsf;
 
 use crate::error::{Error, Result};
 use crate::range::RangeDecoder;
+use dec_api::{DecControl, MAX_API_FRAME, SilkState};
+use state::LostFlag;
 
 /// What the top level tells SILK about one Opus frame (`opus_decode_frame`'s `DecControl` and
 /// `lost_flag`).
@@ -94,28 +134,104 @@ pub(crate) struct SilkFrame {
 #[derive(Debug, Clone)]
 pub(crate) struct SilkDecoder {
     /// Output channels, 1 or 2 (`nChannelsAPI`).
-    #[expect(dead_code, reason = "read once the SILK decoder is built")]
     channels: usize,
+    state: Box<SilkState>,
+    /// `DecControl`'s rate and coded channels from the last frame with data: a lost frame
+    /// conceals with them. Like libopus's, they survive [`reset`](Self::reset).
+    internal_rate: i32,
+    stream_channels: usize,
+    /// The 16-bit output of one Opus frame (at most 60 ms, or 10 ms concealed for less).
+    pcm: Vec<i16>,
 }
 
 impl SilkDecoder {
     /// A decoder writing `channels` (1 or 2) output channels at 48 kHz (`silk_InitDecoder`).
     pub(crate) fn new(channels: usize) -> Self {
-        Self { channels }
+        Self {
+            channels,
+            state: Box::new(SilkState::new()),
+            internal_rate: 0,
+            stream_channels: 0,
+            pcm: vec![0; 3 * MAX_API_FRAME * 2],
+        }
     }
 
     /// `silk_ResetDecoder`, with RFC 8251's stereo state reset.
-    pub(crate) fn reset(&mut self) {}
+    pub(crate) fn reset(&mut self) {
+        self.state.reset();
+    }
 
     /// Decodes (`Some`) or conceals (`None`) one Opus frame's SILK part into `out`
     /// (`frame.frame_size * channels` interleaved samples at 48 kHz), per the module's
     /// contract.
     pub(crate) fn decode(
         &mut self,
-        _dec: Option<&mut RangeDecoder<'_>>,
-        _frame: &SilkFrame,
-        _out: &mut [f32],
+        mut dec: Option<&mut RangeDecoder<'_>>,
+        frame: &SilkFrame,
+        out: &mut [f32],
     ) -> Result<()> {
-        Err(Error::Unsupported("silk decoding is not built yet"))
+        let ch = self.channels;
+        let frame_size = frame.frame_size;
+        if out.len() != frame_size * ch || frame_size > 3 * MAX_API_FRAME {
+            return Err(Error::BadArgument("silk: output length"));
+        }
+        let lost = if dec.is_none() {
+            LostFlag::PacketLost
+        } else {
+            self.internal_rate = frame.internal_rate as i32;
+            self.stream_channels = frame.stream_channels;
+            if frame.fec {
+                LostFlag::DecodeLbrr
+            } else {
+                LostFlag::Normal
+            }
+        };
+        // Concealment works in whole 10 ms frames at least.
+        let payload_ms = if lost == LostFlag::PacketLost {
+            (frame_size / 48).max(10)
+        } else {
+            frame_size / 48
+        };
+        let ctl = DecControl {
+            n_channels_api: ch,
+            n_channels_internal: self.stream_channels,
+            internal_sample_rate: self.internal_rate,
+            payload_size_ms: payload_ms,
+        };
+        let mut decoded = 0;
+        let result = loop {
+            let at = (decoded * ch).min(self.pcm.len());
+            let n = match self.state.decode(
+                &ctl,
+                lost,
+                decoded == 0,
+                dec.as_deref_mut(),
+                &mut self.pcm[at..],
+            ) {
+                Ok(0) => break Err(Error::Corrupt("silk: empty frame")),
+                Ok(n) => n,
+                Err(e) => break Err(e),
+            };
+            decoded += n;
+            if decoded >= frame_size {
+                break Ok(());
+            }
+        };
+        match result {
+            Ok(()) => {
+                for (o, &s) in out.iter_mut().zip(&self.pcm) {
+                    *o = (1.0 / 32768.0) * f32::from(s);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                out.fill(0.0);
+                Err(e)
+            }
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "silk_tests.rs"]
+mod tests;

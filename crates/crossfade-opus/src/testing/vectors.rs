@@ -175,10 +175,11 @@ mod tests {
 
     #[test]
     fn reports_a_layer_that_is_not_built() {
-        let file = bit(&[(&[(1 << 3) | 0b100, 1, 2, 3], 0x1234)]);
+        // CELT and SILK are built; hybrid is the joining stage's.
+        let file = bit(&[(&[(15 << 3) | 0b100, 1, 2, 3], 0x1234)]);
         assert_eq!(
             decode_vector(&file, 2, |_| {}).unwrap_err(),
-            "packet 0 (config 1 SILK NB 20 ms stereo code 0): opus: silk decoding is not built yet"
+            "packet 0 (config 15 Hybrid FB 20 ms stereo code 0): opus: hybrid decoding is not built yet"
         );
     }
 }
