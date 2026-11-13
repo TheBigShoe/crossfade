@@ -151,7 +151,7 @@ impl Decoder {
     pub fn decode(&mut self, packet: Option<&[u8]>, out: &mut Vec<f32>) -> Result<usize> {
         let start = out.len();
         let result = match packet {
-            None => self.conceal(self.last_packet_duration, out),
+            None => self.conceal_frames(self.last_packet_duration, out),
             Some(data) => Packet::parse(data).and_then(|p| self.decode_packet(&p, out)),
         };
         if result.is_err() {
@@ -189,12 +189,12 @@ impl Decoder {
         let toc = packet.toc();
         let packet_frame = toc.frame_samples();
         if frames < packet_frame || toc.mode() == Mode::Celt || self.mode == Some(Mode::Celt) {
-            return self.conceal(frames, out);
+            return self.conceal_frames(frames, out);
         }
         // Conceal all but the last frame's worth, which the LBRR data stands in for.
         let duration = self.last_packet_duration;
         if frames > packet_frame
-            && let Err(e) = self.conceal(frames - packet_frame, out)
+            && let Err(e) = self.conceal_frames(frames - packet_frame, out)
         {
             self.last_packet_duration = duration;
             return Err(e);
@@ -220,8 +220,25 @@ impl Decoder {
         self.gain
     }
 
+    /// Conceals `frames` samples (a whole number of 2.5 ms, at most 120 ms) as if a packet
+    /// that long were lost (`opus_decode` with no data): silence before any audio. Appends
+    /// them to `out`; an error appends nothing.
+    pub fn conceal(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<usize> {
+        if frames == 0 || !frames.is_multiple_of(F2_5) || frames > MAX_PACKET_SAMPLES {
+            return Err(Error::BadArgument(
+                "concealment is a whole number of 2.5 ms, at most 120 ms",
+            ));
+        }
+        let start = out.len();
+        let result = self.conceal_frames(frames, out);
+        if result.is_err() {
+            out.truncate(start);
+        }
+        result
+    }
+
     /// `opus_decode_native` with no data: `frames` concealed, frame by frame.
-    fn conceal(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<usize> {
+    fn conceal_frames(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<usize> {
         let start = out.len();
         out.resize(start + frames * self.channels, 0.0);
         let mut count = 0;

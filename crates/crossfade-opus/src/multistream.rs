@@ -104,6 +104,11 @@ impl MultistreamDecoder {
         }
     }
 
+    /// Conceals `frames` samples in every stream ([`Decoder::conceal`]).
+    pub fn conceal(&mut self, frames: usize, out: &mut Vec<f32>) -> Result<usize> {
+        self.run(out, |d, _, buf| d.conceal(frames, buf))
+    }
+
     /// Every stream's forward error correction from `packet` in place of the lost packet
     /// before it ([`Decoder::decode_fec`]).
     pub fn decode_fec(&mut self, packet: &[u8], out: &mut Vec<f32>) -> Result<usize> {
