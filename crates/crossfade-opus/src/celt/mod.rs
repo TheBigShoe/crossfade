@@ -71,8 +71,10 @@
 mod bands;
 mod cwrs;
 mod ec;
+mod fft;
 mod laplace;
 mod maths;
+mod mdct;
 mod quant_bands;
 mod rate;
 mod tables;
