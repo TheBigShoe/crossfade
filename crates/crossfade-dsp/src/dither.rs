@@ -150,24 +150,24 @@ impl Quantiser {
         let start = out.len();
         out.resize(start + input.len(), T::default());
         let out = &mut out[start..];
-        let mut clipped = 0u64;
         let mut noise = [0f64; BLOCK];
         for (x, o) in input.chunks(BLOCK).zip(out.chunks_mut(BLOCK)) {
             let noise = &mut noise[..x.len()];
             match self.dither {
                 Dither::Tpdf => noise.iter_mut().for_each(|d| *d = self.rng.tpdf()),
+                // Adding zero changes no integer result (only the sign of a zero).
                 Dither::None => noise.fill(0.0),
             }
-            let dither = self.dither == Dither::Tpdf;
+            // Counted in f64 lanes beside the samples: exact, and no widening of masks.
+            let mut clipped = 0.0f64;
             for ((&x, o), &d) in x.iter().zip(o.iter_mut()).zip(noise.iter()) {
                 // NaN is silence, as in `convert`.
                 let v = if x.is_nan() { 0.0 } else { x * scale };
-                clipped += u64::from(v <= below || v >= above);
-                let y = if dither { (v + d).round() } else { v.round() };
-                *o = to(y.clamp(lo, hi) as i32);
+                clipped += if v <= below || v >= above { 1.0 } else { 0.0 };
+                *o = to((v + d).round().clamp(lo, hi) as i32);
             }
+            self.clipped += clipped as u64;
         }
-        self.clipped += clipped;
     }
 }
 
