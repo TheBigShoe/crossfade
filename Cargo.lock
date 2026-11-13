@@ -1592,6 +1592,7 @@ dependencies = [
  "crossfade-core",
  "crossfade-flac",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-testkit",
  "crossfade-vorbis",
  "proptest",

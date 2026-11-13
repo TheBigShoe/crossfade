@@ -12,6 +12,7 @@ crossfade-flac.workspace = true
 crossfade-vorbis.workspace = true
 crossfade-alac.workspace = true
 crossfade-mp3.workspace = true
+crossfade-opus.workspace = true
 crossfade-aac = { workspace = true, optional = true }
 
 [features]
