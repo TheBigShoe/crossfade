@@ -49,7 +49,7 @@ pub fn probe_path(path: &str, io: &mut dyn JobIo, limits: &Limits) -> InputState
 }
 
 /// An engine refusal as the inspector shows it.
-fn refusal(error: &Error) -> String {
+pub fn refusal(error: &Error) -> String {
     let Error::Unsupported { what } = error else {
         return error.to_string();
     };
