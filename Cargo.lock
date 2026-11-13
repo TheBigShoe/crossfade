@@ -1692,6 +1692,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-opus"
+version = "0.0.0"
+dependencies = [
+ "libm",
+ "proptest",
+]
+
+[[package]]
 name = "crossfade-resample"
 version = "0.0.0"
 dependencies = [

@@ -17,6 +17,7 @@ crossfade-codec = { path = "crates/crossfade-codec", version = "0.0.0" }
 crossfade-flac = { path = "crates/crossfade-flac", version = "0.0.0" }
 crossfade-aac = { path = "crates/crossfade-aac", version = "0.0.0" }
 crossfade-vorbis = { path = "crates/crossfade-vorbis", version = "0.0.0" }
+crossfade-opus = { path = "crates/crossfade-opus", version = "0.0.0" }
 crossfade-alac = { path = "crates/crossfade-alac", version = "0.0.0" }
 crossfade-mp3 = { path = "crates/crossfade-mp3", version = "0.0.0" }
 crossfade-loudness = { path = "crates/crossfade-loudness", version = "0.0.0" }

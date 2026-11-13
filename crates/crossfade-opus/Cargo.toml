@@ -1,0 +1,19 @@
+[package]
+name = "crossfade-opus"
+description = "Opus (RFC 6716, updated by RFC 8251) in pure Rust: the range decoder, packet and Ogg header parsing, and the decoder's frame."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Unlike the rest of the workspace: this crate is a port of the reference decoder of RFC 6716
+# and of libopus, both under the 3-clause BSD licence (see COPYING).
+license = "BSD-3-Clause"
+
+# libm only: std's transcendental functions are not the same bits everywhere.
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
