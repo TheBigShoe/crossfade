@@ -670,3 +670,14 @@ fn the_readout_is_short() {
     );
     assert_eq!(transport_text(5, None, 10), "0:00.5");
 }
+
+#[test]
+fn seeks_made_while_nothing_pulls_play_the_last_target_first() {
+    let bytes = stereo(48_000);
+    let mut r = loaded(bytes.clone(), STEREO_48K);
+    for frame in [1000, 2000, 3000, 4000, 5000, 6000] {
+        r.player.seek(frame);
+    }
+    r.player.play();
+    assert_eq!(pull(&r, 100), expected(&bytes, 6000, STEREO_48K)[..200]);
+}
