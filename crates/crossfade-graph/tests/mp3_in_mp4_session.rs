@@ -3,7 +3,7 @@
 //! back more frames than any fixed pre-roll. The MP4 files are built here from the frames of the
 //! `tests/fixtures/mp3` files (one whole frame per sample).
 
-use crossfade_core::{AudioFrame, Demuxer, Limits, Packet, Samples};
+use crossfade_core::{AudioFrame, Limits, Packet, Samples};
 use crossfade_format::open_demuxer;
 use crossfade_graph::DecodeSession;
 use crossfade_testkit::memory::MemoryIo;
@@ -114,7 +114,7 @@ fn seek_then_decode_equals_decode_then_slice_for_mp3_in_mp4() {
         let whole = rest(&mut s);
         let frames = (whole.len() / ch) as u64;
         // Targets all along the stream at varying offsets, in no particular order.
-        let mut targets: Vec<u64> = (0..frames).step_by(frames as usize / 60 | 1).collect();
+        let mut targets: Vec<u64> = (0..frames).step_by((frames as usize / 60) | 1).collect();
         targets.extend([0, 1, frames - 1, frames]);
         targets.reverse();
         for target in targets {
