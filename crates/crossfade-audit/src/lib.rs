@@ -58,6 +58,7 @@ pub const ENGINE_CRATES: &[&str] = &[
     "crossfade-codec",
     "crossfade-flac",
     "crossfade-aac",
+    "crossfade-vorbis",
     "crossfade-alac",
     "crossfade-loudness",
     "crossfade-resample",

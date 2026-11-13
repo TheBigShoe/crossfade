@@ -1,0 +1,24 @@
+[package]
+name = "crossfade-vorbis"
+description = "Vorbis I decoding in pure Rust: headers, a setup parser with an allocation budget, and a decoder that gives the same bits on every platform."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# libm only: std's transcendental functions are not the same bits everywhere.
+[dependencies]
+libm.workspace = true
+
+[features]
+# Decoder::stage_times: where decoding spends its time (costs a clock read per stage).
+profile = []
+
+[lints]
+workspace = true
+
+# lewton and ogg are the test oracle only; they never enter a non-dev dependency tree.
+[dev-dependencies]
+proptest.workspace = true
+lewton = { version = "=0.10.2", default-features = false }
+ogg = "0.9"

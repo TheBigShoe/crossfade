@@ -15,7 +15,8 @@ macOS so far.
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags; true depth below the container (valid bits) and speaker layout (channel mask) |
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
-| Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
+| Ogg | FLAC and Vorbis | FLAC only | `.oga` and `.ogg`: gapless from the granule positions (priming and padding cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link; Opus is recognised and refused by name |
+| Vorbis | yes (in Ogg) | no | Our own decoder, the same bits on every platform: Xiph's 29 test files decode, within 9e-6 of lewton. Output is 32-bit float (16-bit by default when written to an integer container), 1 to 8 channels in WAVE speaker order |
 | MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
 | ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
 | MP3 | yes | no | MPEG-1, 2 and 2.5 Layer III with our own decoder, full accuracy on the ISO conformance streams; gapless from LAME's info frame, exact seeking, ID3v2 and ID3v1 tags. Layers I and II are named and refused |

@@ -8,6 +8,7 @@ pub mod alac;
 pub mod flac;
 pub mod mp3;
 pub mod pcm;
+pub mod vorbis;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
 
@@ -45,6 +46,9 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Flac {
         return flac::decode::decoder_threads(stream, threads);
+    }
+    if stream.codec == CodecId::Vorbis {
+        return vorbis::decoder(stream);
     }
     if stream.codec == CodecId::Alac {
         return alac::decoder_threads(stream, threads);

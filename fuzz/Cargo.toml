@@ -15,6 +15,7 @@ crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
 crossfade-flac = { path = "../crates/crossfade-flac" }
 crossfade-aac = { path = "../crates/crossfade-aac", features = ["decoder"] }
+crossfade-vorbis = { path = "../crates/crossfade-vorbis" }
 crossfade-alac = { path = "../crates/crossfade-alac" }
 crossfade-mp3 = { path = "../crates/crossfade-mp3" }
 crossfade-loudness = { path = "../crates/crossfade-loudness" }
@@ -127,6 +128,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "vorbis_decode"
+path = "fuzz_targets/vorbis_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "mp4_demux"
 path = "fuzz_targets/mp4_demux.rs"
 test = false
@@ -157,6 +165,13 @@ bench = false
 [[bin]]
 name = "mp3_demux"
 path = "fuzz_targets/mp3_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ogg_vorbis_demux"
+path = "fuzz_targets/ogg_vorbis_demux.rs"
 test = false
 doc = false
 bench = false
