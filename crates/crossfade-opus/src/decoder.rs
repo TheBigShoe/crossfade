@@ -484,10 +484,10 @@ impl Decoder {
         }
 
         if self.gain != 0 {
-            // The float build's celt_exp2(6.48814081e-4 * gain), the product in float. The
-            // reference applies it per call, so a transition's concealment, already scaled by
-            // its own call, is scaled again here; kept, to stay sample for sample with it.
-            let x: f32 = 6.488_140_8e-4 * f32::from(self.gain);
+            // The float build's celt_exp2(6.48814081e-4f * gain) (the same f32), the product in
+            // float. The reference applies it per call, so a transition's concealment, already
+            // scaled by its own call, is scaled again here; kept, to stay sample for sample.
+            let x: f32 = 6.488_141e-4 * f32::from(self.gain);
             let g = libm::exp(std::f64::consts::LN_2 * f64::from(x)) as f32;
             for s in pcm.iter_mut() {
                 *s *= g;
