@@ -108,7 +108,10 @@ fn r4_code_2_lengths_fit() {
         assert!(invalid(Packet::parse(&[2, b])));
     }
     // The only valid two-byte code 2 packet: both frames empty.
-    assert_eq!(Packet::parse(&[2, 0]).unwrap().frames(), &[&[][..], &[][..]]);
+    assert_eq!(
+        Packet::parse(&[2, 0]).unwrap().frames(),
+        &[&[][..], &[][..]]
+    );
     assert!(invalid(Packet::parse(&[2, 1])));
     assert!(invalid(Packet::parse(&[2, 3, 1, 2])));
     let p = Packet::parse(&[2, 2, 1, 2, 3]).unwrap();
@@ -218,7 +221,9 @@ fn self_delimited_packets_carry_the_last_length() {
     assert!(invalid(Packet::parse_self_delimited(&[0])));
     assert!(invalid(Packet::parse_self_delimited(&[0, 3, 1, 1])));
     assert!(invalid(Packet::parse_self_delimited(&[1, 2, 1, 1, 1])));
-    assert!(invalid(Packet::parse_self_delimited(&[3, 0x03, 2, 1, 1, 1, 1, 1])));
+    assert!(invalid(Packet::parse_self_delimited(&[
+        3, 0x03, 2, 1, 1, 1, 1, 1
+    ])));
     assert!(invalid(Packet::parse_self_delimited(&[2, 1, 3, 7, 8, 8])));
 }
 
@@ -230,8 +235,14 @@ fn packet_duration_needs_only_the_toc_and_count() {
     assert_eq!(packet_duration(&[(1 << 3) | 2, 255]), Ok(1920));
     assert_eq!(packet_duration(&[(16 << 3) | 3, 48]), Ok(5760));
     assert!(matches!(packet_duration(&[]), Err(Error::InvalidPacket(_))));
-    assert!(matches!(packet_duration(&[3]), Err(Error::InvalidPacket(_))));
-    assert!(matches!(packet_duration(&[3, 0]), Err(Error::InvalidPacket(_))));
+    assert!(matches!(
+        packet_duration(&[3]),
+        Err(Error::InvalidPacket(_))
+    ));
+    assert!(matches!(
+        packet_duration(&[3, 0]),
+        Err(Error::InvalidPacket(_))
+    ));
     assert!(matches!(
         packet_duration(&[(1 << 3) | 3, 7]),
         Err(Error::InvalidPacket(_))
@@ -266,20 +277,31 @@ fn frames_and_packing() -> impl Strategy<Value = (u8, bool, Vec<Vec<u8>>, Packin
         .prop_map(|(a, b)| (vec![a, b], Packing::TwoEqual));
     let two_different =
         (frame(1275), frame(1275)).prop_map(|(a, b)| (vec![a, b], Packing::TwoDifferent));
-    let vbr = (proptest::collection::vec(frame(300), 1..=6), proptest::option::of(0usize..700))
+    let vbr = (
+        proptest::collection::vec(frame(300), 1..=6),
+        proptest::option::of(0usize..700),
+    )
         .prop_map(|(f, padding)| (f, Packing::Signalled { vbr: true, padding }));
-    let cbr = (1usize..=6, 0usize..=100, proptest::option::of(0usize..700))
-        .prop_map(|(m, n, padding)| {
+    let cbr = (1usize..=6, 0usize..=100, proptest::option::of(0usize..700)).prop_map(
+        |(m, n, padding)| {
             let f = (0..m).map(|i| vec![i as u8; n]).collect();
-            (f, Packing::Signalled { vbr: false, padding })
-        });
-    (config_and_stereo, prop_oneof![one, two_equal, two_different, vbr, cbr]).prop_filter_map(
-        "within 120 ms",
-        |((config, stereo), (frames, packing))| {
+            (
+                f,
+                Packing::Signalled {
+                    vbr: false,
+                    padding,
+                },
+            )
+        },
+    );
+    (
+        config_and_stereo,
+        prop_oneof![one, two_equal, two_different, vbr, cbr],
+    )
+        .prop_filter_map("within 120 ms", |((config, stereo), (frames, packing))| {
             let total = Toc(config << 3).frame_samples() * frames.len();
             (total <= 5760).then_some((config, stereo, frames, packing))
-        },
-    )
+        })
 }
 
 proptest! {
