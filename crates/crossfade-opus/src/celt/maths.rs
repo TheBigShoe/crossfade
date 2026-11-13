@@ -2,12 +2,12 @@
 //! `libm`, in double as the reference's macros compute them, so the output is the same bits
 //! everywhere.
 
-/// `PI` of `mathops.h`: a float constant, not `std::f32::consts::PI`.
-const PI: f32 = 3.141_592_653;
+/// `PI` of `mathops.h` is a float, `3.141592653f`: the same value as `f32::consts::PI`.
+const PI: f32 = std::f32::consts::PI;
 
 /// `celt_exp2`: `exp(ln 2 * x)` in double.
 pub(super) fn exp2(x: f32) -> f32 {
-    libm::exp(0.693_147_180_559_945_309_4 * f64::from(x)) as f32
+    libm::exp(std::f64::consts::LN_2 * f64::from(x)) as f32
 }
 
 /// `celt_cos_norm`: `cos(PI / 2 * x)`, the product in float, the cosine in double.

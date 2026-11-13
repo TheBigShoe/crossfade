@@ -25,7 +25,7 @@ pub(super) fn backward(
     let n4 = n >> 2;
     let overlap = OVERLAP;
     let trig = |k: usize| MDCT_TRIG[k << shift];
-    let sine = (2.0 * 3.141_592_653_f32 * 0.125) / n as f32;
+    let sine = (2.0 * std::f32::consts::PI * 0.125) / n as f32;
 
     let mut f2 = [Cpx::default(); 480];
     let mut f = [Cpx::default(); 480];

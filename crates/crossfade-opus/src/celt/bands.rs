@@ -1,6 +1,7 @@
 //! Band shapes (`celt/bands.c`, the decoding half): `quant_all_bands` and its recursive
 //! `quant_band` (splitting, stereo angles, folding, the time-frequency transforms), the
 //! anti-collapse noise and denormalisation. RFC 8251 section 9's hybrid folding is applied.
+#![allow(clippy::needless_range_loop)] // index loops as the reference writes them
 
 use super::ec::Ec;
 use super::maths::{bitexact_cos, bitexact_log2tan, exp2, frac_mul16, isqrt32, lcg_rand};
@@ -21,7 +22,7 @@ fn eb(i: usize) -> usize {
 pub(super) fn haar1(x: &mut [f32], n0: usize, stride: usize) {
     let half = n0 >> 1;
     // QCONST16(.70710678f, 15) of the float build.
-    let s = 0.707_106_78_f32;
+    let s = std::f32::consts::FRAC_1_SQRT_2;
     for i in 0..stride {
         for j in 0..half {
             let a = 2 * j * stride + i;
@@ -132,6 +133,16 @@ fn stereo_merge(x: &mut [f32], y: &mut [f32], mid: f32) {
     }
 }
 
+/// The two halves of a split band: mid and side coefficients, their fold sources, and where
+/// the mid leaves its result for later folding.
+type SplitHalves<'a> = (
+    &'a mut [f32],
+    &'a mut [f32],
+    Option<&'a mut [f32]>,
+    Option<&'a mut [f32]>,
+    Option<&'a mut [f32]>,
+);
+
 /// What a band's recursion shares: the range decoder, the band, the spread, the budget, the
 /// noise seed.
 struct Ctx<'e, 'a, 'b> {
@@ -221,10 +232,10 @@ fn quant_band(
         }
         b0 = blocks;
         n_b0 = n_b;
-        if b0 > 1 {
-            if let Some(lb) = lowband.as_deref_mut() {
-                deinterleave_hadamard(lb, n_b >> recombine, b0 << recombine, long_blocks);
-            }
+        if b0 > 1
+            && let Some(lb) = lowband.as_deref_mut()
+        {
+            deinterleave_hadamard(lb, n_b >> recombine, b0 << recombine, long_blocks);
         }
     }
 
@@ -276,14 +287,14 @@ fn quant_band(
                 let ft = ((qn >> 1) + 1) * ((qn >> 1) + 1);
                 let fm = ctx.ec.decode(ft as u32) as i32;
                 let (fs, fl);
-                if fm < ((qn >> 1) * ((qn >> 1) + 1) >> 1) {
+                if fm < (((qn >> 1) * ((qn >> 1) + 1)) >> 1) {
                     itheta = (isqrt32(8 * fm as u32 + 1) as i32 - 1) >> 1;
                     fs = itheta + 1;
-                    fl = itheta * (itheta + 1) >> 1;
+                    fl = (itheta * (itheta + 1)) >> 1;
                 } else {
                     itheta = (2 * (qn + 1) - isqrt32(8 * (ft - fm - 1) as u32 + 1) as i32) >> 1;
                     fs = qn + 1 - itheta;
-                    fl = ft - ((qn + 1 - itheta) * (qn + 2 - itheta) >> 1);
+                    fl = ft - (((qn + 1 - itheta) * (qn + 2 - itheta)) >> 1);
                 }
                 ctx.ec.update(fl as u32, (fl + fs) as u32, ft as u32);
             }
@@ -381,13 +392,7 @@ fn quant_band(
             ctx.remaining_bits -= qalloc;
 
             let next_level = if stereo { level } else { level + 1 };
-            let (xm, ys, lb_mid, lb_side, out_mid): (
-                &mut [f32],
-                &mut [f32],
-                Option<&mut [f32]>,
-                Option<&mut [f32]>,
-                Option<&mut [f32]>,
-            ) = if stereo {
+            let (xm, ys, lb_mid, lb_side, out_mid): SplitHalves<'_> = if stereo {
                 (
                     &mut *x,
                     y.as_deref_mut().expect("stereo has y"),
@@ -465,7 +470,7 @@ fn quant_band(
                 stereo_merge(&mut x[..n], &mut y[..n], mid);
             }
             if inv {
-                for v in y.as_deref_mut().expect("stereo has y").iter_mut() {
+                for v in y.expect("stereo has y").iter_mut() {
                     *v = -*v;
                 }
             }
@@ -606,7 +611,7 @@ pub(super) fn quant_all_bands(
         }
         ctx.remaining_bits = a.total_bits - tell - 1;
         ctx.band = i;
-        let b = if i + 1 <= a.coded_bands {
+        let b = if i < a.coded_bands {
             let curr_balance = balance / 3.min((a.coded_bands - i) as i32);
             0.max(16383.min((ctx.remaining_bits + 1).min(a.pulses[i] + curr_balance)))
         } else {
@@ -776,7 +781,8 @@ pub(super) fn anti_collapse(
             let ediff = (log_e[ch * NB_EBANDS + i] - p1.min(p2)).max(0.0);
             let mut r = 2.0 * exp2(-ediff);
             if lm == 3 {
-                r *= 1.414_213_56;
+                // 1.41421356f
+                r *= std::f32::consts::SQRT_2;
             }
             r = thresh.min(r);
             r *= sqrt_1;

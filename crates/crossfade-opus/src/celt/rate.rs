@@ -1,5 +1,6 @@
 //! Bit allocation (`celt/rate.c`, `rate.h`): which bands get how many bits, in exact integer
 //! arithmetic, because it decides what is read next.
+#![allow(clippy::needless_range_loop)] // index loops as the reference writes them
 
 use super::ec::Ec;
 use super::tables::{
@@ -81,7 +82,7 @@ pub(super) fn init_caps(lm: usize, c: usize) -> [i32; NB_EBANDS] {
     for (i, cap) in cap.iter_mut().enumerate() {
         let n = band_width(i) << lm;
         let caps = i32::from(CACHE_CAPS[NB_EBANDS * (2 * lm + c - 1) + i]);
-        *cap = (caps + 64) * c as i32 * n >> 2;
+        *cap = ((caps + 64) * c as i32 * n) >> 2;
     }
     cap
 }
@@ -140,15 +141,15 @@ pub(super) fn compute_allocation(
     let mut trim_offset = [0; NB_EBANDS];
     for j in start..end {
         let n = band_width(j);
-        thresh[j] = (cc << BITRES).max((3 * n << lmi << BITRES) >> 4);
+        thresh[j] = (cc << BITRES).max(((3 * n) << lmi << BITRES) >> 4);
         trim_offset[j] =
-            cc * n * (alloc_trim - 5 - lmi) * (end - j - 1) as i32 * (1 << (lmi + BITRES)) >> 6;
+            (cc * n * (alloc_trim - 5 - lmi) * (end - j - 1) as i32 * (1 << (lmi + BITRES))) >> 6;
         if n << lmi == 1 {
             trim_offset[j] -= cc << BITRES;
         }
     }
     let alloc = |row: usize, j: usize| -> i32 {
-        cc * band_width(j) * i32::from(BAND_ALLOCATION[row * NB_EBANDS + j]) << lmi >> 2
+        (cc * band_width(j) * i32::from(BAND_ALLOCATION[row * NB_EBANDS + j])) << lmi >> 2
     };
     let mut lo = 1i32;
     let mut hi = NB_ALLOC_VECTORS as i32 - 1;
@@ -268,7 +269,7 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
         let mut psum = 0;
         let mut done = false;
         for j in (start..end).rev() {
-            let tmp = bits1[j] + (mid * bits2[j] >> ALLOC_STEPS);
+            let tmp = bits1[j] + ((mid * bits2[j]) >> ALLOC_STEPS);
             if tmp >= thresh[j] || done {
                 done = true;
                 psum += tmp.min(cap[j]);
@@ -286,7 +287,7 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
     let mut done = false;
     let mut bits = [0; NB_EBANDS];
     for j in (start..end).rev() {
-        let mut tmp = bits1[j] + (lo * bits2[j] >> ALLOC_STEPS);
+        let mut tmp = bits1[j] + ((lo * bits2[j]) >> ALLOC_STEPS);
         if tmp < thresh[j] && !done {
             tmp = if tmp >= alloc_floor { alloc_floor } else { 0 };
         } else {
@@ -370,9 +371,9 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
             if n == 2 {
                 offset += den << BITRES >> 2;
             }
-            if bits[j] + offset < den * 2 << BITRES {
+            if bits[j] + offset < (den * 2) << BITRES {
                 offset += nclogn >> 2;
-            } else if bits[j] + offset < den * 3 << BITRES {
+            } else if bits[j] + offset < (den * 3) << BITRES {
                 offset += nclogn >> 3;
             }
             ebits[j] = ((bits[j] + offset + (den << (BITRES - 1))) / (den << BITRES)).max(0);
@@ -381,7 +382,7 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
             }
             ebits[j] = ebits[j].min(MAX_FINE_BITS);
             fine_priority[j] = i32::from(ebits[j] * (den << BITRES) >= bits[j] + offset);
-            bits[j] -= cc * ebits[j] << BITRES;
+            bits[j] -= (cc * ebits[j]) << BITRES;
         } else {
             excess = (bits[j] - (cc << BITRES)).max(0);
             bits[j] -= excess;
@@ -391,7 +392,7 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
         if excess > 0 {
             let extra_fine = (excess >> (stereo + BITRES)).min(MAX_FINE_BITS - ebits[j]);
             ebits[j] += extra_fine;
-            let extra_bits = extra_fine * cc << BITRES;
+            let extra_bits = (extra_fine * cc) << BITRES;
             fine_priority[j] = i32::from(extra_bits >= excess - balance);
             excess -= extra_bits;
         }

@@ -3,7 +3,11 @@
 //! `celt/celt.c`, `celt/rate.c`, `celt/bands.c`), 3-clause BSD: see the crate's `COPYING`.
 //! The float tables (window, MDCT and FFT twiddles) are the reference's static values as
 //! printed there, so no transcendental function runs to build them.
-#![allow(clippy::excessive_precision, clippy::unreadable_literal)]
+#![allow(
+    clippy::approx_constant,
+    clippy::excessive_precision,
+    clippy::unreadable_literal
+)]
 
 /// Bands in the mode (`nbEBands`).
 pub(super) const NB_EBANDS: usize = 21;
