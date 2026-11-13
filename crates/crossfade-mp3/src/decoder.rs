@@ -28,6 +28,7 @@ pub struct FrameInfo {
 pub(crate) struct Tables {
     /// `i^(4/3)` for every value a Huffman code with linbits can give (15 + 8191).
     pow43: Vec<f32>,
+    fast: huffman::Fast,
     /// `2^(e/4)` from `e = GAIN_MIN`.
     gains: Vec<f32>,
     pan: Pan,
@@ -43,6 +44,7 @@ fn tables() -> &'static Tables {
             .map(|i| libm::exp2(f64::from(i + GAIN_MIN) / 4.0) as f32)
             .collect(),
         pan: Pan::new(),
+        fast: huffman::Fast::new(),
     })
 }
 
@@ -228,7 +230,7 @@ impl Decoder {
                     self.granule0[ch] = sf[ch];
                 }
                 let xr = &mut self.xr[ch];
-                lines[ch] = huffman::decode(&mut b, g, end, &t.pow43, xr);
+                lines[ch] = huffman::decode(&mut b, g, end, &t.pow43, &t.fast, xr);
                 requantize::apply(xr, g, &sf[ch], lines[ch], &t.gains);
                 pos = end;
             }
