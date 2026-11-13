@@ -29,10 +29,10 @@ use super::LogicalStream;
 use super::packets::{PacketReader, PacketStart};
 use crate::vorbis_comment;
 use crossfade_core::{
-    AudioSpec, Channel, ChannelLayout, CodecId, Demuxer, Error, Limits, Packet, SampleFormat,
-    StreamInfo, Tags, TimeBase,
+    AudioSpec, ChannelLayout, CodecId, Demuxer, Error, Limits, Packet, SampleFormat, StreamInfo,
+    Tags, TimeBase,
 };
-use crossfade_vorbis::{HeaderKind, Ident, Modes, Setup, Speaker, header_kind};
+use crossfade_vorbis::{HeaderKind, Ident, Modes, Setup, header_kind};
 use std::collections::VecDeque;
 
 fn malformed(what: impl std::fmt::Display) -> Error {
@@ -56,37 +56,6 @@ fn vorbis_error(e: crossfade_vorbis::Error) -> Error {
 /// Packets read ahead in one batch at most, so a stream that never gives a granule cannot make
 /// the reader hold it all.
 const MAX_BATCH: usize = 256;
-
-/// The engine's layout for a Vorbis stream: the specification's speakers for 1 to 8 channels
-/// in WAVE mask order (the decoder reorders into it), unpositioned otherwise. The same as
-/// `crossfade_codec::vorbis::layout`, which this crate cannot depend on.
-fn layout(channels: u8) -> Result<ChannelLayout, Error> {
-    let channel = |s: Speaker| {
-        Some(match s {
-            Speaker::FrontLeft => Channel::FrontLeft,
-            Speaker::FrontCenter => Channel::FrontCenter,
-            Speaker::FrontRight => Channel::FrontRight,
-            Speaker::RearLeft => Channel::BackLeft,
-            Speaker::RearRight => Channel::BackRight,
-            Speaker::SideLeft => Channel::SideLeft,
-            Speaker::SideRight => Channel::SideRight,
-            Speaker::RearCenter => Channel::BackCenter,
-            Speaker::Lfe => Channel::Lfe,
-            _ => return None,
-        })
-    };
-    let bit = |s: Speaker| {
-        ChannelLayout::from_positions(vec![channel(s)?])
-            .ok()?
-            .to_mask()
-    };
-    let mask = crossfade_vorbis::speakers(channels)
-        .and_then(|s| s.iter().map(|&s| bit(s)).sum::<Option<u32>>());
-    match mask.and_then(|m| ChannelLayout::from_mask(m, u16::from(channels))) {
-        Some(l) => Ok(l),
-        None => ChannelLayout::unpositioned(u16::from(channels)),
-    }
-}
 
 struct Queued {
     data: Vec<u8>,
@@ -144,7 +113,7 @@ pub(crate) fn open(stream: LogicalStream, limits: &Limits) -> Result<Box<dyn Dem
     let audio = AudioSpec::new(
         ident.sample_rate,
         SampleFormat::F32,
-        layout(ident.channels)?,
+        ChannelLayout::vorbis_order(ident.channels)?,
     )?;
     let mut info = StreamInfo::new(
         0,

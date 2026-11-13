@@ -53,10 +53,18 @@ Every input is conformed to the first input's sample rate and channel layout (or
 stream. `crossfade convert` takes exactly one input, so a shell glob never joins files by \
 accident.";
 
+/// The one list of what can be read, shared by every help text.
+macro_rules! readable_formats {
+    () => {
+        "wav, flac, aiff/aifc, ogg (FLAC or Vorbis), mp3, mp4/m4a (ALAC; AAC in a build with the aac feature) or .aac (ADTS, same build)"
+    };
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Show what a media file contains.
     Probe {
+        #[arg(help = concat!("File to inspect: ", readable_formats!()))]
         input: String,
         /// Machine-readable output (schema 1).
         #[arg(long)]
@@ -68,7 +76,7 @@ enum Command {
     /// Convert a media file.
     #[command(after_help = PROCESSING_HELP)]
     Convert {
-        /// File to read: wav, flac, aiff/aifc or ogg (FLAC inside).
+        #[arg(help = concat!("File to read: ", readable_formats!()))]
         input: String,
         #[command(flatten)]
         out: OutputArgs,
@@ -76,8 +84,11 @@ enum Command {
     /// Join media files end to end into one.
     #[command(after_help = format!("{CONCAT_HELP}\n\n{PROCESSING_HELP}"))]
     Concat {
-        /// Files to read, in order (at least two): wav, flac, aiff/aifc or ogg (FLAC inside).
-        #[arg(required = true, num_args = 2..)]
+        #[arg(
+            required = true,
+            num_args = 2..,
+            help = concat!("Files to read, in order (at least two): ", readable_formats!())
+        )]
         inputs: Vec<String>,
         #[command(flatten)]
         out: OutputArgs,

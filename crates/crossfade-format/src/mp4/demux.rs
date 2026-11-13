@@ -88,14 +88,26 @@ pub(super) fn gapless(
     }
 }
 
-/// Packets to go back so a decoder has its pre-roll: ALAC packets stand alone, an AAC frame
-/// overlaps the one before it, and MP3's bit reservoir and overlap reach back up to ten frames.
+/// Packets to go back so a decoder has its pre-roll: ALAC packets stand alone and an AAC frame
+/// overlaps the one before it. MP3 is not fixed: its bit reservoir reaches back by bytes, so
+/// `Mp4Demuxer::seek` counts frame sizes.
 fn preroll(codec: CodecId) -> u64 {
     match codec {
         CodecId::Aac => 1,
-        CodecId::Mp3 => 10,
         _ => 0,
     }
+}
+
+/// Bytes of main data in an MP3 sample of `size` bytes: its header (with a CRC, which only
+/// makes the guess smaller and so the pre-roll longer) and side information are not.
+fn mp3_main_data(size: u64, lsf: bool, mono: bool) -> usize {
+    let side_info = match (lsf, mono) {
+        (false, true) => 17,
+        (false, false) => 32,
+        (true, true) => 9,
+        (true, false) => 17,
+    };
+    usize::try_from(size.saturating_sub(4 + 2 + side_info)).unwrap_or(usize::MAX)
 }
 
 struct Mp4Demuxer {
@@ -107,6 +119,8 @@ struct Mp4Demuxer {
     clock: Clock,
     priming: i64,
     preroll: u64,
+    /// Set for MP3: (MPEG-2 or 2.5, mono), which the reservoir arithmetic needs.
+    mp3: Option<(bool, bool)>,
     next: u64,
     max_packet: usize,
 }
@@ -179,7 +193,12 @@ impl Demuxer for Mp4Demuxer {
         let at = self
             .table
             .sample_at(pts, |t| clock.frames(t) as i64 - priming);
-        self.next = at.saturating_sub(self.preroll);
+        self.next = match self.mp3 {
+            Some((lsf, mono)) => crate::mp3::first_frame_to_decode(at as usize, lsf, |i| {
+                mp3_main_data(self.table.size(i as u64), lsf, mono)
+            }) as u64,
+            None => at.saturating_sub(self.preroll),
+        };
         Ok(self.pts(self.next))
     }
 }
@@ -262,6 +281,7 @@ pub(super) fn open(
         |t| clock.frames(t),
         movie,
     );
+    let channels = entry.layout.channels();
     let audio = AudioSpec::new(rate, entry.format, entry.layout)?;
     let stream = StreamInfo {
         frames: Some(g.frames),
@@ -275,6 +295,7 @@ pub(super) fn open(
         streams: [stream],
         tags: meta.tags,
         preroll: preroll(entry.codec),
+        mp3: (entry.codec == CodecId::Mp3).then_some((rate < 32000, channels == 1)),
         table: track.table,
         clock,
         priming: g.priming as i64,
