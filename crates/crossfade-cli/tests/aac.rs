@@ -9,6 +9,11 @@ const TONE: &str = concat!(
     "/../crossfade-format/tests/fixtures/adts/tone_44k_stereo.aac"
 );
 
+const M4A: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../crossfade-format/tests/fixtures/mp4/aac-stereo16.m4a"
+);
+
 /// A scratch directory, removed on drop.
 struct Dir(PathBuf);
 
@@ -63,6 +68,14 @@ fn without_the_feature_converting_aac_is_refused_and_says_why() {
         "{err}"
     );
     assert!(!dir.exists("out.wav"));
+    // An AAC track in MP4 is described, and refused the same way when decoding.
+    let probe = dir.run(&["probe", M4A]);
+    assert_eq!(probe.status.code(), Some(0));
+    assert!(text(&probe.stdout).contains("aac, 44100 Hz, stereo"));
+    let out = dir.run(&["convert", M4A, "-o", "m4a.wav"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("build with --features aac"));
+    assert!(!dir.exists("m4a.wav"));
 }
 
 #[cfg(feature = "aac")]
@@ -166,5 +179,25 @@ mod with_the_feature {
             shown.contains("Stream 0: audio, aac, 44100 Hz, stereo, f32, 1.068 s (47104 frames)"),
             "{shown}"
         );
+    }
+
+    #[test]
+    fn an_aac_m4a_converts_gapless_and_probes() {
+        let dir = Dir::new("m4a");
+        let probe = dir.run(&["probe", M4A]);
+        assert_eq!(probe.status.code(), Some(0));
+        assert!(
+            text(&probe.stdout)
+                .contains("Stream 0: audio, aac, 44100 Hz, stereo, f32, 0.227 s (10007 frames)"),
+            "{}",
+            text(&probe.stdout)
+        );
+        let out = dir.run(&["convert", M4A, "-o", "out.wav"]);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        assert!(text(&out.stderr).contains("aac has no bit depth: writing 16-bit"));
+        let (fmt, data) = wav(&dir.read("out.wav"));
+        assert_eq!(fmt, (1, 2, 44100, 16));
+        // The priming and padding the iTunSMPB tag gives are gone: the source's length.
+        assert_eq!(data.len() / 4, 10007);
     }
 }
