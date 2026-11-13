@@ -4,6 +4,7 @@
 //! and the royalty-free patent licences that cover Opus.
 #![forbid(unsafe_code)]
 
+mod decoder;
 mod error;
 pub mod head;
 pub mod packet;
@@ -11,6 +12,7 @@ pub mod range;
 #[doc(hidden)]
 pub mod testing;
 
+pub use decoder::Decoder;
 pub use error::{Error, Result};
 pub use head::{ChannelMapping, OpusHead, OpusTags};
 pub use packet::{Bandwidth, Mode, Packet, Toc, packet_duration};
