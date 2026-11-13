@@ -207,10 +207,14 @@ fn opus_compare_on_the_references() {
 /// Pre-skip of the Ogg wrapping: what libopus's encoder writes at 48 kHz.
 const PRE_SKIP: usize = 312;
 
-/// After a seek the decoder starts afresh 80 ms early (RFC 7845 4.6); it has not converged
-/// exactly by the target. The largest difference measured on these vectors at 80 ms was
-/// 0.058 (testvector11, CELT); see the `opus_seek_convergence` example.
-const SEEK_TOLERANCE: f32 = 0.07;
+/// After a seek the decoder starts afresh 1 s early (RFC 7845 4.6 asks for at least 80 ms);
+/// it has not always converged exactly by the target. Measured through the engine on these
+/// vectors: 0 for the CELT-only, SILK-only NB/MB and 08/09, at most 9.155e-4 (30 16-bit steps,
+/// testvector10); see also the `opus_seek_convergence` example.
+const SEEK_TOLERANCE: f32 = 1e-3;
+
+/// The reader's pre-roll, which every target but the first has in full before it.
+const PRE_ROLL: i64 = 48_000;
 
 /// Every frame's samples through the Ogg reader and the engine's adapter, from where the reader
 /// stands, until `until` (a pts) is covered: `(pts of the first, samples)`.
@@ -291,6 +295,11 @@ fn through_ogg(bit: &[u8]) -> Result<f32, String> {
         let landed = demux.seek(target).map_err(|e| e.to_string())?;
         if landed > target {
             return Err(format!("seek to {target} landed at {landed}"));
+        }
+        if k > 0 && target - landed < PRE_ROLL {
+            return Err(format!(
+                "seek to {target} landed at {landed}, under 1 s before"
+            ));
         }
         dec.reset();
         let (from, got) = engine_decode(&mut *demux, &mut *dec, target + 24_000);

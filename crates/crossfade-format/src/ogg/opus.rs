@@ -19,8 +19,8 @@
 //! `StreamInfo::frames` (minus the start and the pre-skip), and the engine trims there; on a
 //! pipe `frames` is `None` (unless the first page is the last) and the end is decoded whole.
 //!
-//! Seeking (section 4.6) lands on a page at least 80 ms (3,840 samples) before the target, so
-//! the decoder has converged by then; before the start it lands on the first packet.
+//! Seeking (section 4.6) lands on a page at least [`PRE_ROLL`] (1 s) before the target; before
+//! the start it lands on the first packet.
 //!
 //! Chains. A chained file is read to the end of its first link, as for Vorbis.
 
@@ -44,8 +44,11 @@ fn malformed(what: impl std::fmt::Display) -> Error {
 /// the reader hold it all.
 const MAX_BATCH: usize = 256;
 
-/// RFC 7845 4.6: decoding starts at least this long (80 ms) before a seek target.
-pub(crate) const PRE_ROLL: i64 = 3840;
+/// Decoding starts at least this long before a seek target: 1 s (48,000 samples). RFC 7845
+/// 4.6 requires at least 80 ms; after 1 s the decoder is far closer to converged (CELT exactly
+/// on the RFC 8251 vectors, SILK and hybrid within tens of 16-bit steps, against up to 1,900
+/// at 80 ms), and at 400 to 1,700 times real time the extra decoding costs under 3 ms a seek.
+pub(crate) const PRE_ROLL: i64 = 48_000;
 
 struct Queued {
     data: Vec<u8>,
