@@ -28,6 +28,7 @@ crossfade-app.workspace = true
 crossfade-core.workspace = true
 crossfade-graph.workspace = true
 async-channel.workspace = true
+cpal.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

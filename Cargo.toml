@@ -53,6 +53,10 @@ criterion = { version = "0.5", default-features = false }
 gpui-kit = "=0.9.1"
 # Worker threads wake the UI through it.
 async-channel = "2"
+# The player's wait-free hand-off to the audio callback (MIT OR Apache-2.0, no dependencies).
+rtrb = "0.4"
+# The desktop app's audio output (Apache-2.0); crossfade-ui only, never an engine crate.
+cpal = "0.18"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
