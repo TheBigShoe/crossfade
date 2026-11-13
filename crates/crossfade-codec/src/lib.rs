@@ -2,6 +2,8 @@
 //! reverse. Built on the types in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "aac")]
+mod aac;
 pub mod alac;
 pub mod flac;
 pub mod mp3;
@@ -49,6 +51,16 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Mp3 {
         return mp3::decoder(stream);
+    }
+    #[cfg(feature = "aac")]
+    if stream.codec == CodecId::Aac {
+        return aac::decoder(stream);
+    }
+    #[cfg(not(feature = "aac"))]
+    if stream.codec == CodecId::Aac {
+        return Err(Error::Unsupported {
+            what: "aac decoding is not part of this build (AAC is patent-encumbered); build with --features aac".into(),
+        });
     }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),

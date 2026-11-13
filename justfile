@@ -15,6 +15,17 @@ lint:
 test:
     cargo test --workspace
 
+# AAC is patent-encumbered, so its decoder is behind the off-by-default feature `aac`: these
+# lint and test what only that feature compiles (the decoder, the adapter, AAC through the
+# readers and the engine, the CLI end to end).
+aac_features := "crossfade-aac/decoder,crossfade-codec/aac,crossfade-format/aac,crossfade-graph/aac,crossfade-cli/aac"
+
+lint-aac:
+    cargo clippy -p crossfade-aac -p crossfade-codec -p crossfade-format -p crossfade-graph -p crossfade-cli --all-targets --features {{aac_features}} -- -D warnings
+
+test-aac:
+    cargo test -p crossfade-aac -p crossfade-codec -p crossfade-format -p crossfade-graph -p crossfade-cli --features {{aac_features}}
+
 # Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
 # crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
 # skips, without it. Release because the corpus is ~300 MB (about 3 s; debug takes ~40 s).
@@ -23,11 +34,12 @@ conformance:
     cargo test --release -p crossfade-format --test conformance_flac -- --ignored
     cargo test --release -p crossfade-format --test conformance_seek -- --ignored
     cargo test --release -p crossfade-format --test conformance_mp3 -- --ignored
+    cargo test --release -p crossfade-format --features aac --test conformance_aac -- --ignored
 
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
     for t in aarch64-apple-ios aarch64-linux-android; do \
-        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-alac -p crossfade-loudness -p crossfade-resample -p crossfade-mp3 -p crossfade-dsp -p crossfade-graph; \
+        cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-aac -p crossfade-alac -p crossfade-loudness -p crossfade-resample -p crossfade-mp3 -p crossfade-dsp -p crossfade-graph; \
     done
 
 # Speed baselines: in-memory conversion through the engine, then FLAC decode/encode with
@@ -52,8 +64,9 @@ deny:
 coverage_ignore := '(/main\.rs$|/examples/)'
 
 # Two runs: the workspace floor, then a stricter floor for core alone.
+# The workspace run builds the AAC decoder (`aac_features`) so that it is counted.
 coverage:
-    cargo llvm-cov --workspace --fail-under-lines 87 --ignore-filename-regex '{{coverage_ignore}}'
+    cargo llvm-cov --workspace --features {{aac_features}} --fail-under-lines 87 --ignore-filename-regex '{{coverage_ignore}}'
     cargo llvm-cov -p crossfade-core --fail-under-lines 90 --ignore-filename-regex '{{coverage_ignore}}'
 
 # Run the desktop app.
@@ -67,14 +80,15 @@ screenshots *names:
     @ls -lh target/screenshots/*.png
 
 # Dependencies run in order and the first failure stops the recipe.
-ci: fmt-check lint test conformance
+ci: fmt-check lint lint-aac test test-aac conformance
 
 # Needs cargo-fuzz. The default runs unsanitised on the pinned toolchain (RUSTC_BOOTSTRAP lets
 # it use libFuzzer's flags); with a nightly toolchain, `FUZZ_RUN="cargo +nightly fuzz run" just
 # fuzz <target>` adds AddressSanitizer. `fuzz/corpus` is git-ignored, so each target also reads
 # the committed fixtures as an extra corpus directory (the writable corpus is named first, so
 # libFuzzer writes new inputs only there): flac_demux and flac_decode -> tests/fixtures/flac,
-# aiff_demux -> tests/fixtures/aiff, ogg_demux -> tests/fixtures/ogg; the others start empty.
+# aiff_demux -> tests/fixtures/aiff, ogg_demux -> tests/fixtures/ogg, adts_demux ->
+# tests/fixtures/adts; the others start empty.
 fuzz_run := env_var_or_default("FUZZ_RUN", "RUSTC_BOOTSTRAP=1 cargo fuzz run --sanitizer none")
 fixtures := justfile_directory() / "crates/crossfade-format/tests/fixtures"
 
@@ -84,6 +98,7 @@ fuzz target secs="60":
         flac_demux|flac_decode) seeds="{{fixtures}}/flac" ;; \
         aiff_demux) seeds="{{fixtures}}/aiff" ;; \
         ogg_demux) seeds="{{fixtures}}/ogg" ;; \
+        adts_demux) seeds="{{fixtures}}/adts" ;; \
     esac; \
     mkdir -p fuzz/corpus/{{target}}; \
     cd fuzz && {{fuzz_run}} "{{target}}" corpus/{{target}} $seeds -- -max_total_time={{secs}} -rss_limit_mb=2048 -malloc_limit_mb=256
