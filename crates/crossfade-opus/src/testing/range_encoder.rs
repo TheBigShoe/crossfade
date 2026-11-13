@@ -251,10 +251,11 @@ impl RangeEncoder {
         (!self.error).then_some(self.buf)
     }
 
-    /// The bytes a frame needs: range-coded, raw, and one shared byte for leftover raw bits.
+    /// The bytes a frame needs: range-coded (those written and those held back for a carry),
+    /// raw, and one shared byte for leftover raw bits.
     pub fn bytes_needed(&self) -> usize {
         // done() may write up to 4 more range bytes (and a carried one) and the raw window.
-        self.offs + self.end_offs + 6 + self.nend_bits.div_ceil(8) as usize
+        self.offs + self.ext as usize + self.end_offs + 6 + self.nend_bits.div_ceil(8) as usize
     }
 }
 
