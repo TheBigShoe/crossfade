@@ -1,5 +1,5 @@
 use super::*;
-use crate::testing::range_encoder::{Op, RangeEncoder, encode_ops};
+use crate::testing::range_encoder::{Op, RangeEncoder, encode_into, encode_ops};
 use proptest::prelude::*;
 
 /// RFC 6716 section 4.1.6.2, as written: three squarings of the Q15 fraction of `rng`.
@@ -162,7 +162,12 @@ fn op() -> impl Strategy<Value = Op> {
         .prop_map(|(fl, fh, bits)| Op::Bin { fl, fh, bits });
     let logp = (any::<bool>(), 1u32..=15).prop_map(|(val, logp)| Op::BitLogp { val, logp });
     let icdf = (1u32..=8)
-        .prop_flat_map(|ftb| (Just(ftb), proptest::collection::btree_set(1u32..1 << ftb, 0..12)))
+        .prop_flat_map(|ftb| {
+            (
+                Just(ftb),
+                proptest::collection::btree_set(1u32..1 << ftb, 0..12),
+            )
+        })
         .prop_flat_map(|(ftb, set)| {
             let mut t: Vec<u8> = set.into_iter().rev().map(|v| v as u8).collect();
             t.push(0);
@@ -170,7 +175,12 @@ fn op() -> impl Strategy<Value = Op> {
         })
         .prop_map(|(s, icdf, ftb)| Op::Icdf { s, icdf, ftb });
     let icdf16 = (1u32..=15)
-        .prop_flat_map(|ftb| (Just(ftb), proptest::collection::btree_set(1u32..1 << ftb, 0..12)))
+        .prop_flat_map(|ftb| {
+            (
+                Just(ftb),
+                proptest::collection::btree_set(1u32..1 << ftb, 0..12),
+            )
+        })
         .prop_flat_map(|(ftb, set)| {
             let mut t: Vec<u16> = set.into_iter().rev().map(|v| v as u16).collect();
             t.push(0);
@@ -204,8 +214,11 @@ proptest! {
             prop_assert_eq!(dec.tell() as u32, dec.tell_frac().div_ceil(8));
         }
         prop_assert!(!dec.error());
-        // The encoder's budget: never more bits used than the frame holds.
-        prop_assert!(dec.tell() as usize <= frame.len() * 8 || ops.is_empty());
+        // tell is an upper bound that leaves room to terminate: a frame of that many bits
+        // always holds the stream (RFC 6716 4.1.6).
+        let bound = (steps.last().map_or(1, |s| s.0) as usize).div_ceil(8);
+        prop_assert!(frame.len() <= bound);
+        prop_assert!(encode_into(&ops, bound).is_some());
     }
 
     #[test]

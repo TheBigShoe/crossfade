@@ -2,7 +2,9 @@
 //! writes what the decoder must read back, symbol for symbol, with the same `tell`,
 //! `tell_frac` and final range at every step. Not used by the decoder.
 
-use crate::range::{CODE_BOT, CODE_SHIFT, CODE_TOP, SYM_BITS, SYM_MAX, WINDOW_SIZE, ilog, tell_frac};
+use crate::range::{
+    CODE_BOT, CODE_SHIFT, CODE_TOP, SYM_BITS, SYM_MAX, WINDOW_SIZE, ilog, tell_frac,
+};
 
 const UINT_BITS: u32 = 8;
 
@@ -179,7 +181,8 @@ impl RangeEncoder {
                 }
             }
         }
-        window |= fl << used;
+        // A full window and zero bits: C shifts by 32 (undefined, and adds nothing).
+        window |= fl.checked_shl(used).unwrap_or(0);
         used += bits;
         self.end_window = window;
         self.nend_bits = used;
@@ -260,14 +263,39 @@ impl RangeEncoder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     /// Symbol `[fl, fh)` of `ft` (1 <= ft <= 65535).
-    Symbol { fl: u32, fh: u32, ft: u32 },
+    Symbol {
+        fl: u32,
+        fh: u32,
+        ft: u32,
+    },
     /// Symbol `[fl, fh)` of `1 << bits` (bits <= 15).
-    Bin { fl: u32, fh: u32, bits: u32 },
-    BitLogp { val: bool, logp: u32 },
-    Icdf { s: usize, icdf: Vec<u8>, ftb: u32 },
-    Icdf16 { s: usize, icdf: Vec<u16>, ftb: u32 },
-    Uint { val: u32, ft: u32 },
-    Bits { val: u32, bits: u32 },
+    Bin {
+        fl: u32,
+        fh: u32,
+        bits: u32,
+    },
+    BitLogp {
+        val: bool,
+        logp: u32,
+    },
+    Icdf {
+        s: usize,
+        icdf: Vec<u8>,
+        ftb: u32,
+    },
+    Icdf16 {
+        s: usize,
+        icdf: Vec<u16>,
+        ftb: u32,
+    },
+    Uint {
+        val: u32,
+        ft: u32,
+    },
+    Bits {
+        val: u32,
+        bits: u32,
+    },
 }
 
 impl RangeEncoder {
@@ -284,22 +312,30 @@ impl RangeEncoder {
     }
 }
 
-/// `(tell, tell_frac, rng)` after each operation, and the frame, in the smallest buffer the
+/// `(tell, tell_frac, rng)` after each operation, and the frame.
+pub type Encoded = (Vec<(i32, u32, u32)>, Vec<u8>);
+
+/// [`Encoded`]: in the smallest buffer the
 /// operations fit in, so that the decoder also reads past its end.
-pub fn encode_ops(ops: &[Op]) -> (Vec<(i32, u32, u32)>, Vec<u8>) {
+pub fn encode_ops(ops: &[Op]) -> Encoded {
     let mut probe = RangeEncoder::new(1 << 20);
     for op in ops {
         probe.apply(op);
     }
     let mut best = encode_into(ops, probe.bytes_needed()).expect("the estimate is enough");
-    while let Some(smaller) = best.1.len().checked_sub(1).and_then(|n| encode_into(ops, n)) {
+    while let Some(smaller) = best
+        .1
+        .len()
+        .checked_sub(1)
+        .and_then(|n| encode_into(ops, n))
+    {
         best = smaller;
     }
     best
 }
 
 /// The operations coded into a frame of `storage` bytes; `None` when they do not fit.
-pub fn encode_into(ops: &[Op], storage: usize) -> Option<(Vec<(i32, u32, u32)>, Vec<u8>)> {
+pub fn encode_into(ops: &[Op], storage: usize) -> Option<Encoded> {
     let mut enc = RangeEncoder::new(storage);
     let mut steps = Vec::with_capacity(ops.len());
     for op in ops {
