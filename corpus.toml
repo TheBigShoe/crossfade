@@ -2893,3 +2893,255 @@ bytes = 309449
 sha256 = "3427608cf48ad4ff01f85ab4c22d70a907e2622f5db3e85087a4113251b116b9"
 licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
 expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_08.adts"
+name = "al09_08.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_08.adts"
+bytes = 218894
+sha256 = "2627ad8d80bb7412bb995960222ea9ee06fd8b8ac3df4c5c511b7fda989bbe21"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_08.wav"
+name = "al09_08.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_08.wav"
+bytes = 1047764
+sha256 = "73b50ebf72bab25e6ee3d7fd7385fe7bee2cf3d6779555c94a16610d55daae04"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_11.adts"
+name = "al09_11.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_11.adts"
+bytes = 158839
+sha256 = "5d3f51e6d065e9372a0a1cd0098957683af1eb38e48c80e10d8b739751c708f8"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_11.wav"
+name = "al09_11.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_11.wav"
+bytes = 1047764
+sha256 = "d16c40bca7e9545e07259a4cd8ca4ebd096639e3b09daba2e2cf0e0a0a495116"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_12.adts"
+name = "al09_12.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_12.adts"
+bytes = 146245
+sha256 = "8aa845cd75d3710604b7bc081906e45808e041d080ea872590a4b136e12a039c"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_12.wav"
+name = "al09_12.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_12.wav"
+bytes = 1047764
+sha256 = "b517c2ed37df0e240d4be3450b708be89e0cd225f5e8affb7459491248949557"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_16.adts"
+name = "al09_16.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_16.adts"
+bytes = 109576
+sha256 = "f930e505f7db299984f5bbe2662ba5067ed77ee4a5ec71caa4396385bc661a19"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_16.wav"
+name = "al09_16.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_16.wav"
+bytes = 1047764
+sha256 = "15f36d3eefbabdb0c075c53ec7f4c5a6bc70b5359b6179a96205a140b21caec0"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_22.adts"
+name = "al09_22.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_22.adts"
+bytes = 127099
+sha256 = "4db4c3230c5d6c95d13c308c01f8eebe4afa62d82986ea5cddd32fc8cff40772"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_22.wav"
+name = "al09_22.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_22.wav"
+bytes = 1047764
+sha256 = "ca95aa25f7bac400ef6fddd501efa94f4ed232d642f1867dba24329401457004"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_24.adts"
+name = "al09_24.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_24.adts"
+bytes = 116750
+sha256 = "4b567891269b4a57a457f01c4c58ce97651d4a668680c9af026dcf8425c0aead"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_24.wav"
+name = "al09_24.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_24.wav"
+bytes = 1047764
+sha256 = "7e5c9ad5ae9653cb0e437799b308c17031cf00545480c7596bc2c368bf6176f3"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_32.adts"
+name = "al09_32.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_32.adts"
+bytes = 87576
+sha256 = "3fcd7fc7d3bd3724361fd0523c31daabd13dc25cf853eb2e2eda66d94496a806"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_32.wav"
+name = "al09_32.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_32.wav"
+bytes = 1047764
+sha256 = "e66d8668362f7956a637339564b18cb824b9f408e24dabbc59c8b6dc20db3e85"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_44.adts"
+name = "al09_44.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_44.adts"
+bytes = 64048
+sha256 = "3117cfade03058ffceaf8953727bf84e03ba9c98652cb14bd7523bda4dcb72a6"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_44.wav"
+name = "al09_44.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_44.wav"
+bytes = 1047764
+sha256 = "a30567dea5f0869a8a1fa9ac04c3f97876d39671ae61acf11bf7ba41b69f048a"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_48.adts"
+name = "al09_48.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_48.adts"
+bytes = 58382
+sha256 = "12d0b15c8c96ed4951bfe9f1ec1e513bdaf80fcfcef992e90e59bd8088c05bc5"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_48.wav"
+name = "al09_48.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_48.wav"
+bytes = 1047764
+sha256 = "deb707352567b77093e4f4c70128ee83131b6f21d3984584f2eadb928a0170e1"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_64.adts"
+name = "al09_64.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_64.adts"
+bytes = 44244
+sha256 = "00774f415e4d94afb95462a4f429d4049e11cfedaed835710c65b3a9e478a329"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_64.wav"
+name = "al09_64.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_64.wav"
+bytes = 1047764
+sha256 = "5e213b92f8345fcd4401cf0cfe51c3ad8bc2c525dbded34ae3082f127bde7854"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_88.adts"
+name = "al09_88.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_88.adts"
+bytes = 32024
+sha256 = "231fe20f46a750cfa8ed35c21fe3b9528ab887f25502c15dce8e65767da0ebbd"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_88.wav"
+name = "al09_88.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_88.wav"
+bytes = 1047764
+sha256 = "4410c713cd7489d6ef4799873d4c9c29affa16b8cecc1adc19167fa102ebabe9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_96.adts"
+name = "al09_96.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al09_96.adts"
+bytes = 29474
+sha256 = "f80e0c43c332577903f5c85e8ecd291bcd82778b0216cae474b6a88b7239e0b2"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al09_96.wav"
+name = "al09_96.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al09_96.wav"
+bytes = 1047764
+sha256 = "4c51c5f39f0257ed9fef981d3d7e4761ab967a9ba868b516ee7f685ce2eab240"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al12_48.adts"
+name = "al12_48.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al12_48.adts"
+bytes = 31147
+sha256 = "ec2912d179897af832a6da29a8a28dff380982ec8a53790ded7ac457a8986571"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al12_48.wav"
+name = "al12_48.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al12_48.wav"
+bytes = 1579220
+sha256 = "1ae645b3093c776466ffc790faf0c6a56e586316a46c25733bddaa0e6c119539"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al13_48.adts"
+name = "al13_48.adts"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/compressedAdts/al13_48.adts"
+bytes = 29020
+sha256 = "b613bf389b2e55d85af048652a1908213ae583b0322d89696ced52e9f6256d85"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"
+
+[[file]]
+id = "aac/iso-mpeg2/al13_48.wav"
+name = "al13_48.wav"
+url = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/AAC/referencesWav/al13_48.wav"
+bytes = 1570004
+sha256 = "ebacf8b353549c3ba2839bc5263a3cca49627ca69636da25d8af7b4d19a570d9"
+licence = "ISO electronic insert: use for the standard's conformance purposes, no redistribution"
+expect = "data"

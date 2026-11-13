@@ -42,3 +42,17 @@ aac/iso/ap01_48.adif refused: ADIF has no reader
 aac/iso/ap01_48.adts refused: aac: AAC LTP (long term prediction) is not supported
 aac/iso/ap02_48.adif refused: ADIF has no reader
 aac/iso/ap02_48.adts refused: aac: AAC LTP (long term prediction) is not supported
+aac/iso-mpeg2/al09_08.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.08e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 3e73421af7bc259e
+aac/iso-mpeg2/al09_11.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.11e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 6d4c9d6419ecb3a9
+aac/iso-mpeg2/al09_12.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.09e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 43d2fc635ffcc2e8
+aac/iso-mpeg2/al09_16.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.08e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 ea32ce3a5ca3d7a9
+aac/iso-mpeg2/al09_22.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.10e-8, max 2.09e-7, energy 0.000 dB, worst block 0.00 dB, sha256 089b280617c9c549
+aac/iso-mpeg2/al09_24.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.06e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 fa912105e24438b8
+aac/iso-mpeg2/al09_32.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.05e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 685edb53f8cc4e43
+aac/iso-mpeg2/al09_44.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.04e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 46c7ec2c1b16679b
+aac/iso-mpeg2/al09_48.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.01e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 71edf0ef0e0f1b19
+aac/iso-mpeg2/al09_64.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.00e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 19f6ee06799913cd
+aac/iso-mpeg2/al09_88.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.00e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 657f474c27ffeebe
+aac/iso-mpeg2/al09_96.adts pass: 1 ch, 351232 frames, offset 2048, rms 3.99e-8, max 2.09e-7, energy 0.000 dB, worst block 0.00 dB, sha256 f79fa73eba9d3726
+aac/iso-mpeg2/al12_48.adts pass: 1 ch, 525312 frames, offset 2048, rms 3.42e-8, max 1.12e-7, energy 0.000 dB, worst block 0.00 dB, sha256 2f1bf1696ed90e25
+aac/iso-mpeg2/al13_48.adts pass: 1 ch, 525312 frames, offset 2048, rms 3.42e-8, max 1.12e-7, energy 0.000 dB, worst block 0.00 dB, sha256 2f1bf1696ed90e25
