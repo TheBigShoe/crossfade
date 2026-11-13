@@ -162,10 +162,10 @@ mod tests {
     }
 
     #[test]
-    fn escaped_type_and_explicit_rate() {
-        // Type 31 + 6 bits (0 -> 32), rate escape 15 then 24 bits (22000), channels 1:
-        // 11111 000000 1111 000000000101010111110000 0001
-        let bits = "1111100000011110000000001010101111100000001";
+    fn an_explicit_rate_and_an_object_type_without_a_general_audio_config() {
+        // LC, rate escape 15 then 24 bits (22000), channels 1, GASpecificConfig 000:
+        // 00010 1111 000000000101010111110000 0001 000
+        let bits = "00010111100000000010101011111000000010000";
         let mut bytes = vec![0u8; bits.len().div_ceil(8)];
         for (i, c) in bits.bytes().enumerate() {
             if c == b'1' {
@@ -173,12 +173,45 @@ mod tests {
             }
         }
         let a = parse(&bytes).unwrap();
-        assert_eq!((a.object_type, a.sample_rate), (32, 22000));
+        assert_eq!((a.object_type, a.sample_rate), (2, 22000));
+        // Type 31 + 6 bits (0 -> 32, MPEG-1 Layer-1) has no AAC configuration to describe.
+        assert_eq!(
+            unsupported(parse(&[0xF8, 0x12, 0x10])),
+            "aac: audio object type 32 (Layer-1) is not supported"
+        );
+    }
+
+    #[test]
+    fn a_program_config_element_gives_unpositioned_channels() {
+        // LC, 44.1 kHz, configuration 0, GASpecificConfig 000, then a PCE of one front pair
+        // and one LFE: tag 0000, profile 01, index 0100, front 0001, side 0000, back 0000,
+        // lfe 01, assoc 000, cc 0000, flags 000, CPE 1 0000, lfe 0000, align, comment 0.
+        let bits = [
+            "00010", "0100", "0000", "000", // LC, 44.1 kHz, configuration 0, GASpecificConfig
+            "0000", "01", "0100", "0001", "0000", "0000", "01", "000", "0000", "000", "1", "0000",
+            "0000", "00000", // then the byte alignment
+            "00000000",
+        ]
+        .concat();
+        let mut bytes = vec![0u8; bits.len().div_ceil(8)];
+        for (i, c) in bits.bytes().enumerate() {
+            if c == b'1' {
+                bytes[i / 8] |= 0x80 >> (i % 8);
+            }
+        }
+        let a = parse(&bytes).unwrap();
+        assert_eq!(a.layout, ChannelLayout::unpositioned(3).unwrap());
     }
 
     #[test]
     fn what_it_refuses() {
-        assert!(unsupported(parse(&[0x12, 0x00])).contains("channel configuration 0"));
+        // Configuration 0 with no program config element after it.
+        assert!(
+            parse(&[0x12, 0x00])
+                .unwrap_err()
+                .to_string()
+                .contains("cut off")
+        );
         assert!(unsupported(parse(&[0x12, 0x40])).contains("channel configuration 8"));
         let short = parse(&[0x12]).unwrap_err();
         assert!(short.to_string().contains("cut off"), "{short}");
