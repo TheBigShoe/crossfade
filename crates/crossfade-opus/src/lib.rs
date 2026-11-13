@@ -5,9 +5,11 @@
 #![forbid(unsafe_code)]
 
 mod error;
+pub mod packet;
 pub mod range;
 #[doc(hidden)]
 pub mod testing;
 
 pub use error::{Error, Result};
+pub use packet::{Bandwidth, Mode, Packet, Toc, packet_duration};
 pub use range::RangeDecoder;
