@@ -190,7 +190,7 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 ## Gate
 
 ```sh
-just ci        # fmt-check + clippy -D warnings + cargo test --workspace + just conformance
+just ci        # fmt-check + clippy -D warnings + cargo test --workspace, the same lint and tests with the aac feature (lint-aac, test-aac), then just conformance
 just corpus    # once per clone: fetch every conformance file, FLAC/Opus/Vorbis/MP3/AAC (~550 MB; needs curl and the network); one codec: crossfade-corpus fetch --only flac/
 just conformance  # tier 3: FLAC, seeking, MP3, AAC (ISO streams) and Vorbis (Xiph files) vs the frozen results (needs the corpus, ~30 s in release)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
