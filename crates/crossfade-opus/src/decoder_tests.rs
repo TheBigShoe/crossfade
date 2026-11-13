@@ -133,3 +133,74 @@ fn reset_forgets_the_stream() {
     out.clear();
     assert_eq!(d.decode(None, &mut out), Ok(0));
 }
+
+#[test]
+fn a_lost_packet_conceals_the_last_packets_duration() {
+    // Code 3 packets of several frames too: the concealment is chunked into 20 ms and less.
+    for (config, frames) in [(0, 1), (3, 2), (11, 1), (13, 2), (16, 48), (17, 7), (31, 6)] {
+        let mut p = vec![(config << 3) | 3, frames];
+        p.extend(noise(u32::from(config), usize::from(frames) * 20));
+        let want = packet_duration(&p).unwrap();
+        let mut d = Decoder::new(2).unwrap();
+        let mut out = vec![];
+        assert_eq!(d.decode(Some(&p), &mut out), Ok(want), "config {config}");
+        for _ in 0..3 {
+            out.clear();
+            assert_eq!(d.decode(None, &mut out), Ok(want), "config {config}");
+            assert_eq!(out.len(), want * 2);
+            assert!(bounded(&out));
+            assert_eq!(d.final_range(), 0);
+            assert_eq!(d.last_packet_duration(), want);
+        }
+    }
+}
+
+#[test]
+fn fec_decodes_the_next_packets_lbrr_in_place_of_the_lost_one() {
+    let silk = packet(9, false, 5, 60);
+    let celt = packet(31, false, 6, 60);
+    let mut d = Decoder::new(1).unwrap();
+    let mut out = vec![];
+    // Before any packet there is nothing to conceal.
+    assert_eq!(d.decode_fec(&silk, &mut out), Ok(0));
+    d.decode(Some(&silk), &mut out).unwrap();
+    out.clear();
+    assert_eq!(d.decode_fec(&silk, &mut out), Ok(960));
+    assert_eq!(out.len(), 960);
+    assert!(bounded(&out));
+    // CELT carries no FEC: the same as a loss.
+    let mut lost = d.clone();
+    let (mut a, mut b) = (vec![], vec![]);
+    assert_eq!(d.decode_fec(&celt, &mut a), Ok(960));
+    assert_eq!(lost.decode(None, &mut b), Ok(960));
+    assert_eq!(a, b);
+    // An invalid packet is refused and appends nothing.
+    let before = out.clone();
+    assert!(matches!(
+        d.decode_fec(&[(1 << 3) | 1, 0], &mut out),
+        Err(Error::InvalidPacket(_))
+    ));
+    assert_eq!(out, before);
+}
+
+#[test]
+fn the_gain_scales_every_sample() {
+    // OPUS_SET_GAIN, Q8 dB: celt_exp2(6.48814081e-4 * gain), the product in float.
+    for gain in [-32768, -1536, 256, 1536, 32767] {
+        let mut plain = Decoder::new(2).unwrap();
+        let mut gained = Decoder::new(2).unwrap();
+        gained.set_gain(gain);
+        let g = libm::exp(std::f64::consts::LN_2 * f64::from(6.488_140_8e-4_f32 * f32::from(gain))) as f32;
+        for seed in 0..3 {
+            let p = packet(31, true, seed, 100);
+            let (mut a, mut b) = (vec![], vec![]);
+            plain.decode(Some(&p), &mut a).unwrap();
+            gained.decode(Some(&p), &mut b).unwrap();
+            let want: Vec<f32> = a.iter().map(|x| x * g).collect();
+            assert_eq!(b, want, "gain {gain}");
+        }
+        // A reset keeps it, as OPUS_RESET_STATE does.
+        gained.reset();
+        assert_eq!(gained.gain(), gain);
+    }
+}
