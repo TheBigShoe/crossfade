@@ -11,10 +11,13 @@ crossfade-core.workspace = true
 crossfade-dsp.workspace = true
 crossfade-graph.workspace = true
 crossfade-loudness.workspace = true
+rtrb.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
 crossfade-testkit.workspace = true
+# Hand-built probe reports name their container.
+crossfade-format.workspace = true
 proptest.workspace = true
 insta.workspace = true
 

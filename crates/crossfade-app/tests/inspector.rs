@@ -1,4 +1,4 @@
-use crossfade_app::inspector::{Section, sections};
+use crossfade_app::inspector::{Section, depth, sections};
 use crossfade_graph::{ProbeDocument, ProbeStream, ProbeTag};
 use std::collections::BTreeSet;
 
@@ -323,12 +323,11 @@ fn tag_rows_with_the_same_key_keep_separate_identities() {
 
 #[test]
 fn the_depth_of_a_stream_is_its_raw_bits_when_it_has_them() {
-    use crossfade_app::inspector::depth;
     let mut s = stream(0);
     s.sample_format = "s24".into();
-    assert_eq!(depth(&s), "24-bit");
+    assert_eq!(depth(&s).as_deref(), Some("24-bit"));
     s.bits_per_raw_sample = Some(20);
-    assert_eq!(depth(&s), "20-bit");
+    assert_eq!(depth(&s).as_deref(), Some("20-bit"));
 }
 
 /// A 20-bit stereo WAV as other software writes it: `WAVE_FORMAT_EXTENSIBLE`, 24-bit container.
@@ -372,5 +371,42 @@ fn a_wav_with_valid_bits_below_its_container_shows_the_true_depth() {
     let d = report.document();
     assert_eq!(d.streams[0].sample_format, "s24");
     assert_eq!(value(&d, "bits_per_raw_sample"), "20-bit");
-    assert_eq!(crossfade_app::inspector::depth(&d.streams[0]), "20-bit");
+    assert_eq!(depth(&d.streams[0]).as_deref(), Some("20-bit"));
+}
+
+/// An MP3 stream as its decoder reports it: 32-bit float, which says nothing about the file.
+fn lossy_document() -> ProbeDocument {
+    use crossfade_core::{AudioSpec, ChannelLayout, CodecId, SampleFormat, StreamInfo, TimeBase};
+    let audio = AudioSpec::new(44_100, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
+    let mut stream = StreamInfo::new(0, CodecId::Mp3, audio, TimeBase::new(1, 44_100).unwrap());
+    stream.frames = Some(44_100);
+    crossfade_graph::ProbeReport {
+        format: crossfade_format::FormatId::Mp3,
+        size_bytes: Some(1000),
+        streams: vec![stream],
+        tags: Default::default(),
+        loudness: None,
+    }
+    .document()
+}
+
+#[test]
+fn a_lossy_stream_shows_no_bit_depth() {
+    let d = lossy_document();
+    assert_eq!(depth(&d.streams[0]), None);
+    let shown = render(&sections(&d));
+    assert!(!shown.contains("32-bit"), "{shown}");
+    assert!(!shown.contains("Bit depth"), "{shown}");
+    assert_eq!(value(&d, "sample_format"), "lossy, no bit depth");
+    assert_eq!(raw(&d, "sample_format"), "f32");
+}
+
+#[test]
+fn a_lossless_stream_still_shows_its_depth() {
+    let d = tagged_20_bit();
+    assert_eq!(depth(&d.streams[0]).as_deref(), Some("20-bit"));
+    assert_eq!(
+        depth(&stereo_s24_96k().streams[0]).as_deref(),
+        Some("24-bit")
+    );
 }
