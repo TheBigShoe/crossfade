@@ -3,7 +3,9 @@
 //!
 //! - [`range_encoder`]: the range encoder (RFC 6716 section 5.1), to write what the decoder
 //!   reads.
+//! - [`bitfile`]: the test vectors' `.bit` (opus_demo framing) and `.dec` (raw PCM) files.
 //! - [`packet_writer`]: Opus packets from their parts (RFC 6716 section 3, Appendix B).
 
+pub mod bitfile;
 pub mod packet_writer;
 pub mod range_encoder;
