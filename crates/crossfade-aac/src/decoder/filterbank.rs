@@ -136,14 +136,14 @@ impl Fft {
     fn run(&self, xr: &[f32], xi: &[f32], re: &mut [f32], im: &mut [f32]) {
         let n = self.n;
         let q4 = n / 4;
-        let (xr, xi) = (&xr[..n], &xi[..n]);
+        // Quarters of equal length, so the loop indexes them without checks.
+        let ([r0, r1, r2, r3], [i0, i1, i2, i3]) = (quarters(xr, q4), quarters(xi, q4));
         let (re4, im4) = (re.as_chunks_mut::<4>().0, im.as_chunks_mut::<4>().0);
         // Stages of length 2 and 4 together: a radix-4 butterfly with twiddles 1 and -i, on
         // the inputs that bit reversal puts at 4j..4j+4.
         for (k, &j) in self.quad[..q4].iter().enumerate() {
-            let at = |x: &[f32], t: usize| x[k + t * q4];
-            let r = [at(xr, 0), at(xr, 2), at(xr, 1), at(xr, 3)];
-            let i = [at(xi, 0), at(xi, 2), at(xi, 1), at(xi, 3)];
+            let r = [r0[k], r2[k], r1[k], r3[k]];
+            let i = [i0[k], i2[k], i1[k], i3[k]];
             let (a0r, a0i, a1r, a1i) = (r[0] + r[1], i[0] + i[1], r[0] - r[1], i[0] - i[1]);
             let (a2r, a2i, a3r, a3i) = (r[2] + r[3], i[2] + i[3], r[2] - r[3], i[2] - i[3]);
             let j = usize::from(j);
@@ -165,6 +165,13 @@ impl Fft {
             len *= 2;
         }
     }
+}
+
+/// `x`'s four runs of `q` values.
+fn quarters(x: &[f32], q: usize) -> [&[f32]; 4] {
+    let (a, b) = x[..4 * q].split_at(2 * q);
+    let ((x0, x1), (x2, x3)) = (a.split_at(q), b.split_at(q));
+    [&x0[..q], &x1[..q], &x2[..q], &x3[..q]]
 }
 
 /// One radix-2 stage's butterflies over a block: `a + w b` and `a - w b`, lane by lane.

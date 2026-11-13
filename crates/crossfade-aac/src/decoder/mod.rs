@@ -395,7 +395,14 @@ fn interleave(planar: &[[f32; FRAME_LEN]], out: &mut Vec<f32>) {
     match planar {
         [mono] => out.extend_from_slice(mono),
         // The common case gets a loop that vectorises.
-        [left, right] => out.extend(left.iter().zip(right).flat_map(|(&l, &r)| [l, r])),
+        [left, right] => {
+            let base = out.len();
+            out.resize(base + 2 * FRAME_LEN, 0.0);
+            let pairs = out[base..].as_chunks_mut::<2>().0;
+            for ((o, &l), &r) in pairs.iter_mut().zip(left).zip(right) {
+                *o = [l, r];
+            }
+        }
         _ => {
             let base = out.len();
             out.resize(base + FRAME_LEN * planar.len(), 0.0);
