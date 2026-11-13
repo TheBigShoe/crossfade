@@ -1,0 +1,17 @@
+[package]
+name = "crossfade-alac"
+description = "Apple Lossless (ALAC) decoding in pure Rust: the ALACSpecificConfig and a decoder for every element and frame kind the format defines, 16 to 32 bit, 1 to 8 channels."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# No dependencies on purpose: ALAC is integer arithmetic, and other projects can take this crate
+# alone.
+[dependencies]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -16,6 +16,8 @@ macOS so far.
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
 | Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
+| MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC and MP3 tracks are read but not decoded yet; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
+| ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
 
 Conversions between these are bit-exact, and a file's true bit depth (a 20-bit FLAC stays 20-bit, with the same STREAMINFO MD5) survives them unless `--sample-format` changes the format. Tags are carried across where the
 target container can hold them, and `--codec copy` moves audio from one
