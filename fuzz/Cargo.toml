@@ -183,3 +183,10 @@ path = "fuzz_targets/opus_packet.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "opus_silk"
+path = "fuzz_targets/opus_silk.rs"
+test = false
+doc = false
+bench = false

@@ -279,3 +279,58 @@ fn bad_arguments_are_errors() {
             .is_err()
     );
 }
+
+/// One step of a hostile script: a frame with data (any bytes, rate, channels, size, FEC) or
+/// a loss of any length the top level may ask for.
+#[derive(Debug, Clone)]
+enum Step {
+    Data(Vec<u8>, u32, usize, usize, bool),
+    Lost(usize),
+    Reset,
+}
+
+fn step() -> impl proptest::strategy::Strategy<Value = Step> {
+    use proptest::prelude::*;
+    prop_oneof![
+        8 => (
+            proptest::collection::vec(any::<u8>(), 0..300),
+            prop_oneof![Just(8000u32), Just(12000), Just(16000)],
+            1usize..=2,
+            prop_oneof![Just(480usize), Just(960), Just(1920), Just(2880)],
+            any::<bool>(),
+        )
+            .prop_map(|(b, r, c, s, f)| Step::Data(b, r, c, s, f)),
+        3 => prop_oneof![Just(120usize), Just(240), Just(480), Just(960), Just(1920), Just(2880)]
+            .prop_map(Step::Lost),
+        1 => Just(Step::Reset),
+    ]
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 1500, ..Default::default() })]
+
+    #[test]
+    fn any_script_of_frames_losses_and_resets_is_safe(
+        channels in 1usize..=2,
+        script in proptest::collection::vec(step(), 1..16),
+    ) {
+        let mut d = SilkDecoder::new(channels);
+        for s in script {
+            match s {
+                Step::Data(bytes, rate, ch, size, fec) => {
+                    let f = SilkFrame { fec, ..frame(size, rate, ch) };
+                    let pcm = decode(&mut d, &f, &bytes).unwrap();
+                    proptest::prop_assert!(bounded(&pcm));
+                }
+                Step::Lost(size) => {
+                    // Before any frame (or with nothing to conceal) it is an error and silence.
+                    if let Ok(pcm) = conceal(&mut d, size) {
+                        proptest::prop_assert_eq!(pcm.len(), size * channels);
+                        proptest::prop_assert!(bounded(&pcm));
+                    }
+                }
+                Step::Reset => d.reset(),
+            }
+        }
+    }
+}
