@@ -68,6 +68,8 @@
 //! go in `celt/tables.rs`, private to this module. Nothing else in the crate shares them;
 //! the range decoder needs none.
 
+mod tables;
+
 use crate::error::{Error, Result};
 use crate::range::RangeDecoder;
 
