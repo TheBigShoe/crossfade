@@ -37,9 +37,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-alac"
+version = "0.0.0"
+
+[[package]]
 name = "crossfade-codec"
 version = "0.0.0"
 dependencies = [
+ "crossfade-alac",
  "crossfade-core",
  "crossfade-flac",
 ]
@@ -70,6 +75,7 @@ name = "crossfade-format"
 version = "0.0.0"
 dependencies = [
  "crossfade-aac",
+ "crossfade-alac",
  "crossfade-core",
  "crossfade-flac",
 ]
@@ -80,6 +86,7 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "crossfade-aac",
+ "crossfade-alac",
  "crossfade-codec",
  "crossfade-core",
  "crossfade-flac",

@@ -228,11 +228,7 @@ mod tests {
         let mp3 = vec![0xFF, 0xFB, 0x90, 0x00, 0, 0];
         let mut tagged = b"ID3\x03\0\0\0\0\0\x02xx".to_vec();
         tagged.extend(&mp3);
-        for (bytes, name) in [
-            (mp3, "mp3"),
-            (tagged, "mp3"),
-            (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
-        ] {
+        for (bytes, name) in [(mp3, "mp3"), (tagged, "mp3")] {
             assert_eq!(open(bytes), format!("reading {name} is not built yet"));
         }
     }

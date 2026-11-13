@@ -12,6 +12,8 @@ crossfade-core.workspace = true
 # libavcodec's parsers.
 crossfade-flac.workspace = true
 crossfade-aac.workspace = true
+# The MP4 reader checks an ALAC track's config and takes its channel layout from it.
+crossfade-alac.workspace = true
 
 [lints]
 workspace = true

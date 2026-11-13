@@ -48,7 +48,7 @@ jobs:
       - name: Build engine crates for mobile targets
         run: |
           for t in aarch64-apple-ios aarch64-linux-android; do
-            cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-aac -p crossfade-loudness -p crossfade-resample -p crossfade-dsp -p crossfade-graph
+            cargo build --target "$t" -p crossfade-core -p crossfade-format -p crossfade-codec -p crossfade-flac -p crossfade-aac -p crossfade-alac -p crossfade-loudness -p crossfade-resample -p crossfade-dsp -p crossfade-graph
           done
 
   deny:

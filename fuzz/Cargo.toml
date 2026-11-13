@@ -15,6 +15,7 @@ crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
 crossfade-flac = { path = "../crates/crossfade-flac" }
 crossfade-aac = { path = "../crates/crossfade-aac", features = ["decoder"] }
+crossfade-alac = { path = "../crates/crossfade-alac" }
 crossfade-loudness = { path = "../crates/crossfade-loudness" }
 crossfade-resample = { path = "../crates/crossfade-resample" }
 crossfade-graph = { path = "../crates/crossfade-graph" }
@@ -125,8 +126,22 @@ doc = false
 bench = false
 
 [[bin]]
+name = "mp4_demux"
+path = "fuzz_targets/mp4_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "aac_decode"
 path = "fuzz_targets/aac_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "alac_decode"
+path = "fuzz_targets/alac_decode.rs"
 test = false
 doc = false
 bench = false

@@ -16,6 +16,7 @@ crossfade-format = { path = "crates/crossfade-format", version = "0.0.0" }
 crossfade-codec = { path = "crates/crossfade-codec", version = "0.0.0" }
 crossfade-flac = { path = "crates/crossfade-flac", version = "0.0.0" }
 crossfade-aac = { path = "crates/crossfade-aac", version = "0.0.0" }
+crossfade-alac = { path = "crates/crossfade-alac", version = "0.0.0" }
 crossfade-loudness = { path = "crates/crossfade-loudness", version = "0.0.0" }
 crossfade-resample = { path = "crates/crossfade-resample", version = "0.0.0" }
 crossfade-dsp = { path = "crates/crossfade-dsp", version = "0.0.0" }
@@ -36,6 +37,9 @@ parking_lot = "0.12"
 tracing = "0.1"
 sha2 = "0.10"
 toml = "0.8"
+# Corpus tool only (both MIT OR Apache-2.0, pure Rust): reads the Opus test-vector archive.
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 
 libm = "0.2"
 thiserror = "2"

@@ -16,6 +16,8 @@ macOS so far.
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
 | Ogg | FLAC only | FLAC only | `.oga` and `.ogg`; Vorbis and Opus are recognised and refused by name |
+| MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks are read but not decoded yet; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
+| ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
 | ADTS (`.aac`) | AAC-LC, with `--features aac` | no | Our own AAC-LC decoder, checked against the ISO conformance streams and Apple's decoder; mono to 7.1 and program configurations, 8 to 96 kHz, seeking. HE-AAC plays as its AAC-LC core; Main, LTP, SSR, coupling channels and 960-sample frames are refused by name. A default build refuses AAC and says why |
 
 Conversions between these are bit-exact, and a file's true bit depth (a 20-bit FLAC stays 20-bit, with the same STREAMINFO MD5) survives them unless `--sample-format` changes the format. Tags are carried across where the
@@ -122,14 +124,19 @@ cargo build --release -p crossfade-ui    # the desktop app
 ## Tests
 
 ```sh
-just corpus   # once per clone: fetch the FLAC conformance files (about 300 MB)
+just corpus   # once per clone: fetch the conformance files (about 550 MB; ~600 MB on disk)
 just ci       # formatting, lints, tests, and the conformance tier
 ```
 
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and compares the results with a committed record.
+and compares the results with a committed record. The corpus also holds the
+official Opus (RFC 8251), Vorbis (Xiph), MP3 and AAC (ISO/IEC 14496-26) test
+vectors for the decoders to come; none is committed, `corpus.toml` only lists
+where each one lives. `just corpus` takes them all; to fetch one codec, run
+`cargo run --release -p crossfade-corpus -- fetch --only flac/` (the flag
+repeats, and `verify`, `list` and `seed` take it too).
 
 ## Design
 

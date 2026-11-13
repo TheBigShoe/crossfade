@@ -11,11 +11,17 @@ const CONTINUED: u8 = 0x01;
 const FIRST: u8 = 0x02;
 const LAST: u8 = 0x04;
 
+/// Bytes read at a time while looking for a capture pattern.
+const SCAN_WINDOW: usize = 4096;
+/// Capture patterns without a page behind them that one search passes over before it gives up,
+/// so hostile input full of them stays cheap.
+const MAX_FALSE_STARTS: usize = 64;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PageHeader {
     pub(crate) flags: u8,
-    /// Timing comes from the frame headers; only the tests read this.
-    #[allow(dead_code)]
+    /// The position after the last packet that ends on the page, in the codec's units; -1 when
+    /// no packet ends here.
     pub(crate) granule: i64,
     pub(crate) serial: u32,
     pub(crate) sequence: u32,
@@ -40,6 +46,8 @@ impl PageHeader {
 pub(crate) struct PageReader {
     source: Box<dyn MediaSource>,
     pos: u64,
+    /// Where offset 0 lies in the source, once a seek has needed it.
+    origin: Option<u64>,
     /// The whole page: header, lacing, body. Allocated once at the largest page size.
     buf: Vec<u8>,
     header: PageHeader,
@@ -56,6 +64,7 @@ impl PageReader {
         Self {
             source,
             pos: 0,
+            origin: None,
             buf: vec![0; MAX_PAGE],
             header: PageHeader::default(),
             segments: 0,
@@ -79,6 +88,88 @@ impl PageReader {
     /// Bytes read so far.
     pub(crate) fn position(&self) -> u64 {
         self.pos
+    }
+
+    /// Header, lacing and body of the loaded page.
+    pub(crate) fn page_len(&self) -> usize {
+        HEADER_LEN + self.segments + self.body_len
+    }
+
+    fn origin(&mut self) -> Result<u64, Error> {
+        if let Some(o) = self.origin {
+            return Ok(o);
+        }
+        let o = crate::wav::origin(self.source.as_mut(), self.pos)?;
+        self.origin = Some(o);
+        Ok(o)
+    }
+
+    /// The input's length, counted like page offsets; `Unsupported` for a source that cannot
+    /// seek.
+    pub(crate) fn input_len(&mut self) -> Result<u64, Error> {
+        let origin = self.origin()?;
+        crate::wav::source_len(self.source.as_mut(), origin)
+    }
+
+    fn seek_raw(&mut self, offset: u64) -> Result<(), Error> {
+        let origin = self.origin()?;
+        crate::wav::seek_to(self.source.as_mut(), origin, &mut self.pos, offset)
+    }
+
+    /// Loads the page at `offset` (one found before); `Ok(false)` if the input ends there.
+    pub(crate) fn load_at(&mut self, offset: u64) -> Result<bool, Error> {
+        self.seek_raw(offset)?;
+        self.next_page()
+    }
+
+    /// Loads the first page that starts at or after `from` and before `limit` and returns its
+    /// offset. A capture pattern counts only if a whole page with a good CRC follows it, so
+    /// packet data that holds one, or a page cut short by the end of input, is passed over.
+    pub(crate) fn find_page(&mut self, from: u64, limit: u64) -> Result<Option<u64>, Error> {
+        if from >= limit {
+            return Ok(None);
+        }
+        // Walking page to page, `from` is a page: read it with no search.
+        self.seek_raw(from)?;
+        match self.next_page() {
+            Ok(true) => return Ok(Some(from)),
+            Ok(false) => return Ok(None),
+            Err(e @ Error::Io { .. }) => return Err(e),
+            Err(_) => {}
+        }
+        let mut window = [0u8; SCAN_WINDOW];
+        let mut at = from;
+        let mut false_starts = 0;
+        while at < limit {
+            self.seek_raw(at)?;
+            let n = crate::wav::fill(self.source.as_mut(), &mut self.pos, &mut window)?;
+            let mut i = 0;
+            while let Some(k) = window[i..n].windows(4).position(|w| w == b"OggS") {
+                let found = at + (i + k) as u64;
+                if found >= limit {
+                    return Ok(None);
+                }
+                self.seek_raw(found)?;
+                match self.next_page() {
+                    Ok(true) => return Ok(Some(found)),
+                    Ok(false) => return Ok(None),
+                    Err(e @ Error::Io { .. }) => return Err(e),
+                    Err(_) => {
+                        false_starts += 1;
+                        if false_starts > MAX_FALSE_STARTS {
+                            return Ok(None);
+                        }
+                        i += k + 1;
+                    }
+                }
+            }
+            if n < SCAN_WINDOW {
+                return Ok(None);
+            }
+            // A pattern may straddle the window's end.
+            at += (n - 3) as u64;
+        }
+        Ok(None)
     }
 
     /// Reads into `buf[from..to]`; returns how many bytes arrived before the input ended.

@@ -21,6 +21,10 @@ pub struct WavDemuxer {
     tags: Tags,
     bytes_per_frame: usize,
     frames_per_packet: usize,
+    /// Where the first frame is.
+    data_start: u64,
+    /// The header's frame count; `None` for a streaming file.
+    frames: Option<u64>,
     next_frame: u64,
     /// `None` for a streaming file: read until the input ends.
     frames_left: Option<u64>,
@@ -88,6 +92,45 @@ pub(crate) fn skip(source: &mut dyn MediaSource, pos: &mut u64, mut len: u64) ->
         fill_exact(source, pos, &mut scratch[..step])?;
         len -= step as u64;
     }
+    Ok(())
+}
+
+/// What every reader says when asked to seek a source that cannot.
+pub(crate) fn not_seekable() -> Error {
+    Error::Unsupported {
+        what: "this input cannot seek".into(),
+    }
+}
+
+/// Where the reader's offset 0 lies in the source: a reader counts `pos` from where it started
+/// reading, which need not be the source's start.
+pub(crate) fn origin(source: &mut dyn MediaSource, pos: u64) -> Result<u64, Error> {
+    if !source.is_seekable() {
+        return Err(not_seekable());
+    }
+    let here = source.seek(SeekFrom::Current(0))?;
+    here.checked_sub(pos).ok_or(Error::Overflow)
+}
+
+/// The source's length counted like `pos`.
+pub(crate) fn source_len(source: &mut dyn MediaSource, origin: u64) -> Result<u64, Error> {
+    let len = match source.byte_len() {
+        Some(len) => len,
+        None => source.seek(SeekFrom::End(0))?,
+    };
+    Ok(len.saturating_sub(origin))
+}
+
+/// Moves to `offset`, counted like `pos`.
+pub(crate) fn seek_to(
+    source: &mut dyn MediaSource,
+    origin: u64,
+    pos: &mut u64,
+    offset: u64,
+) -> Result<(), Error> {
+    let at = origin.checked_add(offset).ok_or(Error::Overflow)?;
+    source.seek(SeekFrom::Start(at))?;
+    *pos = offset;
     Ok(())
 }
 
@@ -349,6 +392,8 @@ impl WavDemuxer {
             tags,
             bytes_per_frame,
             frames_per_packet,
+            data_start: pos,
+            frames,
             next_frame: 0,
             frames_left: frames,
             pending_eof: None,
@@ -409,5 +454,23 @@ impl Demuxer for WavDemuxer {
             *left -= n;
         }
         Ok(true)
+    }
+
+    /// Exact: PCM has no pre-roll. A streaming file's end is where its source ends.
+    fn seek(&mut self, pts: i64) -> Result<i64, Error> {
+        let origin = origin(self.source.as_mut(), self.pos)?;
+        let bpf = self.bytes_per_frame as u64;
+        let total = match self.frames {
+            Some(n) => n,
+            None => source_len(self.source.as_mut(), origin)?.saturating_sub(self.data_start) / bpf,
+        };
+        let target = u64::try_from(pts).unwrap_or(0).min(total);
+        let offset = self.data_start + target * bpf;
+        seek_to(self.source.as_mut(), origin, &mut self.pos, offset)?;
+        self.next_frame = target;
+        self.frames_left = self.frames.map(|n| n - target);
+        self.pending_eof = None;
+        self.done = self.frames.is_none() && target == total;
+        i64::try_from(target).map_err(|_| Error::Overflow)
     }
 }
