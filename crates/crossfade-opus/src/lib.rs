@@ -5,5 +5,9 @@
 #![forbid(unsafe_code)]
 
 mod error;
+pub mod range;
+#[doc(hidden)]
+pub mod testing;
 
 pub use error::{Error, Result};
+pub use range::RangeDecoder;
