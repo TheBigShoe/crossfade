@@ -299,6 +299,33 @@ fn partition_type1(book: &Codebook, r: &mut BitReader<'_>, v: &mut [f32]) -> boo
     if !book.has_used_entries() {
         return true;
     }
+    match book.dims() {
+        1 => rows::<1>(book, r, v),
+        2 => rows::<2>(book, r, v),
+        4 => rows::<4>(book, r, v),
+        8 => rows::<8>(book, r, v),
+        _ => rows_any(book, r, v),
+    }
+}
+
+/// Whole vectors of a book of `D` dimensions, then any part-vector at the end.
+#[inline(always)]
+fn rows<const D: usize>(book: &Codebook, r: &mut BitReader<'_>, v: &mut [f32]) -> bool {
+    let vq = book.vq();
+    let (whole, rest) = v.as_chunks_mut::<D>();
+    for x in whole {
+        let Some(s) = book.decode_symbol(r) else {
+            return false;
+        };
+        let y = &vq[s as usize * D..][..D];
+        for k in 0..D {
+            x[k] += y[k];
+        }
+    }
+    rest.is_empty() || rows_any(book, r, rest)
+}
+
+fn rows_any(book: &Codebook, r: &mut BitReader<'_>, v: &mut [f32]) -> bool {
     let dims = book.dims();
     let vq = book.vq();
     let mut i = 0;
