@@ -52,9 +52,13 @@ crossfade convert song.wav -o song.flac --compression-level 8
 crossfade convert song.wav -o song.flac --threads 1   # one thread (the default is auto)
 crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
+crossfade convert song.mp3 -o song.flac
+crossfade probe song.m4a
 ```
 
-`crossfade convert --help` lists every option. FLAC decoding and encoding use
+Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC and Vorbis), MP3, MP4/M4A (ALAC;
+AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
+FLAC, AIFF, Ogg FLAC. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
