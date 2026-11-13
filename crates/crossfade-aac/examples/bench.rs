@@ -37,15 +37,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pcm = Vec::new();
     for _ in 0..repeat {
         decoder.reset();
-        // FNV-1a over the output bits, 32 bits at a time.
-        let mut hash = 0xCBF2_9CE4_8422_2325u64;
+        // FNV-1a over the output bits in four interleaved lanes (one serial chain would cost
+        // more than some decoder stages).
+        let mut lanes = [0xCBF2_9CE4_8422_2325u64; 4];
         let start = Instant::now();
         for &(block, n) in &blocks {
             decoder.decode_blocks(block, n, &mut pcm)?;
-            for s in &pcm {
-                hash = (hash ^ u64::from(s.to_bits())).wrapping_mul(0x100_0000_01B3);
+            for s in pcm.as_chunks::<4>().0 {
+                for (h, s) in lanes.iter_mut().zip(s) {
+                    *h = (*h ^ u64::from(s.to_bits())).wrapping_mul(0x100_0000_01B3);
+                }
             }
         }
+        let hash = lanes.iter().fold(0u64, |a, &h| a.rotate_left(17) ^ h);
         println!(
             "{} blocks in {:.1} ms, hash {hash:016x}",
             blocks.len(),
