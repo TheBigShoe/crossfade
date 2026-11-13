@@ -152,7 +152,7 @@ impl Decoder {
         let start = out.len();
         let result = match packet {
             None => self.conceal(self.last_packet_duration, out),
-            Some(data) => self.decode_packet(data, out),
+            Some(data) => Packet::parse(data).and_then(|p| self.decode_packet(&p, out)),
         };
         if result.is_err() {
             out.truncate(start);
@@ -167,9 +167,18 @@ impl Decoder {
     /// with `decode_fec = 1`). An invalid packet is an error that changes nothing.
     pub fn decode_fec(&mut self, packet: &[u8], out: &mut Vec<f32>) -> Result<usize> {
         let parsed = Packet::parse(packet)?;
+        self.decode_fec_packet(&parsed, out)
+    }
+
+    /// [`decode_fec`](Self::decode_fec) of a packet already parsed.
+    pub(crate) fn decode_fec_packet(
+        &mut self,
+        parsed: &Packet<'_>,
+        out: &mut Vec<f32>,
+    ) -> Result<usize> {
         let frames = self.last_packet_duration;
         let start = out.len();
-        let result = self.fec(&parsed, frames, out);
+        let result = self.fec(parsed, frames, out);
         if result.is_err() {
             out.truncate(start);
         }
@@ -224,8 +233,13 @@ impl Decoder {
         Ok(count)
     }
 
-    fn decode_packet(&mut self, data: &[u8], out: &mut Vec<f32>) -> Result<usize> {
-        let packet = Packet::parse(data)?;
+    /// [`decode`](Self::decode) of a packet already parsed (a multistream packet's streams are
+    /// self-delimited); on an error the caller truncates `out`.
+    pub(crate) fn decode_packet(
+        &mut self,
+        packet: &Packet<'_>,
+        out: &mut Vec<f32>,
+    ) -> Result<usize> {
         let toc = packet.toc();
         self.mode = Some(toc.mode());
         self.bandwidth = toc.bandwidth();
