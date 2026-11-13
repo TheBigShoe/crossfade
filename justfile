@@ -16,14 +16,15 @@ test:
     cargo test --workspace
 
 # AAC is patent-encumbered, so its decoder is behind the off-by-default feature `aac`: these
-# lint and test what only that feature compiles (the decoder, the adapter, the CLI end to end).
-aac_features := "crossfade-aac/decoder,crossfade-codec/aac,crossfade-cli/aac"
+# lint and test what only that feature compiles (the decoder, the adapter, AAC through the
+# readers and the engine, the CLI end to end).
+aac_features := "crossfade-aac/decoder,crossfade-codec/aac,crossfade-format/aac,crossfade-graph/aac,crossfade-cli/aac"
 
 lint-aac:
-    cargo clippy -p crossfade-aac -p crossfade-codec -p crossfade-cli --all-targets --features {{aac_features}} -- -D warnings
+    cargo clippy -p crossfade-aac -p crossfade-codec -p crossfade-format -p crossfade-graph -p crossfade-cli --all-targets --features {{aac_features}} -- -D warnings
 
 test-aac:
-    cargo test -p crossfade-aac -p crossfade-codec -p crossfade-cli --features {{aac_features}}
+    cargo test -p crossfade-aac -p crossfade-codec -p crossfade-format -p crossfade-graph -p crossfade-cli --features {{aac_features}}
 
 # Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
 # crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
