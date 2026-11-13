@@ -65,18 +65,130 @@ fn cwrsi(mut k: usize, mut i: u32, y: &mut [i32], u: &mut [u32]) {
     }
 }
 
+/// The largest band, in coefficients (22 bins of 2.5 ms at 20 ms).
+const MAX_N: usize = 176;
+
+/// U(n, k) for n in 0..=MAX_N and k in 0..=MAX_PULSES + 1, built at compile time from
+/// `U(n, k) = U(n-1, k) + U(n, k-1) + U(n-1, k-1)`, U(0, 0) = 1, saturating where it exceeds
+/// 32 bits: the pulse cache only allows (n, k) whose V(n, k) = U(n, k) + U(n, k+1) fits, and
+/// every entry the decoder then reads is no larger. libopus's `CELT_PVQ_U` table, whole.
+static U: [[u32; MAX_PULSES + 2]; MAX_N + 1] = {
+    let mut u = [[0u32; MAX_PULSES + 2]; MAX_N + 1];
+    u[0][0] = 1;
+    let mut n = 1;
+    while n <= MAX_N {
+        let mut k = 1;
+        while k < MAX_PULSES + 2 {
+            u[n][k] = u[n - 1][k]
+                .saturating_add(u[n][k - 1])
+                .saturating_add(u[n - 1][k - 1]);
+            k += 1;
+        }
+        n += 1;
+    }
+    u
+};
+
+/// U(n, k), symmetric, as libopus's `CELT_PVQ_U` reads it (k may reach n).
+#[inline(always)]
+fn u(n: usize, k: usize) -> u32 {
+    let (a, b) = if n <= k { (k, n) } else { (n, k) };
+    // U(n, k) = U(k, n): the table has every n up to MAX_N for k up to MAX_PULSES + 1.
+    if b <= MAX_PULSES + 1 && a <= MAX_N {
+        U[a][b]
+    } else if a <= MAX_PULSES + 1 && b <= MAX_N {
+        U[b][a]
+    } else {
+        u32::MAX
+    }
+}
+
+/// `cwrsi` with the table (libopus's current form): the `i`-th vector, O(n + k).
+fn cwrsi_table(mut n: usize, mut k: usize, mut i: u32, y: &mut [i32]) {
+    let mut at = 0;
+    while n > 2 {
+        let k0 = k;
+        if k >= n {
+            let p = u(n, k + 1);
+            let s: i32 = -i32::from(i >= p);
+            i = i.wrapping_sub(p & s as u32);
+            let q = u(n, n);
+            let mut p;
+            if q > i {
+                k = n;
+                loop {
+                    k -= 1;
+                    p = u(k, n);
+                    if p <= i || k == 0 {
+                        break;
+                    }
+                }
+            } else {
+                p = u(n, k);
+                while p > i && k > 0 {
+                    k -= 1;
+                    p = u(n, k);
+                }
+            }
+            i = i.wrapping_sub(p);
+            y[at] = ((k0 - k) as i32 + s) ^ s;
+        } else {
+            let p = u(k, n);
+            let q = u(k + 1, n);
+            if p <= i && i < q {
+                i -= p;
+                y[at] = 0;
+            } else {
+                let s: i32 = -i32::from(i >= q);
+                i = i.wrapping_sub(q & s as u32);
+                let mut p;
+                loop {
+                    k = k.saturating_sub(1);
+                    p = u(k, n);
+                    if p <= i || k == 0 {
+                        break;
+                    }
+                }
+                i = i.wrapping_sub(p);
+                y[at] = ((k0 - k) as i32 + s) ^ s;
+            }
+        }
+        at += 1;
+        n -= 1;
+    }
+    // n == 2
+    let p = 2 * k as u32 + 1;
+    let s: i32 = -i32::from(i >= p);
+    i = i.wrapping_sub(p & s as u32);
+    let k0 = k;
+    k = (i.wrapping_add(1) >> 1) as usize;
+    if k != 0 {
+        i = i.wrapping_sub(2 * k as u32 - 1);
+    }
+    y[at] = ((k0 as i32 - k as i32) + s) ^ s;
+    // n == 1
+    let s = -(i as i32);
+    y[at + 1] = (k as i32 + s) ^ s;
+}
+
 /// `decode_pulses`: reads the index of a vector of `y.len()` (>= 2) integers whose absolute
 /// values sum to `k` (1 to [`MAX_PULSES`]) and writes it to `y`.
 pub(super) fn decode_pulses(y: &mut [i32], k: usize, ec: &mut Ec<'_, '_>) {
     let n = y.len();
-    let mut u = [0u32; MAX_PULSES + 2];
+    let mut row = [0u32; MAX_PULSES + 2];
     if n < 2 || k == 0 || k > MAX_PULSES {
         y.fill(0);
         return;
     }
-    let v = ncwrs_urow(n, k, &mut u);
+    if n > MAX_N {
+        let v = ncwrs_urow(n, k, &mut row);
+        let i = ec.uint(v);
+        cwrsi(k, i, y, &mut row);
+        return;
+    }
+    let v = u(n, k).wrapping_add(u(n, k + 1));
     let i = ec.uint(v);
-    cwrsi(k, i, y, &mut u);
+    cwrsi_table(n, k, i, y);
 }
 
 #[cfg(test)]
