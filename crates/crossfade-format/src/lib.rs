@@ -221,10 +221,7 @@ mod tests {
             unsupported(open_demuxer(Box::new(src), &Limits::default()))
         };
         // The MP3 reader is built; its routing is tested in its own module.
-        for (bytes, name) in [
-            (b"\0\0\0\x18ftypmp42\0\0\0\0".to_vec(), "mp4"),
-            (vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts"),
-        ] {
+        for (bytes, name) in [(vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts")] {
             assert_eq!(open(bytes), format!("reading {name} is not built yet"));
         }
     }
