@@ -110,12 +110,12 @@ impl Quantiser {
             }
             SampleFormat::S24 => {
                 let mut v = reuse!(S24);
-                self.ints(input, 24, &mut v, |x| x);
+                self.ints(input, 24, &mut v, |x| x as i32);
                 Samples::S24(v)
             }
             SampleFormat::S32 => {
                 let mut v = reuse!(S32);
-                self.ints(input, 32, &mut v, |x| x);
+                self.ints(input, 32, &mut v, |x| x as i32);
                 Samples::S32(v)
             }
             SampleFormat::F32 => {
@@ -139,7 +139,7 @@ impl Quantiser {
         input: &[f64],
         bits: u32,
         out: &mut Vec<T>,
-        to: impl Fn(i32) -> T,
+        to: impl Fn(i64) -> T,
     ) {
         const BLOCK: usize = 64;
         let scale = (1u64 << (bits - 1)) as f64;
@@ -147,6 +147,9 @@ impl Quantiser {
         // Rounding is half away from zero, so `v` rounds outside lo..=hi exactly when it is at
         // most lo - 0.5 or at least hi + 0.5 (both exact in f64).
         let (below, above) = (lo - 0.5, hi + 0.5);
+        // Clamping the rounded value as an integer is clamping it as a float: it is integral,
+        // and the conversion saturates. f64 to i64 is one vector instruction; to i32 is not.
+        let (ilo, ihi) = (lo as i64, hi as i64);
         let start = out.len();
         out.resize(start + input.len(), T::default());
         let out = &mut out[start..];
@@ -158,15 +161,14 @@ impl Quantiser {
                 // Adding zero changes no integer result (only the sign of a zero).
                 Dither::None => noise.fill(0.0),
             }
-            // Counted in f64 lanes beside the samples: exact, and no widening of masks.
-            let mut clipped = 0.0f64;
+            let mut clipped = 0u64;
             for ((&x, o), &d) in x.iter().zip(o.iter_mut()).zip(noise.iter()) {
                 // NaN is silence, as in `convert`.
                 let v = if x.is_nan() { 0.0 } else { x * scale };
-                clipped += if v <= below || v >= above { 1.0 } else { 0.0 };
-                *o = to((v + d).round().clamp(lo, hi) as i32);
+                clipped += u64::from(v <= below) + u64::from(v >= above);
+                *o = to(((v + d).round() as i64).clamp(ilo, ihi));
             }
-            self.clipped += clipped as u64;
+            self.clipped += clipped;
         }
     }
 }
