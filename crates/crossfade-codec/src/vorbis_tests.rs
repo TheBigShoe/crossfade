@@ -1,6 +1,8 @@
 use super::*;
 use crate::decoder_for_threads;
-use crossfade_core::{AudioSpec, Channel, CodecId, Packet, SampleFormat, Samples, TimeBase};
+use crossfade_core::{
+    AudioSpec, Channel, ChannelLayout, CodecId, Packet, SampleFormat, Samples, TimeBase,
+};
 use crossfade_vorbis::testing::{self as w, Book};
 
 /// A stream of `channels` channels whose channel c has the flat floor 100 + 20 c and a
@@ -141,8 +143,15 @@ fn channels_are_labelled_from_the_specifications_table_and_stored_in_mask_order(
         (8, Some("7.1")),
     ];
     for (n, name) in names {
-        assert_eq!(ChannelLayout::vorbis_order(n).unwrap().name(), name, "{n} channels");
-        assert_eq!(ChannelLayout::vorbis_order(n).unwrap().channels(), u16::from(n));
+        assert_eq!(
+            ChannelLayout::vorbis_order(n).unwrap().name(),
+            name,
+            "{n} channels"
+        );
+        assert_eq!(
+            ChannelLayout::vorbis_order(n).unwrap().channels(),
+            u16::from(n)
+        );
     }
     assert_eq!(
         ChannelLayout::vorbis_order(9).unwrap(),
@@ -253,7 +262,10 @@ fn core_vorbis_order_agrees_with_the_vorbis_crates_speakers() {
         for w in &want {
             assert!(got.contains(w), "{n} channels: {w:?} missing from {got:?}");
         }
-        assert!(layout.to_mask().is_some(), "{n} channels: not in mask order");
+        assert!(
+            layout.to_mask().is_some(),
+            "{n} channels: not in mask order"
+        );
     }
     for n in [0u8, 9, 100, 255] {
         assert!(speakers(n).is_none());
