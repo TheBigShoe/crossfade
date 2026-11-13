@@ -23,7 +23,6 @@ struct AacDecoder {
     ready: Option<AudioFrame>,
     /// The caller's last frame, filled next so steady state allocates nothing.
     spare: Option<AudioFrame>,
-    pcm: Vec<f32>,
 }
 
 pub(crate) fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
@@ -45,7 +44,6 @@ pub(crate) fn decoder(stream: &StreamInfo) -> Result<Box<dyn Decoder>, Error> {
         template,
         ready: None,
         spare: None,
-        pcm: Vec::new(),
     }))
 }
 
@@ -56,15 +54,19 @@ impl Decoder for AacDecoder {
             d if d > len && d % len == 0 && d <= 4 * len => (d / len) as usize,
             _ => 1,
         };
-        self.inner
-            .decode_blocks(&packet.data, blocks, &mut self.pcm)
-            .map_err(engine_error)?;
         let mut frame = self.spare.take().unwrap_or_else(|| self.template.clone());
-        frame.pts = packet.pts;
-        if let Samples::F32(v) = &mut frame.samples {
-            v.clear();
-            v.extend_from_slice(&self.pcm);
+        if !matches!(frame.samples, Samples::F32(_)) {
+            frame.samples = Samples::F32(Vec::new());
         }
+        let Samples::F32(v) = &mut frame.samples else {
+            unreachable!("made F32 above");
+        };
+        // Straight into the frame (the decoder clears it first).
+        if let Err(e) = self.inner.decode_blocks(&packet.data, blocks, v) {
+            self.spare = Some(frame);
+            return Err(engine_error(e));
+        }
+        frame.pts = packet.pts;
         self.ready = Some(frame);
         Ok(())
     }
@@ -76,7 +78,8 @@ impl Decoder for AacDecoder {
                 // The caller's old frame becomes the next one to fill when its shape fits.
                 if frame.layout == self.template.layout && matches!(frame.samples, Samples::F32(_))
                 {
-                    self.template.sample_rate = frame.sample_rate;
+                    frame.sample_rate = self.template.sample_rate;
+                    self.spare = Some(frame);
                 }
                 Ok(true)
             }
