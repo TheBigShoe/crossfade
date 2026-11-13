@@ -231,9 +231,12 @@ impl WaveformStrip {
         }
     }
 
-    /// The player, for screenshots that set a scene up by hand.
-    pub fn player_mut(&mut self) -> Option<&mut Player> {
-        self.player.as_mut()
+    /// Drops the player and shows `note` instead, as when the app found no output device: a
+    /// seam for screenshots.
+    pub fn disable_audio(&mut self, note: &str) {
+        self.player = None;
+        self.loaded = None;
+        self.audio_note = Some(note.to_owned());
     }
 
     pub fn is_following(&self) -> bool {
