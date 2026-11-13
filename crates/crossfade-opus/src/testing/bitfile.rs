@@ -37,8 +37,10 @@ pub fn read_bit_file(bytes: &[u8]) -> Result<Vec<BitPacket<'_>>, String> {
 /// Raw 16-bit little-endian PCM (an odd trailing byte is ignored, as `fread` would).
 pub fn read_pcm16(bytes: &[u8]) -> Vec<i16> {
     bytes
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&b| i16::from_le_bytes(b))
         .collect()
 }
 
@@ -78,6 +80,9 @@ mod tests {
 
     #[test]
     fn reads_little_endian_pcm() {
-        assert_eq!(read_pcm16(&[0x01, 0x80, 0xFF, 0x7F, 9]), vec![-32767, 32767]);
+        assert_eq!(
+            read_pcm16(&[0x01, 0x80, 0xFF, 0x7F, 9]),
+            vec![-32767, 32767]
+        );
     }
 }
