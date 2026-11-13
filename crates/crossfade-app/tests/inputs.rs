@@ -182,10 +182,10 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
     let InputState::Failed(vorbis) = probe_path("song.ogg", &mut io, &Limits::default()) else {
         panic!("expected Failed");
     };
+    // Vorbis in Ogg is read now: this one-page stub is a broken Vorbis stream, not a refusal.
     assert_eq!(
         vorbis,
-        "This Ogg file holds Vorbis audio, which Crossfade cannot open yet. \
-         Only FLAC inside Ogg can be opened."
+        "malformed input: ogg vorbis: identification header too short"
     );
     let InputState::Failed(odd) = probe_path("odd.ogg", &mut io, &Limits::default()) else {
         panic!("expected Failed");

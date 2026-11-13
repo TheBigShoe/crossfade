@@ -2,8 +2,13 @@
 //! reverse. Built on the types in `crossfade-core`.
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "aac")]
+mod aac;
+pub mod alac;
 pub mod flac;
+pub mod mp3;
 pub mod pcm;
+pub mod vorbis;
 
 use crossfade_core::{AudioSpec, CodecId, Decoder, Encoder, Error, StreamInfo};
 
@@ -24,7 +29,7 @@ pub fn auto_thread_count() -> usize {
 
 /// Whether `codec`'s decoder or encoder can use more than the calling thread.
 pub fn is_threaded(codec: CodecId) -> bool {
-    codec == CodecId::Flac
+    matches!(codec, CodecId::Flac | CodecId::Alac)
 }
 
 /// `Error::Unsupported` for a codec with no decoder. Runs on the calling thread.
@@ -41,6 +46,25 @@ pub fn decoder_for_threads(stream: &StreamInfo, threads: usize) -> Result<Box<dy
     }
     if stream.codec == CodecId::Flac {
         return flac::decode::decoder_threads(stream, threads);
+    }
+    if stream.codec == CodecId::Vorbis {
+        return vorbis::decoder(stream);
+    }
+    if stream.codec == CodecId::Alac {
+        return alac::decoder_threads(stream, threads);
+    }
+    if stream.codec == CodecId::Mp3 {
+        return mp3::decoder(stream);
+    }
+    #[cfg(feature = "aac")]
+    if stream.codec == CodecId::Aac {
+        return aac::decoder(stream);
+    }
+    #[cfg(not(feature = "aac"))]
+    if stream.codec == CodecId::Aac {
+        return Err(Error::Unsupported {
+            what: "aac decoding is not part of this build (AAC is patent-encumbered); build with --features aac".into(),
+        });
     }
     Err(Error::Unsupported {
         what: format!("no decoder for {}", stream.codec.name()),

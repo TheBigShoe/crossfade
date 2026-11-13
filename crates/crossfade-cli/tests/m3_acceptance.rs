@@ -1205,17 +1205,12 @@ fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
 }
 
 #[test]
-fn an_ogg_vorbis_input_is_identified_and_refused() {
+fn an_ogg_vorbis_input_cut_after_its_identification_header_is_refused() {
     let d = Dir::new("vorbis");
     d.write("in.ogg", &ogg_vorbis());
-    d.refused(
-        &["convert", "in.ogg", "-o", "out.wav"],
-        "vorbis in ogg is recognised, but reading it is not built yet",
-    );
-    d.refused(
-        &["probe", "in.ogg"],
-        "vorbis in ogg is recognised, but reading it is not built yet",
-    );
+    let cause = "ogg vorbis: the stream ends before its comment header";
+    d.refused(&["convert", "in.ogg", "-o", "out.wav"], cause);
+    d.refused(&["probe", "in.ogg"], cause);
 }
 
 #[test]

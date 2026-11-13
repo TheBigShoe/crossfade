@@ -39,5 +39,8 @@ crossfade-format.workspace = true
 crossfade-codec.workspace = true
 crossfade-flac.workspace = true
 
+[features]
+aac = ["crossfade-app/aac"]
+
 [lints]
 workspace = true

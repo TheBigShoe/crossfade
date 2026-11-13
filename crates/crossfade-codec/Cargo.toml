@@ -9,6 +9,14 @@ license.workspace = true
 [dependencies]
 crossfade-core.workspace = true
 crossfade-flac.workspace = true
+crossfade-vorbis.workspace = true
+crossfade-alac.workspace = true
+crossfade-mp3.workspace = true
+crossfade-aac = { workspace = true, optional = true }
+
+[features]
+# AAC is patent-encumbered: its decoder is compiled only on request.
+aac = ["dep:crossfade-aac", "crossfade-aac/decoder"]
 
 [lints]
 workspace = true
