@@ -31,6 +31,8 @@ mod gate;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod playback_tests;
+#[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
 mod quit_tests;
@@ -42,8 +44,6 @@ mod sheet_tests;
 mod test_support;
 #[cfg(test)]
 mod theme_bridge_tests;
-#[cfg(test)]
-mod playback_tests;
 #[cfg(test)]
 mod waveform_tests;
 #[cfg(test)]

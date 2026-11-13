@@ -169,14 +169,21 @@ fn a_drag_scrubs_silently_and_the_release_seeks(cx: &mut TestAppContext) {
     assert_eq!(position(cx, &rig), want);
     let s = strip(cx, &rig);
     assert!(!s.read_with(cx, |s, _| s.is_scrubbing()));
-    assert_eq!(state(cx, &rig), Some(State::Playing), "carries on after the drag");
+    assert_eq!(
+        state(cx, &rig),
+        Some(State::Playing),
+        "carries on after the drag"
+    );
 }
 
 #[gpui_test]
 fn the_playhead_sits_at_the_position(cx: &mut TestAppContext) {
     let (rig, _) = one_file(cx, 4);
     click(cx, rig.window, "transport-play");
-    pull(cx, &rig, 48_000);
+    // The buffer holds half a second; pull in pieces it can serve.
+    for _ in 0..4 {
+        pull(cx, &rig, 12_000);
+    }
     draw(cx, rig.window);
     let lanes = strip_bounds(cx, &rig, "waveform-strip");
     let head = strip_bounds(cx, &rig, "waveform-playhead");

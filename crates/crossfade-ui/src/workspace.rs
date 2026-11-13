@@ -7,15 +7,15 @@ use std::sync::Arc;
 
 use crossfade_app::Request;
 use crossfade_app::inputs::{InputId, InputState, Inputs, probe_path};
+use crossfade_app::player::AudioSink;
 use crossfade_app::queue::{JobId, Queue, Runner, RunnerEvent, quit_warning};
 use crossfade_app::sheet::ConvertSheet;
-use crossfade_app::player::AudioSink;
 use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
 use crate::actions::{
-    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, Quit, ToggleQueue,
-    WORKSPACE_CONTEXT,
+    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, PlaybackToEnd, PlaybackToStart,
+    Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
 use crate::config::{self, Config};
@@ -700,6 +700,16 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &About, _, cx| {
                 this.record(AppAction::About, cx);
+            }))
+            // From the files list or the strip: both are inside the workspace's context.
+            .on_action(cx.listener(|this, _: &TogglePlayback, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.toggle_playback(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PlaybackToStart, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.to_start(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PlaybackToEnd, _, cx| {
+                this.strip.update(cx, |strip, cx| strip.to_end(cx));
             }))
             .child(self.toolbar(cx))
             .child(self.body(cx))

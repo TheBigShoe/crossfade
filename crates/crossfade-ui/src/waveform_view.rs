@@ -1,24 +1,29 @@
-//! The inspector's waveform strip. It renders `crossfade_app::strip::Strip` and forwards
-//! gestures to its `WaveView`; the arithmetic lives there.
+//! The inspector's waveform strip and its transport. It renders `crossfade_app::strip::Strip`
+//! and a `crossfade_app::player::Player`, and forwards gestures to their models; the arithmetic
+//! lives there.
 //!
-//! Painting asks the pyramid for one column per horizontal pixel per lane and draws a quad for
-//! each; it never reads samples, and takes only what `Analyzer::with` gives (the worker holds
-//! that lock for one decoded frame's blocks at a time).
+//! The lanes are their own cached view ([`Lanes`]): they are asked for one column per
+//! horizontal pixel per lane, and only when the analysis, the visible range, the width or the
+//! colours change. While playing, the strip asks for a frame per display refresh to move the
+//! playhead and the time; those frames reuse the lanes' painted quads as they are (no pyramid
+//! query, no repaint), so a playing strip costs about what a blinking text cursor does: the
+//! window's element tree is rebuilt and the strip's few small elements laid out again.
 
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use crossfade_app::analysis::{Analyzer, Snapshot, State};
+use crossfade_app::player::{Follow, Player, State as PlayState, transport_text};
 use crossfade_app::strip::{Strip, Wake};
-use crossfade_app::waveview::{Lane, LanePlan, readout};
+use crossfade_app::waveview::{Lane, LanePlan, WaveView, readout};
 use crossfade_core::Limits;
 
 use crate::actions::{
     WAVEFORM_CONTEXT, WaveformFit, WaveformPanLeft, WaveformPanRight, WaveformZoomIn,
     WaveformZoomOut,
 };
-use crate::chrome::LABEL_SIZE;
+use crate::chrome::{LABEL_SIZE, icon_button};
 use crate::prelude::*;
 use crate::workspace::{AudioOutput, IoFactory};
 
@@ -31,6 +36,89 @@ const LANE_GAP: f32 = 6.;
 const LINE_HEIGHT: Pixels = px(16.);
 /// Pixels a wheel line is worth.
 const LINE_PIXELS: f32 = 16.;
+/// A press that moves further than this is a drag (a scrub), not a click (a seek).
+const DRAG_PX: f32 = 3.;
+/// What the strip says when there is no audio output.
+const NO_OUTPUT: &str = "No audio output";
+
+/// What the lanes were last computed for: the analysis, the range, the width and the colours.
+#[derive(Clone, PartialEq)]
+struct LanesKey {
+    version: u64,
+    start: u64,
+    fpp: u64,
+    width: u32,
+    frames: u64,
+    wave: Hsla,
+    line: Hsla,
+}
+
+/// The painted lanes, a view of their own so a frame that only moves the playhead reuses them.
+struct Lanes {
+    key: Option<LanesKey>,
+    lanes: Vec<Lane>,
+    planned: usize,
+    known: bool,
+    columns: usize,
+}
+
+impl Render for Lanes {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let Some(key) = self.key.clone() else {
+            return div().into_any_element();
+        };
+        let lanes = self.lanes.clone();
+        let (planned, known, columns) = (self.planned, self.known, self.columns);
+        canvas(
+            |bounds, _, _| bounds,
+            move |_, bounds, window, _| {
+                let lane_count = if lanes.is_empty() {
+                    planned
+                } else {
+                    lanes.len()
+                };
+                let width = f32::from(bounds.size.width);
+                let height = f32::from(bounds.size.height);
+                let lane_h = ((height - 2. * LANE_PAD - (lane_count - 1) as f32 * LANE_GAP)
+                    / lane_count as f32)
+                    .max(2.);
+                let (x0, y0) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                let line_cols = if known { columns } else { width as usize };
+                for lane in 0..lane_count {
+                    let top = y0 + LANE_PAD + lane as f32 * (lane_h + LANE_GAP);
+                    let mid = top + lane_h / 2.;
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(px(x0), px(mid - 0.5)),
+                            size(px(line_cols as f32), px(1.)),
+                        ),
+                        key.line,
+                    ));
+                    let Some(columns) = lanes.get(lane) else {
+                        continue;
+                    };
+                    for (i, column) in columns.iter().enumerate() {
+                        let Some((lo, hi)) = column else {
+                            continue;
+                        };
+                        let (hi, lo) = (hi.clamp(-1., 1.), lo.clamp(-1., 1.));
+                        let y_top = mid - hi * lane_h / 2.;
+                        let y_bottom = (mid - lo * lane_h / 2.).max(y_top + 1.);
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(px(x0 + i as f32), px(y_top)),
+                                size(px(1.), px(y_bottom - y_top)),
+                            ),
+                            key.wave,
+                        ));
+                    }
+                }
+            },
+        )
+        .size_full()
+        .into_any_element()
+    }
+}
 
 pub struct WaveformStrip {
     strip: Strip,
@@ -38,13 +126,22 @@ pub struct WaveformStrip {
     io: IoFactory,
     wake: Arc<Wake>,
     sender: async_channel::Sender<()>,
-    /// Where the lanes are, in window pixels: left edge and width, as last painted.
+    /// Where the lanes are, in window pixels: their left edge, as last laid out.
     left: Rc<Cell<f32>>,
+    lanes: Entity<Lanes>,
+    /// `None` when there is no audio output; `audio_note` says why.
+    player: Option<Player>,
+    audio_note: Option<String>,
+    /// The path the player has loaded.
+    loaded: Option<String>,
+    follow: Follow,
+    /// Where the pointer went down on the lanes, strip pixels; set until it comes up.
+    press: Option<f32>,
     _wakes: Task<()>,
 }
 
 impl WaveformStrip {
-    pub fn new(io: IoFactory, _audio: AudioOutput, cx: &mut Context<Self>) -> Self {
+    pub fn new(io: IoFactory, audio: AudioOutput, cx: &mut Context<Self>) -> Self {
         let (sender, receiver) = async_channel::unbounded::<()>();
         let wake = Arc::new(Wake::default());
         let acknowledge = Arc::clone(&wake);
@@ -57,6 +154,23 @@ impl WaveformStrip {
                 }
             }
         });
+        let (player, audio_note) = match audio {
+            AudioOutput::Sink(sink) => {
+                let ended = sender.clone();
+                // A load finishing and the end of playback, both rare: no coalescing needed.
+                let made = Player::new(sink, io(), Limits::default(), move || {
+                    let _ = ended.try_send(());
+                });
+                match made {
+                    Ok(player) => (Some(player), None),
+                    Err(why) => {
+                        eprintln!("crossfade: playback off: {why}");
+                        (None, Some(NO_OUTPUT.to_owned()))
+                    }
+                }
+            }
+            AudioOutput::Off(why) => (None, Some(why)),
+        };
         Self {
             strip: Strip::default(),
             focus: cx.focus_handle(),
@@ -64,6 +178,18 @@ impl WaveformStrip {
             wake,
             sender,
             left: Rc::new(Cell::new(0.)),
+            lanes: cx.new(|_| Lanes {
+                key: None,
+                lanes: Vec::new(),
+                planned: 1,
+                known: false,
+                columns: 0,
+            }),
+            player,
+            audio_note,
+            loaded: None,
+            follow: Follow::new(),
+            press: None,
             _wakes: wakes,
         }
     }
@@ -72,7 +198,7 @@ impl WaveformStrip {
         self.strip.path()
     }
 
-    pub fn view(&self) -> &crossfade_app::waveview::WaveView {
+    pub fn view(&self) -> &WaveView {
         self.strip.view()
     }
 
@@ -89,36 +215,86 @@ impl WaveformStrip {
     }
 
     /// The player's state, when there is a player.
-    pub fn player_state(&self) -> Option<crossfade_app::player::State> {
-        None
+    pub fn player_state(&self) -> Option<PlayState> {
+        self.player.as_ref().map(Player::state)
     }
 
     /// The playback position in source frames.
     pub fn position(&self) -> Option<u64> {
-        None
+        self.player.as_ref().map(Player::position)
     }
 
     /// Waits for the player's worker to catch up (tests and screenshots).
-    pub fn settle(&self) {}
+    pub fn settle(&self) {
+        if let Some(player) = &self.player {
+            player.settle();
+        }
+    }
+
+    /// The player, for screenshots that set a scene up by hand.
+    pub fn player_mut(&mut self) -> Option<&mut Player> {
+        self.player.as_mut()
+    }
 
     pub fn is_following(&self) -> bool {
-        false
+        self.follow.is_following()
     }
 
     pub fn is_scrubbing(&self) -> bool {
-        false
+        self.player.as_ref().is_some_and(Player::is_scrubbing)
     }
 
-    /// The transport's time readout.
+    /// The transport's time readout, when it shows one.
     pub fn transport_text(&self) -> Option<String> {
-        None
+        let player = self.playable()?;
+        let rate = player.stream().map_or(0, |s| s.audio.sample_rate());
+        Some(transport_text(player.position(), player.duration(), rate))
     }
 
-    pub fn toggle_playback(&mut self, _: &mut Context<Self>) {}
+    /// The player, when the shown file has one to play (loading counts).
+    fn playable(&self) -> Option<&Player> {
+        let player = self.player.as_ref()?;
+        self.strip.path()?;
+        match player.state() {
+            PlayState::Empty | PlayState::Failed(_) => None,
+            _ => Some(player),
+        }
+    }
 
-    pub fn to_start(&mut self, _: &mut Context<Self>) {}
+    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        if self.playable().is_none() {
+            return;
+        }
+        if let Some(player) = &mut self.player {
+            player.toggle();
+            if player.state() == PlayState::Playing {
+                self.follow.resume();
+            }
+        }
+        cx.notify();
+    }
 
-    pub fn to_end(&mut self, _: &mut Context<Self>) {}
+    fn seek(&mut self, frame: u64, cx: &mut Context<Self>) {
+        if self.playable().is_none() {
+            return;
+        }
+        if let Some(player) = &mut self.player {
+            player.seek(frame);
+            self.follow.resume();
+        }
+        cx.notify();
+    }
+
+    pub fn to_start(&mut self, cx: &mut Context<Self>) {
+        self.seek(0, cx);
+    }
+
+    pub fn to_end(&mut self, cx: &mut Context<Self>) {
+        let end = self.player.as_ref().and_then(Player::duration);
+        if let Some(end) = end {
+            self.seek(end, cx);
+        }
+    }
 
     /// The line under the ruler as plain text.
     pub fn readout_text(&self) -> Option<String> {
@@ -159,7 +335,24 @@ impl WaveformStrip {
         start: impl FnOnce(&str) -> Analyzer,
     ) {
         self.strip.select(path, auto, start);
+        self.sync_player();
         cx.notify();
+    }
+
+    /// The player follows the selection: another file is loaded, stopped at its start.
+    fn sync_player(&mut self) {
+        let path = self.strip.path().map(str::to_owned);
+        if path == self.loaded {
+            return;
+        }
+        if let Some(player) = &mut self.player {
+            match &path {
+                Some(p) => player.load(p.as_str()),
+                None => player.stop(),
+            }
+        }
+        self.loaded = path;
+        self.follow.resume();
     }
 
     fn analyse(&mut self, cx: &mut Context<Self>) {
@@ -168,13 +361,54 @@ impl WaveformStrip {
         cx.notify();
     }
 
-    fn edit(
-        &mut self,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut crossfade_app::waveview::WaveView),
-    ) {
+    /// A move of the user's own: the view stops following the playhead.
+    fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut WaveView)) {
         f(self.strip.view_mut());
+        self.follow.user_moved();
         cx.notify();
+    }
+
+    fn pointer_x(&self, position: Point<Pixels>) -> f32 {
+        let width = self.strip.view().width() as f32;
+        (f32::from(position.x) - self.left.get()).clamp(0., width)
+    }
+
+    fn pointer_down(&mut self, x: f32) {
+        if self.playable().is_some() {
+            self.press = Some(x);
+        }
+    }
+
+    fn pointer_moved(&mut self, x: f32, cx: &mut Context<Self>) {
+        let Some(from) = self.press else {
+            return;
+        };
+        let scrubbing = self.is_scrubbing();
+        if !scrubbing && (x - from).abs() < DRAG_PX {
+            return;
+        }
+        let frame = self.strip.view().frame_at(x);
+        if let Some(player) = &mut self.player {
+            player.scrub_to(frame);
+        }
+        cx.notify();
+    }
+
+    fn pointer_up(&mut self, x: f32, cx: &mut Context<Self>) {
+        if self.press.take().is_none() {
+            return;
+        }
+        if self.is_scrubbing() {
+            self.pointer_moved(x, cx);
+            if let Some(player) = &mut self.player {
+                player.end_scrub();
+            }
+            self.follow.resume();
+            cx.notify();
+        } else {
+            let frame = self.strip.view().frame_at(x);
+            self.seek(frame, cx);
+        }
     }
 
     fn muted_line(&self, id: &'static str, text: String, cx: &App) -> AnyElement {
@@ -194,10 +428,56 @@ impl WaveformStrip {
         cx.theme().foreground.opacity(0.05)
     }
 
+    /// The play button and the time, or the reason there is none.
+    fn transport(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        if let Some(note) = &self.audio_note {
+            return Some(
+                div()
+                    .id("transport-note")
+                    .test_support()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(LABEL_SIZE)
+                    .text_color(muted)
+                    .child(SharedString::from(note.clone()))
+                    .into_any_element(),
+            );
+        }
+        let player = self.playable()?;
+        let playing = player.state() == PlayState::Playing;
+        let (icon, tip) = if playing {
+            (IconName::Pause, "Pause")
+        } else {
+            (IconName::Play, "Play")
+        };
+        let time = self.transport_text().unwrap_or_default();
+        Some(
+            h_flex()
+                .flex_none()
+                .gap_1()
+                .items_center()
+                .child(
+                    icon_button("transport-play", icon, tip, cx)
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_playback(cx))),
+                )
+                .child(
+                    div()
+                        .id("transport-time")
+                        .test_support()
+                        .whitespace_nowrap()
+                        .text_size(LABEL_SIZE)
+                        .text_color(muted)
+                        .child(SharedString::from(time)),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn idle(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, foreground) = (theme.muted_foreground, theme.foreground);
-        div()
+        let analyse = div()
             .id("waveform-idle")
             .flex()
             .items_center()
@@ -216,95 +496,120 @@ impl WaveformStrip {
                     .hover(move |style| style.text_color(foreground))
                     .child("Analyse")
                     .on_click(cx.listener(|this, _, _, cx| this.analyse(cx))),
-            )
+            );
+        v_flex()
+            .gap_1()
+            .child(analyse)
+            .children(self.transport(cx))
             .into_any_element()
     }
 
-    fn drawn(&mut self, snapshot: &Snapshot, focused: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// Keeps the lanes view's data current; recomputes the columns only when what they show
+    /// changed.
+    fn update_lanes(&mut self, snapshot: &Snapshot, view: &WaveView, cx: &mut Context<Self>) {
         let theme = cx.theme();
-        let (wave, line, muted, warning) = (
-            theme.primary.opacity(0.6),
-            theme.muted_foreground.opacity(0.35),
-            theme.muted_foreground,
-            theme.warning,
-        );
-        let (frames, rate, channels) = match &snapshot.stream {
-            Some(stream) => (
-                stream.frames.unwrap_or(snapshot.frames_done),
-                stream.audio.sample_rate(),
-                usize::from(stream.audio.layout().channels()),
-            ),
-            None => (0, 0, 2),
+        let channels = snapshot
+            .stream
+            .as_ref()
+            .map_or(2, |s| usize::from(s.audio.layout().channels()));
+        let key = LanesKey {
+            version: snapshot.version,
+            start: view.start(),
+            fpp: view.frames_per_pixel(),
+            width: view.width(),
+            frames: view.frames(),
+            wave: theme.primary.opacity(0.6),
+            line: theme.muted_foreground.opacity(0.35),
         };
-        self.strip.view_mut().set_source(frames, rate);
-        let view = self.strip.view().clone();
+        if self.lanes.read(cx).key.as_ref() == Some(&key) {
+            return;
+        }
         let lanes: Vec<Lane> = self
             .strip
             .analyzer()
             .map(|a| a.with(|analysis| view.draw_columns(&analysis.pyramid)))
             .unwrap_or_default();
         let planned = LanePlan::for_channels(channels).lanes().max(1);
-        let known = view.frames() > 0;
-        let columns = view.columns();
+        let (known, columns) = (view.frames() > 0, view.columns());
+        self.lanes.update(cx, |l, cx| {
+            *l = Lanes {
+                key: Some(key),
+                lanes,
+                planned,
+                known,
+                columns,
+            };
+            cx.notify();
+        });
+    }
+
+    fn drawn(
+        &mut self,
+        snapshot: &Snapshot,
+        focused: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let (wave, muted, warning, head) = (
+            theme.primary.opacity(0.6),
+            theme.muted_foreground,
+            theme.warning,
+            theme.foreground.opacity(0.85),
+        );
+        let (frames, rate) = match &snapshot.stream {
+            Some(stream) => (
+                stream.frames.unwrap_or(snapshot.frames_done),
+                stream.audio.sample_rate(),
+            ),
+            None => (0, 0),
+        };
+        self.strip.view_mut().set_source(frames, rate);
+        let playing = self
+            .playable()
+            .is_some_and(|p| p.state() == PlayState::Playing);
+        let position = self.playable().map(Player::position);
+        if let Some(at) = position.filter(|_| playing) {
+            self.follow.keep_in_view(self.strip.view_mut(), at);
+        }
+        if playing || self.is_scrubbing() {
+            window.request_animation_frame();
+        }
+        let view = self.strip.view().clone();
+        self.update_lanes(snapshot, &view, cx);
         let left = Rc::clone(&self.left);
         let entity = cx.entity();
-        let background = self.lane_background(cx);
-        let canvas = canvas(
+        // Measures the lanes' place without painting: the pointer maths and the width.
+        let measure = canvas(
             |bounds, _, _| bounds,
-            move |_, bounds, window, cx| {
+            move |_, bounds, _, cx| {
                 left.set(f32::from(bounds.origin.x));
-                let width = f32::from(bounds.size.width);
+                let w = f32::from(bounds.size.width).floor() as u32;
                 entity.update(cx, |this, cx| {
-                    let w = width.floor() as u32;
                     if this.strip.view().width() != w {
                         this.strip.view_mut().set_width(w);
                         cx.notify();
                     }
                 });
-                let lane_count = if lanes.is_empty() {
-                    planned
-                } else {
-                    lanes.len()
-                };
-                let height = f32::from(bounds.size.height);
-                let lane_h = ((height - 2. * LANE_PAD - (lane_count - 1) as f32 * LANE_GAP)
-                    / lane_count as f32)
-                    .max(2.);
-                let (x0, y0) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
-                let line_cols = if known { columns } else { width as usize };
-                for lane in 0..lane_count {
-                    let top = y0 + LANE_PAD + lane as f32 * (lane_h + LANE_GAP);
-                    let mid = top + lane_h / 2.;
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            point(px(x0), px(mid - 0.5)),
-                            size(px(line_cols as f32), px(1.)),
-                        ),
-                        line,
-                    ));
-                    let Some(columns) = lanes.get(lane) else {
-                        continue;
-                    };
-                    for (i, column) in columns.iter().enumerate() {
-                        let Some((lo, hi)) = column else {
-                            continue;
-                        };
-                        let (hi, lo) = (hi.clamp(-1., 1.), lo.clamp(-1., 1.));
-                        let y_top = mid - hi * lane_h / 2.;
-                        let y_bottom = (mid - lo * lane_h / 2.).max(y_top + 1.);
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                point(px(x0 + i as f32), px(y_top)),
-                                size(px(1.), px(y_bottom - y_top)),
-                            ),
-                            wave,
-                        ));
-                    }
-                }
             },
         )
         .absolute()
         .size_full();
+        let playhead = position
+            .map(|at| view.x_of(at))
+            .filter(|x| (0.0..=view.width() as f32).contains(x) && view.frames() > 0)
+            .map(|x| {
+                div()
+                    .id("waveform-playhead")
+                    .test_support()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(x.floor()))
+                    .w(px(1.5))
+                    .bg(head)
+            });
+        let background = self.lane_background(cx);
         let strip = div()
             .id("waveform-strip")
             .test_support()
@@ -320,13 +625,47 @@ impl WaveformStrip {
             } else {
                 background
             })
-            .child(canvas)
+            .when(self.playable().is_some(), |s| s.cursor_pointer())
+            .child(measure)
+            .child(
+                self.lanes
+                    .clone()
+                    .cached(StyleRefinement::default().absolute().size_full()),
+            )
+            .children(playhead)
             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 if event.click_count() == 2 {
                     this.edit(cx, |view| view.fit());
                 }
             }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, _| {
+                    let x = this.pointer_x(event.position);
+                    this.pointer_down(x);
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if event.pressed_button == Some(MouseButton::Left) {
+                    let x = this.pointer_x(event.position);
+                    this.pointer_moved(x, cx);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    let x = this.pointer_x(event.position);
+                    this.pointer_up(x, cx);
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    let x = this.pointer_x(event.position);
+                    this.pointer_up(x, cx);
+                }),
+            )
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 let delta = event.delta.pixel_delta(px(LINE_PIXELS));
                 let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
@@ -378,7 +717,7 @@ impl WaveformStrip {
                     .child(SharedString::from(tick.label))
             }));
 
-        let position = div()
+        let position_bar = div()
             .relative()
             .w_full()
             .h(px(2.))
@@ -409,6 +748,10 @@ impl WaveformStrip {
         let readout_line = h_flex()
             .id("waveform-readout")
             .test_support()
+            .flex_1()
+            .min_w_0()
+            .justify_end()
+            .overflow_hidden()
             .h(LINE_HEIGHT)
             .line_height(LINE_HEIGHT)
             .text_size(LABEL_SIZE)
@@ -418,11 +761,17 @@ impl WaveformStrip {
                     .text_color(if segment.warn { warning } else { muted })
                     .child(SharedString::from(segment.text))
             }));
+        let under = h_flex()
+            .w_full()
+            .gap_3()
+            .items_center()
+            .children(self.transport(cx))
+            .child(readout_line);
         v_flex()
             .gap_1()
             .child(strip)
-            .child(v_flex().child(ruler).child(position))
-            .child(readout_line)
+            .child(v_flex().child(ruler).child(position_bar))
+            .child(under)
             .into_any_element()
     }
 }
@@ -440,6 +789,6 @@ impl Render for WaveformStrip {
             return self.muted_line("waveform-error", readout(&snapshot).text(), cx);
         }
         let focused = self.focus.is_focused(window);
-        self.drawn(&snapshot, focused, cx)
+        self.drawn(&snapshot, focused, window, cx)
     }
 }
