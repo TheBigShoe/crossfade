@@ -24,7 +24,10 @@
 //! - **Concealment.** A lost packet ([`Decoder::decode`] with `None`) conceals the last
 //!   packet's duration with the last frame's mode (CELT if it ended with redundancy), in calls
 //!   of at most 20 ms rounded as the reference rounds them; a frame of 0 or 1 bytes conceals
-//!   its own duration. Before any audio, concealment is silence.
+//!   its own duration. Before any audio, concealment is silence. [`Decoder::decode_fec`]
+//!   decodes a packet's forward error correction (SILK's LBRR data) in place of the lost one
+//!   before it.
+//! - **Gain** ([`Decoder::set_gain`], `OPUS_SET_GAIN`) scales every frame's output.
 //!
 //! Output is always 48 kHz, interleaved `f32`, full scale 1.0 (`opus_decode_float`: no soft
 //! clipping), `channels` channels whatever the packets code: the layers up- or down-mix.
@@ -47,6 +50,8 @@ pub struct Decoder {
     channels: usize,
     celt: CeltDecoder,
     silk: SilkDecoder,
+    /// `OPUS_SET_GAIN`, Q8 dB; kept by [`reset`](Self::reset), as in libopus.
+    gain: i16,
     /// CELT's end band as last set (`CELT_SET_END_BAND`): concealment keeps it.
     celt_end_band: usize,
     // From here on, what OPUS_RESET_STATE clears.
@@ -96,6 +101,7 @@ impl Decoder {
             channels,
             celt: CeltDecoder::new(channels),
             silk: SilkDecoder::new(channels),
+            gain: 0,
             celt_end_band: Bandwidth::Full.celt_end_band(),
             stream_channels: channels,
             bandwidth: Bandwidth::Full,
@@ -125,7 +131,7 @@ impl Decoder {
         self.last_packet_duration
     }
 
-    /// Forgets the stream, as if new (`OPUS_RESET_STATE`).
+    /// Forgets the stream, as if new (`OPUS_RESET_STATE`); the gain is kept.
     pub fn reset(&mut self) {
         self.celt.reset();
         self.silk.reset();
@@ -152,6 +158,57 @@ impl Decoder {
             out.truncate(start);
         }
         result
+    }
+
+    /// Decodes `packet`'s forward error correction (SILK's LBRR frames) in place of the lost
+    /// packet before it, appending the lost packet's duration (the last packet's, as for
+    /// [`decode`](Self::decode) with `None`); decode `packet` itself next. Where it carries
+    /// none (CELT, or a frame longer than the loss) this conceals, as libopus does (decode
+    /// with `decode_fec = 1`). An invalid packet is an error that changes nothing.
+    pub fn decode_fec(&mut self, packet: &[u8], out: &mut Vec<f32>) -> Result<usize> {
+        let parsed = Packet::parse(packet)?;
+        let frames = self.last_packet_duration;
+        let start = out.len();
+        let result = self.fec(&parsed, frames, out);
+        if result.is_err() {
+            out.truncate(start);
+        }
+        result
+    }
+
+    fn fec(&mut self, packet: &Packet<'_>, frames: usize, out: &mut Vec<f32>) -> Result<usize> {
+        let toc = packet.toc();
+        let packet_frame = toc.frame_samples();
+        if frames < packet_frame || toc.mode() == Mode::Celt || self.mode == Some(Mode::Celt) {
+            return self.conceal(frames, out);
+        }
+        // Conceal all but the last frame's worth, which the LBRR data stands in for.
+        let duration = self.last_packet_duration;
+        if frames > packet_frame
+            && let Err(e) = self.conceal(frames - packet_frame, out)
+        {
+            self.last_packet_duration = duration;
+            return Err(e);
+        }
+        self.mode = Some(toc.mode());
+        self.bandwidth = toc.bandwidth();
+        self.frame_size = packet_frame;
+        self.stream_channels = if toc.stereo() { 2 } else { 1 };
+        let at = out.len();
+        out.resize(at + packet_frame * self.channels, 0.0);
+        self.decode_frame(Some(packet.frames()[0]), &mut out[at..], packet_frame, true)?;
+        self.last_packet_duration = frames;
+        Ok(frames)
+    }
+
+    /// Sets the output gain in Q8 dB (`OPUS_SET_GAIN`; the Ogg Opus header's output gain).
+    pub fn set_gain(&mut self, gain: i16) {
+        self.gain = gain;
+    }
+
+    /// The output gain in Q8 dB.
+    pub fn gain(&self) -> i16 {
+        self.gain
     }
 
     /// `opus_decode_native` with no data: `frames` concealed, frame by frame.
@@ -423,6 +480,17 @@ impl Decoder {
             } else {
                 // Too short for a clean transition; the reference fades anyway.
                 smooth_fade(pcm, &pcm_transition, true, ch);
+            }
+        }
+
+        if self.gain != 0 {
+            // The float build's celt_exp2(6.48814081e-4 * gain), the product in float. The
+            // reference applies it per call, so a transition's concealment, already scaled by
+            // its own call, is scaled again here; kept, to stay sample for sample with it.
+            let x: f32 = 6.488_140_8e-4 * f32::from(self.gain);
+            let g = libm::exp(std::f64::consts::LN_2 * f64::from(x)) as f32;
+            for s in pcm.iter_mut() {
+                *s *= g;
             }
         }
 

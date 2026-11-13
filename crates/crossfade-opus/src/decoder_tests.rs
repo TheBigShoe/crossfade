@@ -190,7 +190,8 @@ fn the_gain_scales_every_sample() {
         let mut plain = Decoder::new(2).unwrap();
         let mut gained = Decoder::new(2).unwrap();
         gained.set_gain(gain);
-        let g = libm::exp(std::f64::consts::LN_2 * f64::from(6.488_140_8e-4_f32 * f32::from(gain))) as f32;
+        let g = libm::exp(std::f64::consts::LN_2 * f64::from(6.488_140_8e-4_f32 * f32::from(gain)))
+            as f32;
         for seed in 0..3 {
             let p = packet(31, true, seed, 100);
             let (mut a, mut b) = (vec![], vec![]);
