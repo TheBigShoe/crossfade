@@ -221,6 +221,9 @@ fn conceal_gives_any_whole_number_of_2_5_ms() {
         assert_eq!(d.last_packet_duration(), frames);
     }
     for frames in [0, 100, 5880] {
-        assert!(matches!(d.conceal(frames, &mut out), Err(Error::BadArgument(_))));
+        assert!(matches!(
+            d.conceal(frames, &mut out),
+            Err(Error::BadArgument(_))
+        ));
     }
 }
