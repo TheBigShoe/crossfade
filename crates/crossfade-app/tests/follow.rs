@@ -34,7 +34,8 @@ fn a_playhead_before_the_view_brings_it_back() {
     v.pan_px(4000.0);
     assert_eq!(v.start(), 40_000);
     assert!(follow.keep_in_view(&mut v, 1234));
-    assert_eq!(v.start(), 1234);
+    // At the left edge, within the pixel it falls in.
+    assert!((1224..=1234).contains(&v.start()), "{}", v.start());
 }
 
 #[test]
