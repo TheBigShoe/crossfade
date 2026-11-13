@@ -220,10 +220,9 @@ mod tests {
             let src = FaultySource::new(Cursor::new(bytes)).not_seekable();
             unsupported(open_demuxer(Box::new(src), &Limits::default()))
         };
-        // The MP3 reader is built; its routing is tested in its own module.
-        for (bytes, name) in [(vec![0xFF, 0xF1, 0x50, 0x80, 0, 0], "adts")] {
-            assert_eq!(open(bytes), format!("reading {name} is not built yet"));
-        }
+        // The MP3 and MP4 readers are built; their routing is tested in their own modules.
+        let adts = vec![0xFF, 0xF1, 0x50, 0x80, 0, 0];
+        assert_eq!(open(adts), "reading adts is not built yet");
     }
 
     #[test]
