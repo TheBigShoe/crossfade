@@ -265,7 +265,10 @@ mod tests {
                 let want = symbol_values(sym as i32, dim, signed, modulo);
                 let nonzero = want[..dim].iter().filter(|&&v| v != 0).count();
                 // Sign bits 1, 0, 1, 0: the first and third nonzero values negative.
-                for (fill, flips) in [(u64::MAX, [true; 4]), (0xAAAA << 48, [true, false, true, false])] {
+                for (fill, flips) in [
+                    (u64::MAX, [true; 4]),
+                    (0xAAAA << 48, [true, false, true, false]),
+                ] {
                     let bytes = reader_bytes(len, code, fill);
                     let mut r = BitReader::new(&bytes);
                     let got: Vec<i32> = if dim == 4 {

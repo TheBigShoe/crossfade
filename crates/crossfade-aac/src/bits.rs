@@ -163,7 +163,8 @@ mod tests {
 
     /// The bit at `pos` of `data`, zero past the end.
     fn bit_at(data: &[u8], pos: usize) -> u32 {
-        data.get(pos / 8).map_or(0, |b| u32::from(b >> (7 - pos % 8)) & 1)
+        data.get(pos / 8)
+            .map_or(0, |b| u32::from(b >> (7 - pos % 8)) & 1)
     }
 
     proptest::proptest! {
