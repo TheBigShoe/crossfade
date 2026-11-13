@@ -196,7 +196,7 @@ The purity gate lives in its own crate so its `serde_json` dependency and
 ```sh
 just ci        # fmt-check + clippy -D warnings + cargo test --workspace, the same lint and tests with the aac feature (lint-aac, test-aac), then just conformance
 just corpus    # once per clone: fetch every conformance file, FLAC/Opus/Vorbis/MP3/AAC (~550 MB; needs curl and the network); one codec: crossfade-corpus fetch --only flac/
-just conformance  # tier 3: FLAC, seeking, MP3, AAC (ISO streams) and Vorbis (Xiph files) vs the frozen results (needs the corpus, ~30 s in release)
+just conformance  # tier 3: FLAC, seeking, MP3, AAC (ISO streams), Vorbis (Xiph files) and Opus (RFC 8251 vectors) vs the frozen results (needs the corpus, ~60 s in release)
 just mobile    # engine crates build for aarch64-apple-ios and aarch64-linux-android
 just deny      # licences, advisories, sources (needs the network)
 just coverage  # line floors: 87% workspace, 90% crossfade-core
@@ -257,9 +257,10 @@ Run on every `cargo test`:
 Beyond the plain `cargo test`:
 
 - 3: conformance against reference vectors (`just conformance`, part of `just ci`: the
-  FLAC corpus, seeking on every codec, the MP3 and AAC ISO streams and Xiph's Vorbis files,
-  each against frozen results in `crates/crossfade-format/tests/conformance/`, rewritten
-  only on purpose, with `CROSSFADE_BLESS=1`; ~30 s with the corpus cached)
+  FLAC corpus, seeking on every codec, the MP3 and AAC ISO streams, Xiph's Vorbis files and
+  the RFC 8251 Opus vectors (final range per packet, `opus_compare`), each against frozen
+  results in `crates/crossfade-format/tests/conformance/`, rewritten only on purpose, with
+  `CROSSFADE_BLESS=1`; ~60 s with the corpus cached)
 - 4: UI (`#[gpui_test]` runs on every `cargo test`; screenshots are a review
   aid, not a gate)
 - 5: fuzzing (`cargo-fuzz`)

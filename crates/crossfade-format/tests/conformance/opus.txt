@@ -1,0 +1,15 @@
+# Tier 3: the RFC 8251 Opus test vectors through crossfade_opus::Decoder at 48 kHz stereo.
+# Rewrite with `CROSSFADE_BLESS=1 just conformance` after a deliberate change.
+# vector packets final-range Q-against-.dec Q-against-m.dec
+testvector01 2147 range-ok 99.8 66.3
+testvector02 1185 range-ok 100.0 100.0
+testvector03 998 range-ok 100.0 100.0
+testvector04 1265 range-ok 100.0 100.0
+testvector05 2037 range-ok 99.8 33.4
+testvector06 1876 range-ok 99.8 45.0
+testvector07 4186 range-ok 99.6 -21.9
+testvector08 1247 range-ok 99.6 13.2
+testvector09 1337 range-ok 99.5 40.7
+testvector10 1912 range-ok 99.2 99.2
+testvector11 553 range-ok 99.7 97.0
+testvector12 1332 range-ok 99.8 99.8

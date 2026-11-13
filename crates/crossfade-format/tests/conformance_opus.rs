@@ -1,23 +1,38 @@
 //! Tier 3: the RFC 8251 Opus test vectors (`opus/rfc8251/*` in `corpus.toml`) through
 //! `crossfade_opus::Decoder` at 48 kHz stereo, as `run_vectors.sh` runs `opus_demo -d 48000 2`
-//! and `opus_compare -s`. `#[ignore]`d so a plain `cargo test` stays offline; they fail, never
-//! skip, when a file is missing. Not yet part of `just conformance`: the decoder is built in
-//! stages, and this tier joins the gate when every vector passes.
+//! and `opus_compare -s`. `#[ignore]`d so a plain `cargo test` stays offline; `just
+//! conformance` runs them and they fail, never skip, when a file is missing.
 //!
 //! For every packet the decoder's final range must equal the encoder's stored in the `.bit`
 //! file (the strict test of the entropy decoding: the first mismatch is reported with its
 //! packet index and TOC); then the output must pass `opus_compare` against `.dec` or `m.dec`
 //! (RFC 8251 section 11: either set).
 //!
+//! The SILK-only vectors (02, 03, 04) must equal `.dec` sample for sample.
+//!
+//! Per vector the packet count, "range ok" and Q against each set (one decimal) are held to
+//! the frozen `tests/conformance/opus.txt` (`CROSSFADE_BLESS=1` rewrites it); a run that
+//! selects vectors is not compared with it.
+//!
 //! `OPUS_VECTORS=01,07` runs only those vectors; `OPUS_MODES=celt` (or `silk`, `hybrid`, a
 //! comma-separated list) only the vectors whose packets all use the modes listed (see
 //! `crates/crossfade-opus/tests/VECTORS.md`); `OPUS_PACKETS=1` prints every packet.
 
-use crossfade_opus::testing::bitfile::read_pcm16;
+use crossfade_opus::testing::bitfile::{read_bit_file, read_pcm16};
 use crossfade_opus::testing::compare::compare_pcm16;
 use crossfade_opus::testing::vectors::{decode_vector, modes};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+const FROZEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/conformance/opus.txt");
+
+const FROZEN_HEADER: &str = "\
+# Tier 3: the RFC 8251 Opus test vectors through crossfade_opus::Decoder at 48 kHz stereo.
+# Rewrite with `CROSSFADE_BLESS=1 just conformance` after a deliberate change.
+# vector packets final-range Q-against-.dec Q-against-m.dec
+";
+
+const SAMPLE_EXACT: [&str; 3] = ["02", "03", "04"];
 
 const VECTORS: [&str; 12] = [
     "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12",
@@ -79,8 +94,9 @@ fn each<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
         .collect()
 }
 
-/// `Ok(summary)` when the vector passes, `Err(why)` otherwise.
+/// `Ok(frozen line)` when the vector passes, `Err(why)` otherwise.
 fn run(n: &str, bit: &[u8]) -> Result<String, String> {
+    let packets = read_bit_file(bit)?.len();
     let print = std::env::var_os("OPUS_PACKETS").is_some();
     let pcm = decode_vector(bit, 2, |line| {
         if print {
@@ -91,15 +107,19 @@ fn run(n: &str, bit: &[u8]) -> Result<String, String> {
     let mut passes = false;
     for suffix in [".dec", "m.dec"] {
         let reference = read_pcm16(&corpus(&format!("testvector{n}{suffix}")));
+        // SILK alone is integer arithmetic: the SILK-only vectors are sample-exact.
+        if SAMPLE_EXACT.contains(&n) && suffix == ".dec" && reference != pcm {
+            return Err("a SILK-only vector is not sample-exact".into());
+        }
         let q = compare_pcm16(&reference, &pcm, true, 48000)?;
         passes |= q.passes();
-        figures.push(format!("Q {:.1} against {suffix}", q.q));
+        figures.push(format!("{:.1}", q.q));
     }
-    let figures = figures.join(", ");
+    let line = format!("testvector{n} {packets} range-ok {}", figures.join(" "));
     if passes {
-        Ok(figures)
+        Ok(line)
     } else {
-        Err(format!("opus_compare fails: {figures}"))
+        Err(format!("opus_compare fails: {line}"))
     }
 }
 
@@ -109,13 +129,34 @@ fn opus_vectors_conform() {
     let vectors = selected();
     let results = each(&vectors, |(n, bit)| run(n, bit));
     let mut failures = vec![];
+    let mut text = String::from(FROZEN_HEADER);
     for ((n, _), result) in vectors.iter().zip(results) {
         match result {
-            Ok(summary) => println!("testvector{n}: passes, {summary}"),
+            Ok(line) => {
+                println!("{line}");
+                text.push_str(&line);
+                text.push('\n');
+            }
             Err(why) => {
                 println!("testvector{n}: FAILS: {why}");
+                text.push_str(&format!("testvector{n} error {why}\n"));
                 failures.push(format!("testvector{n}: {why}"));
             }
+        }
+    }
+    if vectors.len() == VECTORS.len() {
+        if std::env::var_os("CROSSFADE_BLESS").is_some() {
+            std::fs::write(FROZEN, &text).expect("write the frozen results");
+        }
+        let frozen = std::fs::read_to_string(FROZEN)
+            .unwrap_or_else(|e| panic!("{FROZEN}: {e}; create it with CROSSFADE_BLESS=1"));
+        for (want, got) in frozen.lines().zip(text.lines()) {
+            if want != got {
+                failures.push(format!("frozen: {want}\n   now: {got}"));
+            }
+        }
+        if frozen.lines().count() != text.lines().count() {
+            failures.push("a different number of results than frozen".into());
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

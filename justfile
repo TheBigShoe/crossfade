@@ -26,9 +26,10 @@ lint-aac:
 test-aac:
     cargo test -p crossfade-aac -p crossfade-codec -p crossfade-format -p crossfade-graph -p crossfade-cli --features {{aac_features}}
 
-# Tier 3: the IETF FLAC corpus through the reader and decoder, against the frozen results in
-# crates/crossfade-format/tests/conformance/flac.txt. Needs `just corpus` once; fails, never
-# skips, without it. Release because the corpus is ~300 MB (about 3 s; debug takes ~40 s).
+# Tier 3: the IETF FLAC corpus, seeking, the MP3 and AAC ISO streams, Xiph's Vorbis files and
+# the RFC 8251 Opus vectors, each against frozen results in
+# crates/crossfade-format/tests/conformance/. Needs `just corpus` once; fails, never skips,
+# without it. Release because the corpus is ~550 MB (about 55 s, Opus's opus_compare most).
 # After a deliberate decoder change: CROSSFADE_BLESS=1 just conformance
 conformance:
     cargo test --release -p crossfade-format --test conformance_flac -- --ignored
@@ -36,6 +37,7 @@ conformance:
     cargo test --release -p crossfade-format --test conformance_mp3 -- --ignored
     cargo test --release -p crossfade-format --features aac --test conformance_aac -- --ignored
     cargo test --release -p crossfade-format --test conformance_vorbis -- --ignored
+    cargo test --release -p crossfade-format --test conformance_opus -- --ignored
 
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:
