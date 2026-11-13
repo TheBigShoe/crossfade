@@ -15,14 +15,14 @@ and a GPUI desktop app (`crossfade-gui`).
 2. **Commits:** `<type>: <what changed>`, types `feat fix refactor docs test
    chore style`. Stage files by name (never `git add .` or `-A`). End every
    message with the `Co-Authored-By:` trailer.
-3. **Pure Rust engine.** The engine crates (core, flac, alac, aac, mp3, vorbis, loudness, resample, format, codec, dsp, graph)
+3. **Pure Rust engine.** The engine crates (core, flac, alac, aac, mp3, vorbis, opus, loudness, resample, format, codec, dsp, graph)
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
    carries `#![forbid(unsafe_code)]`.
 4. **Dependency direction:** core, flac, alac, loudness, resample, mp3 and the codec crates <- codec, dsp
    <- format <- graph <- app <- cli, ui. Standalone crates (`crossfade-flac` first, then
    `crossfade-loudness`, and the codec crates `crossfade-alac`, `crossfade-aac`, `crossfade-mp3`,
-   `crossfade-vorbis` and, to come, `crossfade-opus`, the same way) depend on
+   `crossfade-vorbis` and `crossfade-opus`, the same way) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
    adapters. `crossfade-resample` stands alone the same way (only `libm`). A demuxer needs a codec's frame-header parser to split packets (as
    FFmpeg's libavformat uses libavcodec's parsers), so format depends on the
@@ -51,6 +51,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-aac` | Standalone AAC, only `libm`: the ADTS header (`adts`, with the raw data blocks of a frame) and AudioSpecificConfig / program config element (`asc`) parsers, always built; behind its off-by-default feature `decoder` (AAC is patent-encumbered), the AAC-LC `Decoder` (all window sequences and shapes, M/S, intensity, PNS, TNS, pulses; refuses Main, LTP, SSR, coupling and 960-sample frames by name), its own `Error`. Other projects can use it alone |
 | `crossfade-mp3` | Standalone MPEG audio Layer III, only `libm`: `header::FrameHeader` (MPEG-1, 2, 2.5, layers I-III parsed), `info::InfoFrame` (Xing/Info with LAME's delay and padding, VBRI), the `Decoder` (one whole frame in, interleaved `f32` out, always a frame's worth: silence and an error the caller may ignore for a frame without its reservoir; full accuracy on the ISO conformance streams; bounded output for any input), its own `Error`. Other projects can use it alone |
 | `crossfade-vorbis` | Standalone Vorbis I decoding, only `libm` (the same bits on every platform): `Ident`, `Comments` and `Setup` parsing (every length and index checked, degenerate values refused, allocations charged to a caller's budget first), `Modes` (a packet's block size from its first bits) and `packet_frames`, the `Decoder` (packet in, interleaved `f32` out, `reset`), `speakers` (the channel table), `pack_headers`/`unpack_headers` (Xiph lacing), its own `Error`; a hidden `testing` module (bitstream writer, Ogg files) for tests. Other projects can use it alone |
+| `crossfade-opus` | Standalone Opus (RFC 6716 as RFC 8251 updates it), only `libm`: built are the range decoder (`range`: every primitive, bit-exact `tell`/`tell_frac`, the final range), packet parsing (`packet`: the TOC, codes 0-3 with rules R1-R7, the self-delimited framing, `packet_duration` from the TOC alone), `OpusHead`/`OpusTags` as data (`head`) and the top-level `Decoder` (packet in, 48 kHz interleaved `f32` out, `final_range`) dispatching each frame to the crate-internal `celt` and `silk` layers, whose contracts their module docs fix; not built yet: CELT and SILK decoding, hybrid, mode transitions, packet loss concealment, multistream (`Unsupported`), the Ogg mapping and the codec adapter. A hidden `testing` module (range encoder, packet writer, the vectors' readers, an `opus_compare` port) serves the ignored tier-3 `conformance_opus` (not yet in `just conformance`); `tests/VECTORS.md` maps the vectors. Its own `Error`. Other projects can use it alone |
 | `crossfade-loudness` | Standalone loudness and peak meter, only `libm` (so results are the same bits on every platform): BS.1770-4 integrated, momentary and short-term loudness, EBU Tech 3342 loudness range, sample and true peak, any rate 8 kHz-1,048,575 Hz, a normalising-gain helper, its own `Error`. Other projects can use it alone |
 | `crossfade-resample` | Standalone sample-rate conversion, only `libm`: windowed-sinc polyphase `Resampler` (any rates 1 to 1,048,575 Hz, `Fast`/`Balanced`/`Best`, streaming, time-aligned, the same bits on every platform and for any chunking), its own `Error`. Other projects can use it alone |
 | `crossfade-codec` | The engine's codecs: PCM (little- and big-endian), thin adapters from `crossfade-flac`'s decoder and encoder, `crossfade-alac`'s decoder (`alac`: ALAC order to WAVE order, 20-bit left-justified in `S24`, independent packets decoded in batches on up to four scoped threads), `crossfade-mp3`'s decoder (`mp3`: `F32`, silence without error for frames whose main data precedes the first packet) and, with the off-by-default feature `aac`, `crossfade-aac`'s decoder (`aac`: interleaved `F32`; without the feature AAC is refused by name) to the engine's `Decoder` and `Encoder` traits (FLAC takes 8-32 bit integer containers and a true depth of 4 up to the container's, 1-8 channels, up to 1,048,575 Hz), and from `crossfade-vorbis`'s decoder (`vorbis`: headers from `extradata` in Xiph lacing, `F32` out in `ChannelLayout::vorbis_order`'s order, undecodable packets skipped); `decoder_for` / `encoder_for` |
@@ -120,6 +121,9 @@ README giving the command that made each (5 MB budget for the repository).
 - **Clean room.** Never read, copy or port GPL/LGPL code (FFmpeg, mpg123, libmad, faad2,
   LAME). Use the specifications and BSD/MIT/Apache/public-domain implementations only, and
   keep their notices where code is ported.
+- **`crossfade-opus` alone is BSD-3-Clause** (not MIT OR Apache-2.0): it is a port of the RFC 6716
+  reference decoder and libopus, whose licence it keeps; its `COPYING` carries their notice and
+  the pointer to Opus's royalty-free patent licences.
 - **AAC is patent-encumbered**: its decoder is compiled only with the off-by-default cargo
   feature `aac`; without it an AAC stream is refused with a message that says so.
 

@@ -1648,6 +1648,7 @@ dependencies = [
  "crossfade-corpus",
  "crossfade-flac",
  "crossfade-mp3",
+ "crossfade-opus",
  "crossfade-testkit",
  "crossfade-vorbis",
  "lewton",
@@ -1689,6 +1690,14 @@ name = "crossfade-mp3"
 version = "0.0.0"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "crossfade-opus"
+version = "0.0.0"
+dependencies = [
+ "libm",
+ "proptest",
 ]
 
 [[package]]
