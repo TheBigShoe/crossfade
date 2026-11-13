@@ -72,6 +72,7 @@ mod cwrs;
 mod ec;
 mod laplace;
 mod maths;
+mod quant_bands;
 mod rate;
 mod tables;
 #[cfg(test)]
