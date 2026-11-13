@@ -98,3 +98,18 @@ fn each_count_has_the_flac_default_layout() {
     );
     assert!(ChannelLayout::default_for(0).is_err());
 }
+
+/// Vorbis, Opus and FLAC in Ogg share one channel order for 1 to 8 channels; the layout is
+/// stored in WAVE mask order.
+#[test]
+fn the_vorbis_order_gives_the_standard_layouts_and_nothing_for_other_counts() {
+    let masks = [0x4, 0x3, 0x7, 0x33, 0x37, 0x3F, 0x70F, 0x63F];
+    for (channels, mask) in (1u8..).zip(masks) {
+        let layout = ChannelLayout::vorbis_order(channels).unwrap();
+        assert_eq!(layout.to_mask(), Some(mask), "{channels} channels");
+        assert_eq!(layout.channels(), u16::from(channels));
+    }
+    let nine = ChannelLayout::vorbis_order(9).unwrap();
+    assert_eq!((nine.channels(), nine.to_mask()), (9, None));
+    assert!(ChannelLayout::vorbis_order(0).is_err());
+}
