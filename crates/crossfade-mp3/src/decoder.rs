@@ -6,7 +6,7 @@ use crate::requantize::GAIN_MIN;
 use crate::scalefactors::{self, Scalefactors};
 use crate::sideinfo::{SHORT_BLOCK, SideInfo};
 use crate::stereo::{self, Pan};
-use crate::synth::{self, HISTORY, ROWS};
+use crate::synth::Synth;
 use crate::{Error, FrameHeader, huffman, hybrid, requantize};
 use std::sync::OnceLock;
 
@@ -59,10 +59,9 @@ pub struct Decoder {
     /// This frame's main data: the reservoir's tail, then the frame's own.
     main: Vec<u8>,
     overlap: [[f32; 288]; 2],
-    history: [f32; HISTORY],
+    synth: Synth,
     xr: Box<[[f32; 576]; 2]>,
     scratch: Box<[f32; 576]>,
-    lins: Box<[[f32; 4]; ROWS]>,
     /// MPEG-1 granule 0's scalefactors per channel, which granule 1 may reuse.
     granule0: [Scalefactors; 2],
     /// The channel count of the last frame decoded.
@@ -82,10 +81,9 @@ impl Decoder {
             reservoir: Vec::with_capacity(RESERVOIR + MAX_FRAME_LEN),
             main: Vec::with_capacity(RESERVOIR + MAX_FRAME_LEN),
             overlap: [[0.0; 288]; 2],
-            history: [0.0; HISTORY],
+            synth: Synth::new(),
             xr: Box::new([[0.0; 576]; 2]),
             scratch: Box::new([0.0; 576]),
-            lins: Box::new([[0.0; 4]; ROWS]),
             granule0: [Scalefactors::ZERO; 2],
             channels: 0,
         }
@@ -95,7 +93,7 @@ impl Decoder {
     pub fn reset(&mut self) {
         self.reservoir.clear();
         self.overlap = [[0.0; 288]; 2];
-        self.history = [0.0; HISTORY];
+        self.synth.reset();
         self.granule0 = [Scalefactors::ZERO; 2];
     }
 
@@ -193,7 +191,7 @@ impl Decoder {
             // A switch between mono and stereo starts the filterbank afresh, as the ISO
             // conformance stream l3_10201's references (one per segment) require.
             self.overlap = [[0.0; 288]; 2];
-            self.history = [0.0; HISTORY];
+            self.synth.reset();
         }
         self.channels = h.channels();
         let lsf = h.version.is_lsf();
@@ -257,7 +255,7 @@ impl Decoder {
                 hybrid::invert_odd(xr);
             }
             let out = &mut pcm[gr * 576 * nch..(gr + 1) * 576 * nch];
-            synth::granule(&mut self.history, &mut self.xr, nch, out, &mut self.lins);
+            self.synth.granule(&self.xr, nch, out);
         }
         Ok(())
     }
