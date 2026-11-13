@@ -16,6 +16,5 @@ crossfade-alac.workspace = true
 workspace = true
 
 [dev-dependencies]
-crossfade-vorbis = { workspace = true, features = ["writer"] }
 crossfade-testkit.workspace = true
 proptest.workspace = true

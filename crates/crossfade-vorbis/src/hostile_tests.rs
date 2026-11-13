@@ -2,7 +2,7 @@
 //! than its budget, and never make the decoder give a sample that is not finite and bounded.
 
 use crate::decoder::OUTPUT_LIMIT;
-use crate::writer::{self as w, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue};
+use crate::testing::{self as w, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue};
 use crate::{Comments, Decoder, Ident, Setup};
 use proptest::prelude::*;
 

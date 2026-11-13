@@ -1,6 +1,6 @@
 use super::*;
 use crate::bits::BitReader;
-use crate::writer::{BitWriter, Book, Lookup, float32_pack};
+use crate::testing::{BitWriter, Book, Lookup, float32_pack};
 
 fn parse(book: &Book) -> Result<Codebook> {
     parse_with(book, usize::MAX)

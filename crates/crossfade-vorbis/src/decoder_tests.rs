@@ -4,7 +4,7 @@
 //! worth computing by hand (floor 0, many-post floor 1), from lewton.
 
 use super::*;
-use crate::writer::{
+use crate::testing::{
     self as w, BitWriter, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue, float32_pack,
 };
 use std::f64::consts::PI;

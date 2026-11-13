@@ -14,7 +14,7 @@ crossfade-core = { path = "../crates/crossfade-core" }
 crossfade-codec = { path = "../crates/crossfade-codec" }
 crossfade-format = { path = "../crates/crossfade-format" }
 crossfade-flac = { path = "../crates/crossfade-flac" }
-crossfade-vorbis = { path = "../crates/crossfade-vorbis", features = ["writer"] }
+crossfade-vorbis = { path = "../crates/crossfade-vorbis" }
 crossfade-alac = { path = "../crates/crossfade-alac" }
 crossfade-loudness = { path = "../crates/crossfade-loudness" }
 crossfade-resample = { path = "../crates/crossfade-resample" }

@@ -1,8 +1,8 @@
 //! A Vorbis bitstream writer for tests: a bit packer and builders for the three headers and the
 //! pieces of audio packets, with every field a raw number so that a test can write invalid
-//! streams as easily as valid ones. It chooses nothing for you and is not an encoder.
-//!
-//! Built for this crate's tests and, with the `writer` feature, for its users' tests.
+//! streams as easily as valid ones, and [`ogg_file`] to put a stream in Ogg pages. It chooses
+//! nothing for you and is not an encoder. Hidden from the documentation: for this crate's tests
+//! and its users' (the engine's reader and command-line tests).
 
 /// Packs bits least significant first, as Vorbis reads them.
 #[derive(Debug, Clone, Default)]
@@ -579,4 +579,115 @@ pub fn simple_setup(kind: u16, residue_book: Book, end: u32, partition_size: u32
             },
         ],
     }
+}
+
+/// How [`ogg_file`] lays a stream out in Ogg pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OggLayout {
+    pub serial: u32,
+    /// Audio packets per page, cycled.
+    pub packets_per_page: Vec<usize>,
+    /// The granule position of the first decoded frame: negative for an encoder's priming (the
+    /// first page's granule is that much less than its packets yield), positive for a stream
+    /// cut out of a longer one.
+    pub start: i64,
+    /// Frames the last page's granule leaves off the end (the encoder's padding).
+    pub end_trim: i64,
+}
+
+impl Default for OggLayout {
+    fn default() -> Self {
+        Self {
+            serial: 0x5652_4253,
+            packets_per_page: vec![4],
+            start: 0,
+            end_trim: 0,
+        }
+    }
+}
+
+/// The sample frames each audio packet yields when decoded in order from the start, as the
+/// decoder counts them: none for the first, none for one it cannot decode (which leaves the
+/// overlap alone), the previous block's quarter plus this one's otherwise.
+pub fn yields(ident: &[u8], setup: &[u8], audio: &[Vec<u8>]) -> Vec<i64> {
+    let id = crate::Ident::parse(ident).expect("a valid identification header");
+    let s = crate::Setup::parse(setup, &id, usize::MAX).expect("a valid setup header");
+    let mut prev = None;
+    audio
+        .iter()
+        .map(|p| match s.modes().block_size(p) {
+            Ok(n) => {
+                let y = prev.map_or(0, |pb| crate::packet_frames(pb, n));
+                prev = Some(n);
+                y as i64
+            }
+            Err(_) => 0,
+        })
+        .collect()
+}
+
+/// An Ogg Vorbis file: the identification header alone on the first page, the comment and
+/// setup headers on the second, then the audio packets with granule positions from [`yields`]
+/// and `layout`. Every page carries its CRC.
+pub fn ogg_file(headers: [&[u8]; 3], audio: &[Vec<u8>], layout: &OggLayout) -> Vec<u8> {
+    let ys = yields(headers[0], headers[2], audio);
+    let mut out = Vec::new();
+    let mut sequence = 0u32;
+    let mut page = |packets: &[&[u8]], granule: i64, flags: u8, out: &mut Vec<u8>| {
+        let mut lacing = Vec::new();
+        let mut body = Vec::new();
+        for p in packets {
+            lacing.extend(std::iter::repeat_n(255u8, p.len() / 255));
+            lacing.push((p.len() % 255) as u8);
+            body.extend_from_slice(p);
+        }
+        assert!(lacing.len() <= 255, "too many segments for one page");
+        let start = out.len();
+        out.extend_from_slice(b"OggS\0");
+        out.push(flags);
+        out.extend_from_slice(&granule.to_le_bytes());
+        out.extend_from_slice(&layout.serial.to_le_bytes());
+        out.extend_from_slice(&sequence.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.push(lacing.len() as u8);
+        out.extend_from_slice(&lacing);
+        out.extend_from_slice(&body);
+        let crc = ogg_crc(&out[start..]);
+        out[start + 22..start + 26].copy_from_slice(&crc.to_le_bytes());
+        sequence += 1;
+    };
+    page(&[headers[0]], 0, 0x02, &mut out);
+    let last_flags = if audio.is_empty() { 0x04 } else { 0 };
+    page(&[headers[1], headers[2]], 0, last_flags, &mut out);
+    let mut pos = layout.start;
+    let mut at = 0;
+    let mut k = 0;
+    while at < audio.len() {
+        let n =
+            layout.packets_per_page[k % layout.packets_per_page.len()].clamp(1, audio.len() - at);
+        k += 1;
+        pos += ys[at..at + n].iter().sum::<i64>();
+        let last = at + n == audio.len();
+        let granule = if last { pos - layout.end_trim } else { pos };
+        let refs: Vec<&[u8]> = audio[at..at + n].iter().map(Vec::as_slice).collect();
+        page(&refs, granule, if last { 0x04 } else { 0 }, &mut out);
+        at += n;
+    }
+    out
+}
+
+/// Ogg's CRC-32 (polynomial 0x04C11DB7, no reflection, no final complement).
+pub fn ogg_crc(data: &[u8]) -> u32 {
+    let mut crc = 0u32;
+    for &b in data {
+        crc ^= u32::from(b) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
 }

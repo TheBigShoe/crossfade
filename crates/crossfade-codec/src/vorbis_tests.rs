@@ -1,7 +1,7 @@
 use super::*;
 use crate::decoder_for_threads;
 use crossfade_core::{AudioSpec, Channel, CodecId, Packet, SampleFormat, Samples, TimeBase};
-use crossfade_vorbis::writer::{self as w, Book};
+use crossfade_vorbis::testing::{self as w, Book};
 
 /// A stream of `channels` channels whose channel c has the flat floor 100 + 20 c and a
 /// residue of ones, so every channel is a different, known signal.

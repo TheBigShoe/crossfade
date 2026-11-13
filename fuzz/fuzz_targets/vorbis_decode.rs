@@ -8,7 +8,7 @@
 
 use arbitrary::{Arbitrary, Result, Unstructured};
 use crossfade_fuzz::limits;
-use crossfade_vorbis::writer::{
+use crossfade_vorbis::testing::{
     self as w, Book, Floor0, Floor1, Floor1Class, Lookup, Mapping, Mode, Residue,
 };
 use crossfade_vorbis::{Comments, Decoder, Ident, Setup};

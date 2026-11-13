@@ -1,5 +1,5 @@
 use super::*;
-use crate::writer::{
+use crate::testing::{
     self as w, BitWriter, Book, Floor0, Floor1, Floor1Class, Mapping, Mode, Residue,
 };
 

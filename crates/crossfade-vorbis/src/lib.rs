@@ -37,8 +37,8 @@ mod hostile_tests;
 mod mdct;
 mod residue;
 mod setup;
-#[cfg(any(test, feature = "writer"))]
-pub mod writer;
+#[doc(hidden)]
+pub mod testing;
 mod xiph;
 
 pub use channels::{Speaker, speakers};
