@@ -1,6 +1,8 @@
 //! Hostile SILK frames through the public `Decoder`: any bytes after a SILK TOC (configs 0-11,
 //! mono and stereo, codes 0-3), in any order, decode or fail cleanly: no panic (debug builds
-//! trap on overflow), output of the packet's length, bounded, and finite.
+//! trap on overflow), output of the packet's length, and finite. Not bounded by full scale: a
+//! SILK frame with bytes to spare carries a redundant CELT frame (RFC 6716 4.5.1), and CELT
+//! decodes noise to any band energy.
 
 use crossfade_opus::{Decoder, Packet};
 use proptest::prelude::*;
@@ -30,7 +32,7 @@ fn check(d: &mut Decoder, data: &[u8]) {
         let p = Packet::parse(data).unwrap();
         assert_eq!(n, p.duration());
         assert_eq!(out.len(), n * d.channels());
-        assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        assert!(out.iter().all(|s| s.is_finite()));
     } else {
         assert!(out.is_empty());
     }

@@ -216,6 +216,12 @@ impl CeltDecoder {
         self.background_log_e = [0.0; 2 * NB_EBANDS];
     }
 
+    /// `OPUS_GET_FINAL_RANGE`: the range after the last frame decoded, or the noise seed after
+    /// a concealed one (the reference keeps both in `st->rng`).
+    pub(crate) fn final_range(&self) -> u32 {
+        self.rng
+    }
+
     /// Decodes (`Some`) or conceals (`None`) one frame into `out` (`frame.frame_size *
     /// channels` interleaved samples), per the module's contract (`celt_decode_with_ec`).
     pub(crate) fn decode(

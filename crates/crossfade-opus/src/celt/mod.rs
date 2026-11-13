@@ -87,6 +87,8 @@ mod test_util;
 mod vq;
 
 pub(crate) use decoder::CeltDecoder;
+/// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
+pub(crate) use tables::{OVERLAP, WINDOW};
 
 /// What the top level tells CELT about one frame (the `celt_decoder_ctl`s `opus_decode_frame`
 /// issues before `celt_decode_with_ec`, and its arguments).

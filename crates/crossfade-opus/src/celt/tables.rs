@@ -12,7 +12,7 @@
 /// Bands in the mode (`nbEBands`).
 pub(super) const NB_EBANDS: usize = 21;
 /// Samples of the MDCT overlap (`overlap`).
-pub(super) const OVERLAP: usize = 120;
+pub(crate) const OVERLAP: usize = 120;
 /// The shortest MDCT's frame size (`shortMdctSize`).
 pub(super) const SHORT_MDCT_SIZE: usize = 120;
 /// The longest frame is `SHORT_MDCT_SIZE << MAX_LM` (`maxLM`).
@@ -165,7 +165,7 @@ pub(super) const FFT_FACTORS: [&[(usize, usize)]; 4] = [
 /// Pre-emphasis coefficient (`preemph[0]`).
 pub(super) const PREEMPH: f32 = 0.85000610;
 
-pub(super) const WINDOW: [f32; 120] = [
+pub(crate) const WINDOW: [f32; 120] = [
     6.7286966e-05,
     0.00060551348,
     0.0016815970,
