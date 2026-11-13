@@ -34,10 +34,15 @@ macro_rules! lanewise {
     ($tr:ident, $f:ident, $op:tt) => {
         impl $tr for F4 {
             type Output = F4;
+            // A loop over the lanes vectorises where a written-out array did not.
             #[inline(always)]
+            #[allow(clippy::assign_op_pattern)]
             fn $f(self, o: F4) -> F4 {
-                let (a, b) = (self.0, o.0);
-                F4([a[0] $op b[0], a[1] $op b[1], a[2] $op b[2], a[3] $op b[3]])
+                let mut r = self.0;
+                for (x, y) in r.iter_mut().zip(o.0) {
+                    *x = *x $op y;
+                }
+                F4(r)
             }
         }
     };

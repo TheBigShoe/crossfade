@@ -145,7 +145,7 @@ fn out_sample(x: f32) -> f32 {
 /// The two samples written to `pcm[0]` and `pcm[16 * nch]`, from `lane` (and `lane + 2`) of
 /// every 16th row from `row`.
 #[inline(always)]
-fn synth_pair(z: &[[f32; 4]], row: usize, lane: usize) -> (f32, f32) {
+fn synth_pair(z: &[[f32; 4]; SYNTH_ROWS], row: usize, lane: usize) -> (f32, f32) {
     let x = |m: usize| z[row + 16 * m][lane];
     let mut a;
     a = (x(14) - x(0)) * 29.0;
@@ -172,11 +172,16 @@ fn synth_pair(z: &[[f32; 4]], row: usize, lane: usize) -> (f32, f32) {
 /// Two time slots (64 samples per channel) from the DCT outputs `xl` and `xr`.
 fn synth<const NCH: usize>(xl: &[f32], xr: &[f32], dst: &mut [f32], lins: &mut [[f32; 4]]) {
     let dst = &mut dst[..64 * NCH];
-    let lins = &mut lins[..SYNTH_ROWS];
+    let Some(lins) = lins.first_chunk_mut::<SYNTH_ROWS>() else {
+        return;
+    };
+    let (Some(xl), Some(xr)) = (xl.first_chunk::<560>(), xr.first_chunk::<560>()) else {
+        return;
+    };
     let r = NCH - 1;
     lins[ZLIN + 15] = [xl[18 * 16], xr[18 * 16], xl[0], xr[0]];
     lins[ZLIN + 31] = [xl[1 + 18 * 16], xr[1 + 18 * 16], xl[1], xr[1]];
-    let mut pair = |at: usize, row: usize, lane: usize, lins: &[[f32; 4]]| {
+    let mut pair = |at: usize, row: usize, lane: usize, lins: &[[f32; 4]; SYNTH_ROWS]| {
         let (a, b) = synth_pair(lins, row, lane);
         dst[at] = out_sample(a);
         dst[at + 16 * NCH] = out_sample(b);
