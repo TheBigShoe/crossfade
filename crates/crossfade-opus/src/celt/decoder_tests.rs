@@ -204,3 +204,83 @@ fn concealment_from_any_state_never_panics() {
     d.reset();
     assert!(conceal(&mut d, &frame(960, 2)).iter().all(|&v| v == 0.0));
 }
+
+#[test]
+fn hybrid_frames_code_only_the_bands_above_8_khz() {
+    // Start band 17: CELT reads on from where SILK stopped (here, symbols standing for SILK
+    // are read first), never reads a post-filter, and its output has no energy below 8 kHz
+    // but what the window leaks. Its energies below band 17 are left at the reference's 0.
+    for cc in [1, 2] {
+        let f = CeltFrame {
+            start_band: 17,
+            ..frame(960, cc)
+        };
+        let mut d = CeltDecoder::new(cc);
+        let mut low = 0.0f64;
+        let mut high = 0.0f64;
+        for k in 0..6 {
+            let data = noise_frame(500 + k, 160);
+            let mut dec = RangeDecoder::new(&data);
+            for _ in 0..20 {
+                dec.dec_uint(200);
+            }
+            let mut out = vec![0.0; 960 * cc];
+            d.decode(Some(&mut dec), &f, &mut out).unwrap();
+            assert_eq!(d.postfilter_gain, 0.0);
+            assert!(d.old_band_e[..17].iter().all(|&e| e == 0.0));
+            if k < 2 {
+                continue;
+            }
+            // Energy per DFT bin of channel 0 (Hann-windowed) below 7 kHz and above 9 kHz.
+            let x: Vec<f64> = out
+                .iter()
+                .step_by(cc)
+                .enumerate()
+                .map(|(n, &v)| {
+                    let w = 0.5 - 0.5 * libm::cos(2.0 * std::f64::consts::PI * n as f64 / 960.0);
+                    f64::from(v) * w
+                })
+                .collect();
+            for bin in (4..480).step_by(4) {
+                let (mut re, mut im) = (0.0, 0.0);
+                for (n, &v) in x.iter().enumerate() {
+                    let ph = 2.0 * std::f64::consts::PI * (bin * n) as f64 / 960.0;
+                    re += v * libm::cos(ph);
+                    im += v * libm::sin(ph);
+                }
+                let hz = bin as f64 * 50.0;
+                if hz < 7000.0 {
+                    low += re * re + im * im;
+                } else if hz > 9000.0 {
+                    high += re * re + im * im;
+                }
+            }
+        }
+        assert!(high > 0.0 && low < 1e-3 * high, "cc {cc}: low {low} high {high}");
+    }
+}
+
+#[test]
+fn accumulate_adds_to_what_is_there() {
+    let data = noise_frame(9, 100);
+    for cc in [1, 2] {
+        let f = frame(480, 2);
+        let mut plain = CeltDecoder::new(cc);
+        let mut acc = CeltDecoder::new(cc);
+        let (_, want, _) = decode_bytes(&mut plain, &data, &f);
+        let base: Vec<f32> = (0..480 * cc).map(|i| (i as f32 * 0.01).sin() * 0.25).collect();
+        let mut out = base.clone();
+        let mut dec = RangeDecoder::new(&data);
+        acc.decode(Some(&mut dec), &CeltFrame { accumulate: true, ..f }, &mut out)
+            .unwrap();
+        for ((&o, &b), &w) in out.iter().zip(&base).zip(&want) {
+            assert_eq!(o, b + w);
+        }
+        // And for a concealed frame.
+        let mut out = base.clone();
+        plain.decode(None, &f, &mut vec![0.0; 480 * cc]).unwrap();
+        acc.decode(None, &CeltFrame { accumulate: true, ..f }, &mut out)
+            .unwrap();
+        assert!(out.iter().zip(&base).any(|(o, b)| o != b));
+    }
+}

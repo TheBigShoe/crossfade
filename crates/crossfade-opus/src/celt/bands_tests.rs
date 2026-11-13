@@ -115,3 +115,45 @@ fn bands_without_bits_fold_or_fill_with_unit_norm() {
 fn dec_rng(ec: &Ec<'_, '_>) -> u32 {
     ec.rng()
 }
+
+#[test]
+fn hybrid_folding_repeats_the_first_band_into_the_second() {
+    // RFC 8251 section 9: with start band 17 and no bits, band 17 is noise and band 18
+    // (12 bins per block, wider than band 17's 8) folds from band 17, its last third repeating
+    // the second half of band 17, instead of falling back to the LCG.
+    for lm in 0..4 {
+        let m = 1 << lm;
+        let frame = [0u8; 4];
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        ec.pretend_read_to(32);
+        let pulses = [0; NB_EBANDS];
+        let tf_res = [0; NB_EBANDS];
+        let a = AllBands {
+            start: 17,
+            end: 21,
+            pulses: &pulses,
+            short_blocks: false,
+            spread: 2,
+            dual_stereo: false,
+            intensity: 0,
+            tf_res: &tf_res,
+            total_bits: 32 * 8,
+            balance: 0,
+            lm,
+            coded_bands: 21,
+        };
+        let mut x = vec![0.0f32; 120 * m];
+        let mut masks = [0u8; 2 * NB_EBANDS];
+        let mut seed = 777;
+        quant_all_bands(&a, &mut x, None, &mut masks, &mut ec, &mut seed);
+        let b17 = &x[40 * m..48 * m];
+        let b18 = &x[48 * m..60 * m];
+        // The fold source: band 17, then band 17's second half again.
+        let source: Vec<f32> = b17.iter().chain(&b17[4 * m..]).copied().collect();
+        let dot: f32 = source.iter().zip(b18).map(|(a, b)| a * b).sum();
+        let ns = source.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let nb = b18.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!(dot / (ns * nb) > 0.99, "lm {lm}: correlation {}", dot / (ns * nb));
+    }
+}
