@@ -219,8 +219,11 @@ never needs the corpus: the conformance tests are `#[ignore]`d.
 
 Speed claims are made whole process against whole process:
 `scripts/compare-with-flac.py` times `crossfade convert` against the reference
-`flac` and prints the tables in `docs/performance.md` (update them when the
-numbers move). In-process timings alone once hid 20 ms of pipeline overhead.
+`flac`, and `scripts/compare-decoders.py` times MP3, AAC and ALAC decoding
+against `mpg123` and `afconvert`. `docs/performance.md` is the short report
+(results on one page, the reference tools and how to get them, how to repeat);
+`docs/performance-details.md` holds the full tables and the history. Update
+both when the numbers move. In-process timings alone once hid 20 ms of pipeline overhead.
 Check a hot-loop change under `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` too:
 auto-vectorisation must not depend on how the crate is split.
 
