@@ -140,7 +140,7 @@ just ci       # formatting, lints, tests, and the conformance tier
 Plain `cargo test --workspace` needs no network, no audio device, no display
 and no other tool. The conformance tier decodes the
 [IETF FLAC decoder test files](https://github.com/ietf-wg-cellar/flac-test-files)
-and the Xiph Vorbis, MP3 and AAC (ISO/IEC 14496-26) test vectors, and compares
+and the Xiph Vorbis, MP3 and AAC (ISO/IEC 14496-26 and 13818-4) test vectors, and compares
 the results with a committed record. The corpus also holds the official Opus
 (RFC 8251) vectors for the decoder to come; none is committed, `corpus.toml` only lists
 where each one lives. `just corpus` takes them all; to fetch one codec, run

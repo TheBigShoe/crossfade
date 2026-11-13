@@ -208,6 +208,174 @@ Painting itself (GPUI drawing at most one shape per column) was judged from
 offscreen renders, not timed, and has not been tried on a trackpad with an
 hour-long file.
 
+## MP3 decoding
+
+Our own Layer III decoder (`crossfade-mp3`) against `mpg123` 1.33.7 and
+Apple's `afconvert`, on the same machine. Three 300 s, 44.1 kHz files made
+with LAME 4.0: CBR 192 kbit/s stereo, `-V2` stereo (VBR, 172 kbit/s on
+average) and 64 kbit/s mono (`-m m -b 64`).
+
+### Whole process
+
+Wall time from start to exit, best of 9 with the commands interleaved, MP3
+in and 16-bit WAV out (`crossfade` dithers, as it does by default for any
+float to integer conversion), with the instructions and cycles that
+`/usr/bin/time -l` counts for that run:
+
+```sh
+crossfade convert in.mp3 -o out.wav --force
+mpg123 -q -w out.wav in.mp3
+afconvert -f WAVE -d LEI16 in.mp3 out.wav
+mpg123 -q -t in.mp3            # decode only, nothing written
+```
+
+| File | crossfade | `mpg123 -w` | `afconvert` | `mpg123 -t` | crossfade, `--sample-format f32 --dither none` |
+|---|---|---|---|---|---|
+| CBR 192 | **230.8 ms** (3112 Mins, 713 Mcyc) | 265.2 ms (2294 Mins, 794 Mcyc) | 422.7 ms | 219.6 ms (663 Mcyc) | 178.2 ms (578 Mcyc) |
+| V2 | **220.8 ms** (3014 Mins, 677 Mcyc) | 253.0 ms (2149 Mins, 758 Mcyc) | 402.5 ms | 211.1 ms (624 Mcyc) | 168.1 ms (548 Mcyc) |
+| Mono 64 | **108.2 ms** (1462 Mins, 318 Mcyc) | 139.3 ms (1206 Mins, 402 Mcyc) | 207.6 ms | 117.3 ms (338 Mcyc) | 84.0 ms (249 Mcyc) |
+
+`crossfade` is 13 to 22% faster than `mpg123 -w` and about twice as fast as
+`afconvert`. The last column writes the decoder's floats as they are: the
+difference to the first (about 50 ms) is the dithered conversion to 16-bit,
+which belongs to the engine, not the decoder. Before this work the CBR 192
+file took 297 ms against `mpg123 -w`'s 266 ms.
+
+### In process
+
+The decoder alone, one thread, frames already in memory: best of 9 decodes
+of the whole file (`crossfade-mp3`'s example `bench`), against `mpg123 -t`'s
+whole process above (which decodes and writes nothing):
+
+| File | crossfade-mp3 | Times real time | `mpg123 -t` (whole process) | Times real time |
+|---|---|---|---|---|
+| CBR 192 | 159.3 ms (2086 Mins, 512 Mcyc) | 1884 | 219.6 ms | 1366 |
+| V2 | 149.9 ms (1987 Mins, 483 Mcyc) | 2002 | 211.1 ms | 1421 |
+| Mono 64 | 66.0 ms (924 Mins, 213 Mcyc) | 4547 | 117.3 ms | 2558 |
+
+Before: 1280 (CBR 192) and 1377 (V2) times real time.
+
+### How it got here
+
+Each step is its own commit with its numbers; in process, one thread, cycles
+per decode of the CBR 192 / V2 / mono 64 files:
+
+| Step | CBR 192 | V2 | Mono 64 | Output |
+|---|---|---|---|---|
+| Before | 741 Mcyc (230 ms) | 690 Mcyc (219 ms) | 367 Mcyc (114 ms) | |
+| `F4::splat` written out: `[x; 4]` had become calls to `memset_pattern16` inside the kernels (about 10% of the time) | 659 | 608 | 333 | same bits |
+| Synthesis windowing in matrix form: contiguous 4-wide sums over 16 slots, the DCT writing each slot's rows directly | 592 | 549 | 242 | last-bit changes, below |
+| Alias butterflies, IMDCT and inversion skipped for subbands that are all zero (and whose overlap is) | 584 | 531 | 229 | same bits |
+| Huffman: sign bits without a branch, a 10-bit first lookup per code tree | 509 | 473 | 211 | same bits |
+
+The rows were measured one step at a time on a machine with other work
+running, so consecutive figures can differ by a few percent from run to run.
+The synthesis rewrite sums in another order: the largest change in any sample
+is 1.2e-7 of full scale, and all 45 ISO/IEC 11172-4 conformance pairs keep
+full accuracy, their RMS difference from the references 0.7% higher on
+average (3.2% at most), two orders of magnitude inside the limit. The output
+is the same bits with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` (which is also
+about 2% faster).
+
+```sh
+cargo run --release -p crossfade-mp3 --example bench -- in.mp3 9   # best of 9, digest
+```
+
+### What is left
+
+A time profile (Instruments, CBR 192 / mono 64) of the decoder as it stands:
+Huffman decoding 46% / 39%, the synthesis filterbank (DCT and windowing) 27% /
+34%, the IMDCT 16% / 15%, requantisation, alias reduction, inversion and the
+rest about 10%. The Huffman loop is now limited by its chain of dependent
+loads (bits, lookup, length, next position); a bit cache refilled only when
+short (instead of every pair) and a reader that refills ahead were both tried
+and were no faster. Left to try: decoding a pair and its sign bits from one
+lookup, an IMDCT without strided gathers, and fused multiply-add, which
+determinism rules out (the same bits on every platform). In the whole process
+the dithered conversion to 16-bit costs about as much as the IMDCT. The
+output was not checked on x86_64: the Rosetta run of the bench hung at launch
+on this machine and was killed.
+
+## AAC decoding
+
+AAC-LC to 16-bit WAV against macOS's own decoder, whole process against whole
+process on the same Apple M1 Max:
+
+```sh
+crossfade convert in.aac -o out.wav --force          # default threads, and --threads 1
+afconvert -f WAVE -d LEI16 in.aac out.wav
+```
+
+Wall time is the best of 9 runs with the three commands interleaved;
+instructions retired and cycles are the smallest of the same runs from
+`/usr/bin/time -l` (they move far less than wall time on this machine, and
+count every thread). Crossfade at the tip of `m5/aac-speed`, the default
+release profile, `--features aac`; "main before" is the same command built
+from `main` before this work. The inputs are one 4 min 22 s signal (chords,
+noise and clicks, 44.1 kHz stereo) encoded by `afconvert -f adts -d aac` at
+256 and 96 kbit/s and by `afconvert -f m4af -d aac -b 192000`. Crossfade
+dithers its 16-bit output (TPDF), so the quantiser is part of its time; its
+AAC decode is bit for bit what it was before.
+
+| Input | Command | Wall (ms) | Instructions | Cycles |
+|---|---|---|---|---|
+| 256 kbit/s ADTS | crossfade | 197 | 2.39e9 | 0.58e9 |
+| | crossfade `--threads 1` | 182 | 2.38e9 | 0.57e9 |
+| | afconvert | 223 | 1.59e9 | 0.61e9 |
+| | main before | 425 | 4.60e9 | 1.31e9 |
+| 96 kbit/s ADTS | crossfade | 147 | 1.91e9 | 0.45e9 |
+| | crossfade `--threads 1` | 148 | 1.91e9 | 0.44e9 |
+| | afconvert | 147 | 1.20e9 | 0.40e9 |
+| | main before | 289 | 3.80e9 | 0.90e9 |
+| 192 kbit/s M4A | crossfade | 192 | 2.24e9 | 0.55e9 |
+| | crossfade `--threads 1` | 186 | 2.23e9 | 0.54e9 |
+| | afconvert | 189 | 1.46e9 | 0.51e9 |
+| | main before | 360 | 4.24e9 | 1.12e9 |
+
+The thread count does not matter: AAC decodes on the pipeline thread, and a
+second thread writes the file either way.
+
+What made the difference, measured with the in-process benchmark
+(`cargo run --release -p crossfade-aac --features decoder --example bench -- in.aac`,
+which prints a hash of the output so a change that alters a bit shows),
+cycles for the 256 / 96 kbit/s files: 1.10 / 0.69 e9 on `main`, then
+
+- a bit reader holding a 64-bit word (on its own no faster, but it lets one
+  peek cover a whole codeword and its sign bits);
+- Huffman entries that carry a codeword's coefficients, which of them take a
+  sign bit and the total length, so a codeword is one lookup; the sign applied
+  by flipping the sign bit rather than by a branch on a random sign (the
+  largest single gain), and the band loop working on a register copy of the
+  reader: 0.69 / 0.56 (measured with the old, serial hash);
+- the FFT's butterfly stages written so they vectorise, the pre-twiddle in
+  natural order with the bit reversal folded into the FFT's first pass:
+  0.49 / 0.34;
+- windowing and overlap-add in one pass into a planar buffer, then one
+  interleaving pass; intensity-stereo gains from a table: 0.41 / 0.27;
+- the engine side: the adapter decodes straight into the frame it hands out
+  (and reuses frames, which it meant to and did not), and the TPDF quantiser's
+  arithmetic vectorises (converting through `i64`, clamping as an integer,
+  counting clips in integer lanes; the generator's draws run a block ahead,
+  the same draws in the same order).
+
+Every step kept the output bit for bit (the hashes, the frozen digests and the
+ISO conformance tier), except one deliberate change: noise substitution is now
+seeded from each block's bytes, so a seek gives the same noise as a straight
+run.
+
+What is left, from a time profile of the whole process on a 25-minute
+96 kbit/s file (share of samples, both threads): spectral parsing and
+dequantisation (`Ics::read`) 24%, the IMDCT 22%, the quantiser 18%, the
+kernel writing the file on the I/O thread 13%, window and overlap-add 3%,
+`f32` to `f64` conversion before the quantiser 3%, the rest small. At
+256 kbit/s parsing grows to 43%. The quantiser is now mostly SplitMix64's
+two 64-bit multiplies per sample, which have no vector form without `unsafe`;
+the parse is bound by the chain from one codeword's length to the next lookup.
+What could still be had: merging two FFT stages per pass (tried; written
+safely it did not vectorise and lost), folding the post-twiddle into the
+window-and-add pass, and quantising straight from `f32` without the `f64`
+working buffer when a chain only quantises.
+
 ## Repeating it
 
 ```sh

@@ -1,5 +1,6 @@
-//! Tier 3: the ISO/IEC 14496-26 AAC streams of the corpus (`aac/iso/`) through the readers
-//! (MP4, ADTS) and the AAC decoder, against the ISO reference `.wav` decodes. Built only with
+//! Tier 3: the ISO/IEC 14496-26 AAC streams of the corpus (`aac/iso/`), then the ISO/IEC 13818-4
+//! MPEG-2 AAC ADTS streams (`aac/iso-mpeg2/`), through the readers (MP4, ADTS) and the AAC
+//! decoder, against the ISO reference `.wav` decodes. Built only with
 //! the `aac` feature (`cargo test -p crossfade-format --features aac`); `#[ignore]`d like the
 //! other conformance tests, so `just conformance` runs it and a missing file fails it.
 //!
@@ -160,10 +161,14 @@ fn result(id: &str, path: &Path, references: &[(String, std::path::PathBuf)]) ->
         .map(|b| format!("{b:02x}"))
         .collect();
     let frames = ours.len() / channels;
-    let reference_id = format!(
-        "aac/iso/{}.wav",
-        stem.split('_').take(2).collect::<Vec<_>>().join("_")
-    );
+    // MPEG-4's references drop a stream's variant suffix; MPEG-2's are named as the stream.
+    let reference_id = match id.strip_prefix("aac/iso-mpeg2/") {
+        Some(_) => format!("aac/iso-mpeg2/{stem}.wav"),
+        None => format!(
+            "aac/iso/{}.wav",
+            stem.split('_').take(2).collect::<Vec<_>>().join("_")
+        ),
+    };
     let Some((_, ref_path)) = references.iter().find(|(r, _)| *r == reference_id) else {
         return (
             format!(
@@ -217,7 +222,8 @@ fn result(id: &str, path: &Path, references: &[(String, std::path::PathBuf)]) ->
 #[test]
 #[ignore = "needs the corpus: `just corpus`, then `just conformance`"]
 fn iso_aac_streams_meet_full_accuracy_and_match_the_frozen_results() {
-    let all = require_all("aac/iso/");
+    let mut all = require_all("aac/iso/");
+    all.extend(require_all("aac/iso-mpeg2/"));
     let references: Vec<_> = all
         .iter()
         .filter(|(id, _)| id.ends_with(".wav"))

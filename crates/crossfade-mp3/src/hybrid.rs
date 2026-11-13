@@ -171,30 +171,34 @@ fn imdct_short(xr: &mut [f32], overlap: &mut [f32], subbands: usize) {
     }
 }
 
-/// The IMDCT of a granule's 32 subbands: the first `long_subbands` with the normal window,
-/// the rest as `block_type` says.
+/// The IMDCT of a granule's first `subbands` subbands (the rest, and their overlap, are zero):
+/// the first `long_subbands` with the normal window, the rest as `block_type` says.
 pub(crate) fn imdct(
     xr: &mut [f32; 576],
     overlap: &mut [f32; 288],
     block_type: u8,
     long_subbands: usize,
+    subbands: usize,
 ) {
-    let (long_x, rest_x) = xr.split_at_mut(18 * long_subbands);
-    let (long_o, rest_o) = overlap.split_at_mut(9 * long_subbands);
-    if long_subbands > 0 {
-        imdct36(long_x, long_o, &MDCT_WINDOW[0], long_subbands);
+    let subbands = subbands.min(32);
+    let long = long_subbands.min(subbands);
+    let (long_x, rest_x) = xr.split_at_mut(18 * long);
+    let (long_o, rest_o) = overlap.split_at_mut(9 * long);
+    if long > 0 {
+        imdct36(long_x, long_o, &MDCT_WINDOW[0], long);
     }
     if block_type == SHORT_BLOCK {
-        imdct_short(rest_x, rest_o, 32 - long_subbands);
+        imdct_short(rest_x, rest_o, subbands - long);
     } else {
         let window = &MDCT_WINDOW[usize::from(block_type == STOP_BLOCK)];
-        imdct36(rest_x, rest_o, window, 32 - long_subbands);
+        imdct36(rest_x, rest_o, window, subbands - long);
     }
 }
 
-/// Frequency inversion: every odd sample of every odd subband changes sign.
-pub(crate) fn invert_odd(xr: &mut [f32; 576]) {
-    for band in xr.as_chunks_mut::<36>().0 {
+/// Frequency inversion: every odd sample of every odd subband changes sign (of the first
+/// `subbands`).
+pub(crate) fn invert_odd(xr: &mut [f32; 576], subbands: usize) {
+    for band in xr.as_chunks_mut::<36>().0.iter_mut().take(subbands / 2) {
         for x in band[18..].iter_mut().skip(1).step_by(2) {
             *x = -*x;
         }
@@ -231,10 +235,10 @@ mod tests {
             let mut buf = [0f32; 576];
             buf[..18].copy_from_slice(&x);
             let mut overlap = [0f32; 288];
-            imdct(&mut buf, &mut overlap, 0, 0);
+            imdct(&mut buf, &mut overlap, 0, 0, 32);
             let first: Vec<f64> = buf[..18].iter().map(|&v| f64::from(v)).collect();
             let mut next = [0f32; 576];
-            imdct(&mut next, &mut overlap, 0, 0);
+            imdct(&mut next, &mut overlap, 0, 0, 32);
             let second: Vec<f64> = next[..18].iter().map(|&v| f64::from(v)).collect();
             for i in 0..18 {
                 assert!(

@@ -4,7 +4,8 @@
 //! payload in a FIL is noticed, see [`Decoder::sbr_present`], and the stream plays as its AAC
 //! core), PCE (skipped in a block; a configuration's own PCE maps the elements), END; all four
 //! window sequences and both window shapes; Huffman books 1-11 with escapes; pulse data;
-//! intensity stereo; noise substitution (a fixed-seed generator, so output is reproducible);
+//! intensity stereo; noise substitution (seeded from each block's bytes, so the noise is a
+//! function of the packet alone, the same after a seek);
 //! TNS for long and short windows. Refused by name: coupling channel elements, Main-profile
 //! prediction, LTP, SSR gain control, 960-sample frames, other object types.
 //!
@@ -90,7 +91,8 @@ pub struct Decoder {
     ms: MsMask,
     noise: Noise,
     scratch: Scratch,
-    pcm: Vec<f32>,
+    /// The frame's output, one channel after another, before interleaving.
+    planar: Vec<f32>,
 }
 
 impl Decoder {
@@ -160,7 +162,7 @@ impl Decoder {
             },
             noise: Noise::new(),
             scratch: Scratch::new(),
-            pcm: vec![0.0; FRAME_LEN],
+            planar: vec![0.0; FRAME_LEN * channels],
         })
     }
 
@@ -206,15 +208,23 @@ impl Decoder {
             if i > 0 {
                 r.byte_align();
             }
-            self.decode_block(&mut r, out)?;
+            // The block's bytes as far as the data goes: what its noise is seeded from.
+            let block = data.get(r.byte_pos()..).unwrap_or_default();
+            self.decode_block(&mut r, block, out)?;
         }
         Ok(blocks * FRAME_LEN)
     }
 
     /// Decodes the block at the reader, appending its frames to `out`.
-    fn decode_block(&mut self, r: &mut BitReader<'_>, out: &mut Vec<f32>) -> Result<()> {
+    fn decode_block(
+        &mut self,
+        r: &mut BitReader<'_>,
+        block: &[u8],
+        out: &mut Vec<f32>,
+    ) -> Result<()> {
         let r = &mut *r;
         self.decoded.fill(false);
+        self.noise.unseed();
         let mut seen = [0usize; 3];
         loop {
             let id = r.read(3);
@@ -231,14 +241,14 @@ impl Decoder {
                     if kind == Kind::Lfe && self.left.info.is_short() {
                         return Err(malformed("an LFE channel with short windows"));
                     }
-                    tools::pns(&mut self.noise, &mut self.left, None);
+                    tools::pns(&mut self.noise, &mut self.left, None, block);
                     tools::tns(&mut self.left, self.sampling_index);
                     self.keep(slot[0], true);
                 }
                 ID_CPE => {
                     let tag = r.read(4) as u8;
                     let slot = self.slot(Kind::Pair, tag, &mut seen)?;
-                    self.read_pair(r)?;
+                    self.read_pair(r, block)?;
                     self.keep(slot[0], true);
                     self.keep(slot[1], false);
                 }
@@ -284,10 +294,8 @@ impl Decoder {
                 return Err(malformed("raw data block ends inside an element"));
             }
         }
-        let base = out.len();
-        out.resize(base + FRAME_LEN * self.channels, 0.0);
-        let out = &mut out[base..];
-        for ch in 0..self.channels {
+        let planar = self.planar.as_chunks_mut::<FRAME_LEN>().0;
+        for (ch, pcm) in planar.iter_mut().enumerate() {
             let (spec, seq, shape) = &mut self.frame[ch];
             if !self.decoded[ch] {
                 // A channel the block left out: silence, still overlapping the last frame.
@@ -300,12 +308,10 @@ impl Decoder {
                 *shape,
                 &mut self.overlap[ch],
                 &mut self.scratch,
-                &mut self.pcm,
+                pcm,
             );
-            for (o, &s) in out[ch..].iter_mut().step_by(self.channels).zip(&self.pcm) {
-                *o = s;
-            }
         }
+        interleave(planar, out);
         Ok(())
     }
 
@@ -314,7 +320,7 @@ impl Decoder {
         for o in &mut self.overlap {
             o.reset();
         }
-        self.noise.reset();
+        self.noise.unseed();
         self.sbr_seen = false;
     }
 
@@ -336,7 +342,7 @@ impl Decoder {
         })
     }
 
-    fn read_pair(&mut self, r: &mut BitReader<'_>) -> Result<()> {
+    fn read_pair(&mut self, r: &mut BitReader<'_>, block: &[u8]) -> Result<()> {
         let common = r.bit();
         let mut info = None;
         self.ms.present = 0;
@@ -357,12 +363,13 @@ impl Decoder {
         }
         self.left.read(r, info, self.sampling_index)?;
         self.right.read(r, info, self.sampling_index)?;
-        tools::pns(&mut self.noise, &mut self.left, None);
+        tools::pns(&mut self.noise, &mut self.left, None, block);
         let ms = if common { Some(&self.ms) } else { None };
         tools::pns(
             &mut self.noise,
             &mut self.right,
             ms.map(|m| (&self.left, m)),
+            block,
         );
         if common {
             tools::ms_stereo(&self.ms, &mut self.left, &mut self.right);
@@ -379,12 +386,43 @@ impl Decoder {
 
     /// Keeps the left (or right) element's spectrum for output channel `ch`.
     fn keep(&mut self, ch: usize, left: bool) {
-        let ics = if left { &self.left } else { &self.right };
+        let ics = if left {
+            &mut self.left
+        } else {
+            &mut self.right
+        };
         let (seq, shape) = (ics.info.window_sequence, ics.info.window_shape);
         let (spec, s, w) = &mut self.frame[ch];
-        spec.copy_from_slice(&ics.spec);
+        // A swap, not a copy: reading an element rewrites its whole spectrum first.
+        std::mem::swap(spec, &mut ics.spec);
         (*s, *w) = (seq, shape);
         self.decoded[ch] = true;
+    }
+}
+
+/// Appends the channels of `planar` to `out`, interleaved.
+fn interleave(planar: &[[f32; FRAME_LEN]], out: &mut Vec<f32>) {
+    match planar {
+        [mono] => out.extend_from_slice(mono),
+        // The common case gets a loop that vectorises.
+        [left, right] => {
+            let base = out.len();
+            out.resize(base + 2 * FRAME_LEN, 0.0);
+            let pairs = out[base..].as_chunks_mut::<2>().0;
+            for ((o, &l), &r) in pairs.iter_mut().zip(left).zip(right) {
+                *o = [l, r];
+            }
+        }
+        _ => {
+            let base = out.len();
+            out.resize(base + FRAME_LEN * planar.len(), 0.0);
+            for (ch, pcm) in planar.iter().enumerate() {
+                let dst = out[base + ch..].iter_mut().step_by(planar.len());
+                for (o, &s) in dst.zip(pcm) {
+                    *o = s;
+                }
+            }
+        }
     }
 }
 

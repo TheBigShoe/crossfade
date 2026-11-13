@@ -6,7 +6,7 @@ use crate::requantize::GAIN_MIN;
 use crate::scalefactors::{self, Scalefactors};
 use crate::sideinfo::{SHORT_BLOCK, SideInfo};
 use crate::stereo::{self, Pan};
-use crate::synth::{self, HISTORY, ROWS};
+use crate::synth::Synth;
 use crate::{Error, FrameHeader, huffman, hybrid, requantize};
 use std::sync::OnceLock;
 
@@ -28,6 +28,7 @@ pub struct FrameInfo {
 pub(crate) struct Tables {
     /// `i^(4/3)` for every value a Huffman code with linbits can give (15 + 8191).
     pow43: Vec<f32>,
+    fast: huffman::Fast,
     /// `2^(e/4)` from `e = GAIN_MIN`.
     gains: Vec<f32>,
     pan: Pan,
@@ -43,6 +44,7 @@ fn tables() -> &'static Tables {
             .map(|i| libm::exp2(f64::from(i + GAIN_MIN) / 4.0) as f32)
             .collect(),
         pan: Pan::new(),
+        fast: huffman::Fast::new(),
     })
 }
 
@@ -59,10 +61,11 @@ pub struct Decoder {
     /// This frame's main data: the reservoir's tail, then the frame's own.
     main: Vec<u8>,
     overlap: [[f32; 288]; 2],
-    history: [f32; HISTORY],
+    /// Per channel, how many subbands from the first may have a non-zero overlap.
+    overlap_bands: [usize; 2],
+    synth: Synth,
     xr: Box<[[f32; 576]; 2]>,
     scratch: Box<[f32; 576]>,
-    lins: Box<[[f32; 4]; ROWS]>,
     /// MPEG-1 granule 0's scalefactors per channel, which granule 1 may reuse.
     granule0: [Scalefactors; 2],
     /// The channel count of the last frame decoded.
@@ -82,10 +85,10 @@ impl Decoder {
             reservoir: Vec::with_capacity(RESERVOIR + MAX_FRAME_LEN),
             main: Vec::with_capacity(RESERVOIR + MAX_FRAME_LEN),
             overlap: [[0.0; 288]; 2],
-            history: [0.0; HISTORY],
+            overlap_bands: [0; 2],
+            synth: Synth::new(),
             xr: Box::new([[0.0; 576]; 2]),
             scratch: Box::new([0.0; 576]),
-            lins: Box::new([[0.0; 4]; ROWS]),
             granule0: [Scalefactors::ZERO; 2],
             channels: 0,
         }
@@ -95,7 +98,8 @@ impl Decoder {
     pub fn reset(&mut self) {
         self.reservoir.clear();
         self.overlap = [[0.0; 288]; 2];
-        self.history = [0.0; HISTORY];
+        self.overlap_bands = [0; 2];
+        self.synth.reset();
         self.granule0 = [Scalefactors::ZERO; 2];
     }
 
@@ -193,7 +197,8 @@ impl Decoder {
             // A switch between mono and stereo starts the filterbank afresh, as the ISO
             // conformance stream l3_10201's references (one per segment) require.
             self.overlap = [[0.0; 288]; 2];
-            self.history = [0.0; HISTORY];
+            self.overlap_bands = [0; 2];
+            self.synth.reset();
         }
         self.channels = h.channels();
         let lsf = h.version.is_lsf();
@@ -210,6 +215,8 @@ impl Decoder {
         let mut pos = 0;
         for (gr, granules) in side.granules[..side.n_granules].iter().enumerate() {
             let mut sf = [Scalefactors::ZERO; 2];
+            // Per channel, the lines from the first that may be non-zero.
+            let mut lines = [0; 2];
             for ch in 0..nch {
                 let g = &granules[ch];
                 let end = pos + usize::from(g.part2_3_length);
@@ -223,11 +230,13 @@ impl Decoder {
                     self.granule0[ch] = sf[ch];
                 }
                 let xr = &mut self.xr[ch];
-                let n = huffman::decode(&mut b, g, end, &t.pow43, xr);
-                requantize::apply(xr, g, &sf[ch], n, &t.gains);
+                lines[ch] = huffman::decode(&mut b, g, end, &t.pow43, &t.fast, xr);
+                requantize::apply(xr, g, &sf[ch], lines[ch], &t.gains);
                 pos = end;
             }
             if joint {
+                let n = lines[0].max(lines[1]);
+                lines = [n, n];
                 let [left, right] = &mut *self.xr;
                 if h.intensity_stereo() {
                     stereo::intensity(
@@ -240,24 +249,29 @@ impl Decoder {
                         &t.pan,
                     );
                 } else if h.ms_stereo() {
-                    stereo::mid_side(left, right);
+                    stereo::mid_side(&mut left[..n], &mut right[..n]);
                 }
             }
             for (ch, g) in granules.iter().enumerate().take(nch) {
                 let xr = &mut self.xr[ch];
                 let long_subbands = usize::from(g.bands.long_subbands);
-                let boundaries = if g.block_type == SHORT_BLOCK {
+                // Subbands past the last non-zero line, and past the alias butterflies' reach
+                // of one more, are zero; with a zero overlap too, so is their IMDCT.
+                let filled = lines[ch].div_ceil(18);
+                let (boundaries, bands) = if g.block_type == SHORT_BLOCK {
                     hybrid::reorder(&mut xr[18 * long_subbands..], &mut self.scratch, &g.bands);
-                    long_subbands.saturating_sub(1)
+                    (long_subbands.saturating_sub(1), 32)
                 } else {
-                    31
+                    (filled.min(31), (filled + 1).min(32))
                 };
                 hybrid::antialias(xr, boundaries);
-                hybrid::imdct(xr, &mut self.overlap[ch], g.block_type, long_subbands);
-                hybrid::invert_odd(xr);
+                let busy = bands.max(self.overlap_bands[ch]);
+                hybrid::imdct(xr, &mut self.overlap[ch], g.block_type, long_subbands, busy);
+                hybrid::invert_odd(xr, busy);
+                self.overlap_bands[ch] = bands;
             }
             let out = &mut pcm[gr * 576 * nch..(gr + 1) * 576 * nch];
-            synth::granule(&mut self.history, &mut self.xr, nch, out, &mut self.lins);
+            self.synth.granule(&self.xr, nch, out);
         }
         Ok(())
     }

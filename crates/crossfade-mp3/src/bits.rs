@@ -2,6 +2,7 @@
 //! zero, so a corrupt length can make a reader run on but never out of bounds; the decoder
 //! checks positions against its limits instead.
 
+#[derive(Clone)]
 pub(crate) struct Bits<'a> {
     data: &'a [u8],
     /// Bits consumed from the start of `data`.

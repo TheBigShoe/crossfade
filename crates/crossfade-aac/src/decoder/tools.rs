@@ -3,6 +3,7 @@
 
 use super::ics::{INTENSITY_HCB, INTENSITY_HCB2, Ics, NOISE_HCB};
 use super::tables::{TNS_MAX_BANDS_LONG, TNS_MAX_BANDS_SHORT};
+use std::sync::OnceLock;
 
 /// The CPE's M/S decision per group and band.
 pub(crate) struct MsMask {
@@ -69,7 +70,7 @@ pub(crate) fn intensity_stereo(ms: &MsMask, left: &Ics, right: &mut Ics) {
             if ms.present == 1 && ms.used[g][b] {
                 sign = -sign;
             }
-            let scale = sign * libm::exp2(-0.25 * f64::from(right.sf[g][b])) as f32;
+            let scale = sign * intensity_gain(right.sf[g][b]);
             for w in windows(right, g) {
                 let range = right.band(w, b);
                 for (r, &l) in right.spec[range.clone()].iter_mut().zip(&left.spec[range]) {
@@ -80,22 +81,47 @@ pub(crate) fn intensity_stereo(ms: &MsMask, left: &Ics, right: &mut Ics) {
     }
 }
 
-/// The noise generator: a 32-bit linear congruential generator (Numerical Recipes' constants),
-/// seeded the same at every reset, so output is reproducible. The standard leaves the noise
-/// unspecified beyond its energy.
+/// 2^(-position / 4), from a table for the positions streams use.
+fn intensity_gain(position: i32) -> f32 {
+    const LOW: i32 = -256;
+    static T: OnceLock<[f32; 512]> = OnceLock::new();
+    let exact = |p: i32| libm::exp2(-0.25 * f64::from(p)) as f32;
+    let table = T.get_or_init(|| std::array::from_fn(|i| exact(i as i32 + LOW)));
+    match usize::try_from(position - LOW) {
+        Ok(i) if i < table.len() => table[i],
+        _ => exact(position),
+    }
+}
+
+/// The noise generator: a 32-bit linear congruential generator (Numerical Recipes' constants)
+/// seeded for each raw data block from the block's bytes, so the noise is a function of the
+/// packet alone: the same after a seek as in a straight run, and on any thread. The seed is
+/// the FNV-1a 32-bit hash (offset basis 0x811C9DC5, prime 0x01000193) of the bytes from the
+/// block's first byte to the end of the data the decoder was given, computed only for a block
+/// that has a noise band. The standard leaves the noise unspecified beyond its energy.
 pub(crate) struct Noise {
     state: u32,
+    seeded: bool,
 }
 
 impl Noise {
-    pub(crate) const SEED: u32 = 0x1F2E_3D4C;
-
     pub(crate) fn new() -> Self {
-        Self { state: Self::SEED }
+        Self {
+            state: 0,
+            seeded: false,
+        }
     }
 
-    pub(crate) fn reset(&mut self) {
-        self.state = Self::SEED;
+    /// A new block begins: the next noise band seeds from its bytes.
+    pub(crate) fn unseed(&mut self) {
+        self.seeded = false;
+    }
+
+    fn seed(&mut self, block: &[u8]) {
+        if !self.seeded {
+            self.state = fnv1a(block);
+            self.seeded = true;
+        }
     }
 
     fn next(&mut self) -> f32 {
@@ -122,9 +148,22 @@ impl Noise {
     }
 }
 
-/// Noise substitution in one channel. `partner` (the left channel, for a CPE's right one) with
-/// M/S used in a band where both are noise means the same noise, at this channel's energy.
-pub(crate) fn pns(noise: &mut Noise, ics: &mut Ics, partner: Option<(&Ics, &MsMask)>) {
+/// FNV-1a, 32 bits.
+fn fnv1a(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811C_9DC5, |h, &b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// Noise substitution in one channel of the block `block` (its bytes, from its start).
+/// `partner` (the left channel, for a CPE's right one) with M/S used in a band where both are
+/// noise means the same noise, at this channel's energy.
+pub(crate) fn pns(
+    noise: &mut Noise,
+    ics: &mut Ics,
+    partner: Option<(&Ics, &MsMask)>,
+    block: &[u8],
+) {
     for g in 0..ics.info.num_groups {
         for b in 0..ics.info.max_sfb {
             if ics.band_cb[g][b] != NOISE_HCB {
@@ -147,7 +186,10 @@ pub(crate) fn pns(noise: &mut Noise, ics: &mut Ics, partner: Option<(&Ics, &MsMa
                             }
                         }
                     }
-                    _ => noise.fill(&mut ics.spec[range], nrg),
+                    _ => {
+                        noise.seed(block);
+                        noise.fill(&mut ics.spec[range], nrg);
+                    }
                 }
             }
         }
@@ -200,6 +242,19 @@ pub(crate) fn tns(ics: &mut Ics, sampling_index: usize) {
             } else {
                 band.iter_mut().for_each(&mut run);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intensity_gains_are_the_exact_power_inside_and_outside_the_table() {
+        for p in -600..600 {
+            let want = libm::exp2(-0.25 * f64::from(p)) as f32;
+            assert_eq!(intensity_gain(p).to_bits(), want.to_bits(), "{p}");
         }
     }
 }

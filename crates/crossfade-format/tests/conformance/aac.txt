@@ -25,20 +25,34 @@ aac/iso/al16sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not 
 aac/iso/al17_44.mp4 pass: 2 ch, 330752 frames, offset 2048, rms 3.54e-8, max 1.04e-7, energy 0.000 dB, worst block 0.00 dB, sha256 e7c428f8d9244cc7
 aac/iso/al17sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
 aac/iso/al18_08.adif refused: ADIF has no reader
-aac/iso/al18_08.adts decoded: 1 ch, 2880512 frames, sha256 56d3cd6cc714fc68 (no reference in the corpus)
+aac/iso/al18_08.adts decoded: 1 ch, 2880512 frames, sha256 d552b53724d204f3 (no reference in the corpus)
 aac/iso/al18_22.adif refused: ADIF has no reader
-aac/iso/al18_22.adts decoded: 1 ch, 2880512 frames, sha256 5fb410ee2ed07274 (no reference in the corpus)
+aac/iso/al18_22.adts decoded: 1 ch, 2880512 frames, sha256 c2f1436885eba847 (no reference in the corpus)
 aac/iso/al18_32.adif refused: ADIF has no reader
-aac/iso/al18_32.adts decoded: 1 ch, 2880512 frames, sha256 924fdf7bf1e83f43 (no reference in the corpus)
-aac/iso/al18_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 1600, rms 2.48e-2, max 1.09e-1, energy 0.000 dB, worst block 1.73 dB, sha256 c062886df853563e
+aac/iso/al18_32.adts decoded: 1 ch, 2880512 frames, sha256 ec15b56e5baabb28 (no reference in the corpus)
+aac/iso/al18_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 2112, rms 2.49e-2, max 1.01e-1, energy 0.000 dB, worst block 1.47 dB, sha256 ba0bab7aa860b4f2
 aac/iso/al18_64.adif refused: ADIF has no reader
-aac/iso/al18_64.adts decoded: 1 ch, 2880512 frames, sha256 558787de0f640dcb (no reference in the corpus)
+aac/iso/al18_64.adts decoded: 1 ch, 2880512 frames, sha256 e766a92dbaff96cd (no reference in the corpus)
 aac/iso/al18_96.adif refused: ADIF has no reader
-aac/iso/al18_96.adts decoded: 1 ch, 2880512 frames, sha256 d26a364fa3bca945 (no reference in the corpus)
+aac/iso/al18_96.adts decoded: 1 ch, 2880512 frames, sha256 ec42aa20441b3461 (no reference in the corpus)
 aac/iso/al18sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
-aac/iso/al19_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 0, rms 2.85e-2, max 1.70e-1, energy 0.000 dB, worst block 0.19 dB, sha256 2e8b50dd983c4674
+aac/iso/al19_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 0, rms 2.86e-2, max 1.81e-1, energy 0.000 dB, worst block 0.17 dB, sha256 13854abaaa1362e0
 aac/iso/al19sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
 aac/iso/ap01_48.adif refused: ADIF has no reader
 aac/iso/ap01_48.adts refused: aac: AAC LTP (long term prediction) is not supported
 aac/iso/ap02_48.adif refused: ADIF has no reader
 aac/iso/ap02_48.adts refused: aac: AAC LTP (long term prediction) is not supported
+aac/iso-mpeg2/al09_08.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.08e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 3e73421af7bc259e
+aac/iso-mpeg2/al09_11.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.11e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 6d4c9d6419ecb3a9
+aac/iso-mpeg2/al09_12.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.09e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 43d2fc635ffcc2e8
+aac/iso-mpeg2/al09_16.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.08e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 ea32ce3a5ca3d7a9
+aac/iso-mpeg2/al09_22.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.10e-8, max 2.09e-7, energy 0.000 dB, worst block 0.00 dB, sha256 089b280617c9c549
+aac/iso-mpeg2/al09_24.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.06e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 fa912105e24438b8
+aac/iso-mpeg2/al09_32.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.05e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 685edb53f8cc4e43
+aac/iso-mpeg2/al09_44.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.04e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 46c7ec2c1b16679b
+aac/iso-mpeg2/al09_48.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.01e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 71edf0ef0e0f1b19
+aac/iso-mpeg2/al09_64.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.00e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 19f6ee06799913cd
+aac/iso-mpeg2/al09_88.adts pass: 1 ch, 351232 frames, offset 2048, rms 4.00e-8, max 2.38e-7, energy 0.000 dB, worst block 0.00 dB, sha256 657f474c27ffeebe
+aac/iso-mpeg2/al09_96.adts pass: 1 ch, 351232 frames, offset 2048, rms 3.99e-8, max 2.09e-7, energy 0.000 dB, worst block 0.00 dB, sha256 f79fa73eba9d3726
+aac/iso-mpeg2/al12_48.adts pass: 1 ch, 525312 frames, offset 2048, rms 3.42e-8, max 1.12e-7, energy 0.000 dB, worst block 0.00 dB, sha256 2f1bf1696ed90e25
+aac/iso-mpeg2/al13_48.adts pass: 1 ch, 525312 frames, offset 2048, rms 3.42e-8, max 1.12e-7, energy 0.000 dB, worst block 0.00 dB, sha256 2f1bf1696ed90e25
