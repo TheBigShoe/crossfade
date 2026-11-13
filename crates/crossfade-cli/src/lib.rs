@@ -56,7 +56,7 @@ accident.";
 /// The one list of what can be read, shared by every help text.
 macro_rules! readable_formats {
     () => {
-        "wav, flac, aiff/aifc, ogg (FLAC or Vorbis), mp3, mp4/m4a (ALAC; AAC in a build with the aac feature) or .aac (ADTS, same build)"
+        "wav, flac, aiff/aifc, ogg/opus (FLAC, Vorbis or Opus), mp3, mp4/m4a (ALAC; AAC in a build with the aac feature) or .aac (ADTS, same build)"
     };
 }
 
