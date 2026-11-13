@@ -344,3 +344,20 @@ pub fn encode_into(ops: &[Op], storage: usize) -> Option<Encoded> {
     }
     enc.done().map(|frame| (steps, frame))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_ops_fits_long_runs_of_held_back_bytes() {
+        // Improbable "1"s keep the value at the top of the range: every byte out is 0xFF,
+        // held back for a carry, so `offs` alone undercounts the frame.
+        for n in [8, 64, 400] {
+            let ops = vec![Op::BitLogp { val: true, logp: 15 }; n];
+            let (_, frame) = encode_ops(&ops);
+            let mut dec = crate::RangeDecoder::new(&frame);
+            assert!((0..n).all(|_| dec.dec_bit_logp(15)), "{n} ops");
+        }
+    }
+}
