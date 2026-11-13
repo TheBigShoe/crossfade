@@ -1,7 +1,7 @@
 //! Seeking an Ogg Opus stream through `DecodeSession`. Opus is the one codec where
-//! seek-then-decode is not decode-then-slice bit for bit: the decoder restarts 80 ms before
-//! the target (RFC 7845 4.6) and has converged closely, not exactly, by then (the tier-3
-//! `conformance_opus` measures how closely on real audio). What holds exactly, and is tested
+//! seek-then-decode is not decode-then-slice bit for bit: the decoder restarts 1 s before the
+//! target (RFC 7845 4.6 asks for at least 80 ms) and has converged closely, not exactly, by
+//! then (the tier-3 `conformance_opus` measures how closely on real audio). What holds exactly, and is tested
 //! here: the session lands where the reader says, decodes from there as a fresh decoder does,
 //! drops what lies before the target, and its frames follow on to the end.
 
@@ -38,7 +38,7 @@ fn rest(s: &mut DecodeSession) -> Vec<f32> {
 fn audio() -> Vec<Vec<u8>> {
     let mut a = vec![];
     for (i, config) in [9u8, 1, 15, 13, 31, 29, 9, 15, 31].into_iter().enumerate() {
-        a.extend(w::packets(config, true, 12, 50, i as u64 * 100));
+        a.extend(w::packets(config, true, 36, 50, i as u64 * 100));
     }
     a
 }
@@ -69,7 +69,9 @@ fn a_seek_decodes_as_a_fresh_decoder_from_where_the_reader_lands() {
         0u64,
         1,
         3839,
-        3840,
+        48_000,
+        60_000,
+        150_000,
         3841,
         10_000,
         20_000,
@@ -85,9 +87,9 @@ fn a_seek_decodes_as_a_fresh_decoder_from_where_the_reader_lands() {
         if t >= total {
             continue;
         }
-        // The landing: the packet after the last page (here, packet) ending 80 ms or more
+        // The landing: the packet after the last page (here, packet) ending 1 s or more
         // before the target's granule.
-        let goal = t as i64 + PRE_SKIP - 3840;
+        let goal = t as i64 + PRE_SKIP - 48_000;
         let (mut k, mut end) = (0, 0);
         while k < a.len() && end + durations[k] <= goal {
             end += durations[k];

@@ -57,6 +57,9 @@ fn durations(audio: &[Vec<u8>]) -> Vec<u64> {
         .collect()
 }
 
+/// RFC 7845 4.6 asks for at least 80 ms; the reader takes 1 s.
+const PRE_ROLL: i64 = 48_000;
+
 const TAGS: [&str; 3] = ["TITLE=Tone", "ARTIST=Nobody", "R128_TRACK_GAIN=-1024"];
 
 fn file(pre_skip: u16, audio: &[Vec<u8>], layout: &OggLayout) -> Vec<u8> {
@@ -254,9 +257,10 @@ fn missing_and_broken_headers_are_refused() {
 }
 
 #[test]
-fn seeking_lands_80_ms_early_and_reads_on_in_order() {
+fn seeking_lands_a_second_early_and_reads_on_in_order() {
     let mut a = vec![];
-    for i in 0..40 {
+    // About 6 s, so that most targets have a whole second of pre-roll before them.
+    for i in 0..120 {
         a.extend(w::packets([9, 15, 31, 28][i % 4], true, 3, 30, i as u64));
     }
     let d = durations(&a);
@@ -271,7 +275,18 @@ fn seeking_lands_80_ms_early_and_reads_on_in_order() {
         let mut dm = open(&bytes);
         let end = dm.streams()[0].frames.unwrap() as i64;
         let mut x = 7u64;
-        let mut targets = vec![0, 1, 3839, 3840, 3841, 10_000, end - 1, end, end + 50, -20];
+        let mut targets = vec![
+            0,
+            1,
+            47_999,
+            48_000,
+            48_001,
+            100_000,
+            end - 1,
+            end,
+            end + 50,
+            -20,
+        ];
         for _ in 0..30 {
             x = x.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(7);
             targets.push((x >> 33) as i64 % end);
@@ -285,7 +300,7 @@ fn seeking_lands_80_ms_early_and_reads_on_in_order() {
                 continue;
             }
             assert!(
-                landed <= t.max(0) - 3840 || landed == -i64::from(pre_skip),
+                landed <= t.max(0) - PRE_ROLL || landed == -i64::from(pre_skip),
                 "target {t}: {landed}"
             );
             assert!(dm.read_packet(&mut p).unwrap());
