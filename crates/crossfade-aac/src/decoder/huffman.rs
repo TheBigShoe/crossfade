@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 const PRIMARY_BITS: u32 = 10;
 
-/// Entries: bits 0-4 the codeword's length, 0 for a pointer to a sub-table (bits 5-9 its
+/// Entries: bits 0-4 the bits a leaf consumes (never 0), 0 for a pointer to a sub-table (bits 5-9 its
 /// index bits, bits 10-31 its offset in `sub`). A leaf's other bits are the book's own: see
 /// [`Book::decode`] and [`Spectral::decode`].
 pub(crate) struct Book {
@@ -18,7 +18,8 @@ pub(crate) struct Book {
 }
 
 impl Book {
-    /// `leaf(symbol, length)` is a leaf's entry; its low five bits must be the length.
+    /// `leaf(symbol, length)` is a leaf's entry; its low five bits must be nonzero (the bits
+    /// to consume).
     fn new(codes: &[(u8, u32)], leaf: impl Fn(usize, u32) -> u32) -> Self {
         let mut primary = Box::new([0u32; 1 << PRIMARY_BITS]);
         let mut sub = Vec::new();
@@ -104,19 +105,19 @@ const fn value_bits(dim: usize) -> u32 {
 
 impl Spectral {
     /// The next codeword's coefficients with their signs applied (an escape stays 16 for
-    /// the caller to read). Leaf: bits 5-8 which coefficients take a sign bit, 9-11 how many,
-    /// 12-23 the coefficients (`value_bits` each, two's complement, first lowest).
+    /// the caller to read). Leaf: bits 0-4 the bits the codeword and its signs take, 5-8
+    /// which coefficients take a sign bit, 9-13 the codeword's length, 14-25 the coefficients
+    /// (`value_bits` each, two's complement, first lowest).
     #[inline(always)]
     pub(crate) fn decode<const DIM: usize>(&self, r: &mut BitReader<'_>) -> [i32; DIM] {
         let w = r.peek32();
         let e = self.book.entry(w);
-        let len = e & 31;
         // At most 16 code bits and 4 sign bits, so the peek holds them all.
-        let mut signs = w << len;
+        let mut signs = w << (e >> 9 & 31);
         let bits = value_bits(DIM);
         let mut q = [0i32; DIM];
         for (i, q) in q.iter_mut().enumerate() {
-            let v = ((e << (32 - 12 - bits * (i as u32 + 1))) as i32) >> (32 - bits);
+            let v = ((e << (32 - 14 - bits * (i as u32 + 1))) as i32) >> (32 - bits);
             *q = if e >> (5 + i) & 1 != 0 {
                 let neg = signs >> 31 != 0;
                 signs <<= 1;
@@ -125,7 +126,8 @@ impl Spectral {
                 v
             };
         }
-        r.consume(len + (e >> 9 & 7));
+        // The total sits in the low bits, so the next lookup waits on one mask, not a sum.
+        r.consume(e & 31);
         q
     }
 }
@@ -157,16 +159,16 @@ fn spectral(codes: Vec<(u8, u32)>, dim: usize, signed: bool, modulo: i32) -> Spe
     let bits = value_bits(dim);
     let leaf = |sym: usize, len: u32| {
         let v = symbol_values(sym as i32, dim, signed, modulo);
-        let mut e = len;
+        let mut e = len << 9;
         let mut count = 0;
         for (i, &x) in v[..dim].iter().enumerate() {
             if !signed && x != 0 {
                 e |= 1 << (5 + i);
                 count += 1;
             }
-            e |= ((x as u32) & ((1 << bits) - 1)) << (12 + bits * i as u32);
+            e |= ((x as u32) & ((1 << bits) - 1)) << (14 + bits * i as u32);
         }
-        e | count << 9
+        e | (len + count)
     };
     Spectral {
         book: Book::new(&codes, leaf),
