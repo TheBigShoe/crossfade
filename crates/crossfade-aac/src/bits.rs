@@ -113,6 +113,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// The byte the next bit is in.
+    #[cfg(feature = "decoder")]
     pub(crate) fn byte_pos(&self) -> usize {
         self.pos() / 8
     }
