@@ -17,7 +17,7 @@ struct Bits {
 impl Bits {
     fn put(&mut self, value: u32, n: u32) {
         for i in (0..n).rev() {
-            if self.used % 8 == 0 {
+            if self.used.is_multiple_of(8) {
                 self.bytes.push(0);
             }
             let bit = (value >> i) as u8 & 1;
@@ -94,14 +94,20 @@ fn a_blocks_noise_does_not_depend_on_what_came_before() {
     decode(&mut after, &a);
     let got = decode(&mut after, &b);
     assert!(
-        got.iter().zip(&want).all(|(x, y)| x.to_bits() == y.to_bits()),
+        got.iter()
+            .zip(&want)
+            .all(|(x, y)| x.to_bits() == y.to_bits()),
         "the noise depends on the blocks decoded before"
     );
     // And a reset, as a seek does it, changes nothing either.
     after.reset();
     decode(&mut after, &a);
     let got = decode(&mut after, &b);
-    assert!(got.iter().zip(&want).all(|(x, y)| x.to_bits() == y.to_bits()));
+    assert!(
+        got.iter()
+            .zip(&want)
+            .all(|(x, y)| x.to_bits() == y.to_bits())
+    );
 }
 
 #[test]

@@ -4,7 +4,8 @@
 //! payload in a FIL is noticed, see [`Decoder::sbr_present`], and the stream plays as its AAC
 //! core), PCE (skipped in a block; a configuration's own PCE maps the elements), END; all four
 //! window sequences and both window shapes; Huffman books 1-11 with escapes; pulse data;
-//! intensity stereo; noise substitution (a fixed-seed generator, so output is reproducible);
+//! intensity stereo; noise substitution (seeded from each block's bytes, so the noise is a
+//! function of the packet alone, the same after a seek);
 //! TNS for long and short windows. Refused by name: coupling channel elements, Main-profile
 //! prediction, LTP, SSR gain control, 960-sample frames, other object types.
 //!
@@ -207,15 +208,23 @@ impl Decoder {
             if i > 0 {
                 r.byte_align();
             }
-            self.decode_block(&mut r, out)?;
+            // The block's bytes as far as the data goes: what its noise is seeded from.
+            let block = data.get(r.byte_pos()..).unwrap_or_default();
+            self.decode_block(&mut r, block, out)?;
         }
         Ok(blocks * FRAME_LEN)
     }
 
     /// Decodes the block at the reader, appending its frames to `out`.
-    fn decode_block(&mut self, r: &mut BitReader<'_>, out: &mut Vec<f32>) -> Result<()> {
+    fn decode_block(
+        &mut self,
+        r: &mut BitReader<'_>,
+        block: &[u8],
+        out: &mut Vec<f32>,
+    ) -> Result<()> {
         let r = &mut *r;
         self.decoded.fill(false);
+        self.noise.unseed();
         let mut seen = [0usize; 3];
         loop {
             let id = r.read(3);
@@ -232,14 +241,14 @@ impl Decoder {
                     if kind == Kind::Lfe && self.left.info.is_short() {
                         return Err(malformed("an LFE channel with short windows"));
                     }
-                    tools::pns(&mut self.noise, &mut self.left, None);
+                    tools::pns(&mut self.noise, &mut self.left, None, block);
                     tools::tns(&mut self.left, self.sampling_index);
                     self.keep(slot[0], true);
                 }
                 ID_CPE => {
                     let tag = r.read(4) as u8;
                     let slot = self.slot(Kind::Pair, tag, &mut seen)?;
-                    self.read_pair(r)?;
+                    self.read_pair(r, block)?;
                     self.keep(slot[0], true);
                     self.keep(slot[1], false);
                 }
@@ -311,7 +320,7 @@ impl Decoder {
         for o in &mut self.overlap {
             o.reset();
         }
-        self.noise.reset();
+        self.noise.unseed();
         self.sbr_seen = false;
     }
 
@@ -333,7 +342,7 @@ impl Decoder {
         })
     }
 
-    fn read_pair(&mut self, r: &mut BitReader<'_>) -> Result<()> {
+    fn read_pair(&mut self, r: &mut BitReader<'_>, block: &[u8]) -> Result<()> {
         let common = r.bit();
         let mut info = None;
         self.ms.present = 0;
@@ -354,12 +363,13 @@ impl Decoder {
         }
         self.left.read(r, info, self.sampling_index)?;
         self.right.read(r, info, self.sampling_index)?;
-        tools::pns(&mut self.noise, &mut self.left, None);
+        tools::pns(&mut self.noise, &mut self.left, None, block);
         let ms = if common { Some(&self.ms) } else { None };
         tools::pns(
             &mut self.noise,
             &mut self.right,
             ms.map(|m| (&self.left, m)),
+            block,
         );
         if common {
             tools::ms_stereo(&self.ms, &mut self.left, &mut self.right);

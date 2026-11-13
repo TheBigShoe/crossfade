@@ -25,18 +25,18 @@ aac/iso/al16sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not 
 aac/iso/al17_44.mp4 pass: 2 ch, 330752 frames, offset 2048, rms 3.54e-8, max 1.04e-7, energy 0.000 dB, worst block 0.00 dB, sha256 e7c428f8d9244cc7
 aac/iso/al17sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
 aac/iso/al18_08.adif refused: ADIF has no reader
-aac/iso/al18_08.adts decoded: 1 ch, 2880512 frames, sha256 56d3cd6cc714fc68 (no reference in the corpus)
+aac/iso/al18_08.adts decoded: 1 ch, 2880512 frames, sha256 d552b53724d204f3 (no reference in the corpus)
 aac/iso/al18_22.adif refused: ADIF has no reader
-aac/iso/al18_22.adts decoded: 1 ch, 2880512 frames, sha256 5fb410ee2ed07274 (no reference in the corpus)
+aac/iso/al18_22.adts decoded: 1 ch, 2880512 frames, sha256 c2f1436885eba847 (no reference in the corpus)
 aac/iso/al18_32.adif refused: ADIF has no reader
-aac/iso/al18_32.adts decoded: 1 ch, 2880512 frames, sha256 924fdf7bf1e83f43 (no reference in the corpus)
-aac/iso/al18_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 1600, rms 2.48e-2, max 1.09e-1, energy 0.000 dB, worst block 1.73 dB, sha256 c062886df853563e
+aac/iso/al18_32.adts decoded: 1 ch, 2880512 frames, sha256 ec15b56e5baabb28 (no reference in the corpus)
+aac/iso/al18_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 2112, rms 2.49e-2, max 1.01e-1, energy 0.000 dB, worst block 1.47 dB, sha256 ba0bab7aa860b4f2
 aac/iso/al18_64.adif refused: ADIF has no reader
-aac/iso/al18_64.adts decoded: 1 ch, 2880512 frames, sha256 558787de0f640dcb (no reference in the corpus)
+aac/iso/al18_64.adts decoded: 1 ch, 2880512 frames, sha256 e766a92dbaff96cd (no reference in the corpus)
 aac/iso/al18_96.adif refused: ADIF has no reader
-aac/iso/al18_96.adts decoded: 1 ch, 2880512 frames, sha256 d26a364fa3bca945 (no reference in the corpus)
+aac/iso/al18_96.adts decoded: 1 ch, 2880512 frames, sha256 ec42aa20441b3461 (no reference in the corpus)
 aac/iso/al18sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
-aac/iso/al19_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 0, rms 2.85e-2, max 1.70e-1, energy 0.000 dB, worst block 0.19 dB, sha256 2e8b50dd983c4674
+aac/iso/al19_44.mp4 pass (energy): 1 ch, 2880512 frames, offset 0, rms 2.86e-2, max 1.81e-1, energy 0.000 dB, worst block 0.17 dB, sha256 13854abaaa1362e0
 aac/iso/al19sf_44.mp4 refused: aac: 960-sample frames (frameLengthFlag) are not supported
 aac/iso/ap01_48.adif refused: ADIF has no reader
 aac/iso/ap01_48.adts refused: aac: AAC LTP (long term prediction) is not supported

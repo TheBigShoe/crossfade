@@ -112,6 +112,11 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// The byte the next bit is in.
+    pub(crate) fn byte_pos(&self) -> usize {
+        self.pos() / 8
+    }
+
     pub(crate) fn len_bits(&self) -> usize {
         self.data.len() * 8
     }
