@@ -323,12 +323,11 @@ fn tag_rows_with_the_same_key_keep_separate_identities() {
 
 #[test]
 fn the_depth_of_a_stream_is_its_raw_bits_when_it_has_them() {
-    use crossfade_app::inspector::depth;
     let mut s = stream(0);
     s.sample_format = "s24".into();
-    assert_eq!(depth(&s), "24-bit");
+    assert_eq!(depth(&s).as_deref(), Some("24-bit"));
     s.bits_per_raw_sample = Some(20);
-    assert_eq!(depth(&s), "20-bit");
+    assert_eq!(depth(&s).as_deref(), Some("20-bit"));
 }
 
 /// A 20-bit stereo WAV as other software writes it: `WAVE_FORMAT_EXTENSIBLE`, 24-bit container.
@@ -372,7 +371,7 @@ fn a_wav_with_valid_bits_below_its_container_shows_the_true_depth() {
     let d = report.document();
     assert_eq!(d.streams[0].sample_format, "s24");
     assert_eq!(value(&d, "bits_per_raw_sample"), "20-bit");
-    assert_eq!(crossfade_app::inspector::depth(&d.streams[0]), "20-bit");
+    assert_eq!(depth(&d.streams[0]).as_deref(), Some("20-bit"));
 }
 
 /// An MP3 stream as its decoder reports it: 32-bit float, which says nothing about the file.
@@ -406,5 +405,8 @@ fn a_lossy_stream_shows_no_bit_depth() {
 fn a_lossless_stream_still_shows_its_depth() {
     let d = tagged_20_bit();
     assert_eq!(depth(&d.streams[0]).as_deref(), Some("20-bit"));
-    assert_eq!(depth(&stereo_s24_96k().streams[0]).as_deref(), Some("24-bit"));
+    assert_eq!(
+        depth(&stereo_s24_96k().streams[0]).as_deref(),
+        Some("24-bit")
+    );
 }

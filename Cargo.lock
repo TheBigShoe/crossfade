@@ -1532,6 +1532,7 @@ version = "0.0.0"
 dependencies = [
  "crossfade-core",
  "crossfade-dsp",
+ "crossfade-format",
  "crossfade-graph",
  "crossfade-loudness",
  "crossfade-testkit",
