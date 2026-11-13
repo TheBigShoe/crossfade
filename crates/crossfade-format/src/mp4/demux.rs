@@ -295,7 +295,7 @@ pub(super) fn open(
         streams: [stream],
         tags: meta.tags,
         preroll: preroll(entry.codec),
-        mp3: (entry.codec == CodecId::Mp3).then(|| (rate < 32000, channels == 1)),
+        mp3: (entry.codec == CodecId::Mp3).then_some((rate < 32000, channels == 1)),
         table: track.table,
         clock,
         priming: g.priming as i64,
