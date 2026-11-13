@@ -208,6 +208,86 @@ Painting itself (GPUI drawing at most one shape per column) was judged from
 offscreen renders, not timed, and has not been tried on a trackpad with an
 hour-long file.
 
+## AAC decoding
+
+AAC-LC to 16-bit WAV against macOS's own decoder, whole process against whole
+process on the same Apple M1 Max:
+
+```sh
+crossfade convert in.aac -o out.wav --force          # default threads, and --threads 1
+afconvert -f WAVE -d LEI16 in.aac out.wav
+```
+
+Wall time is the best of 9 runs with the three commands interleaved;
+instructions retired and cycles are the smallest of the same runs from
+`/usr/bin/time -l` (they move far less than wall time on this machine, and
+count every thread). Crossfade at the tip of `m5/aac-speed`, the default
+release profile, `--features aac`; "main before" is the same command built
+from `main` before this work. The inputs are one 4 min 22 s signal (chords,
+noise and clicks, 44.1 kHz stereo) encoded by `afconvert -f adts -d aac` at
+256 and 96 kbit/s and by `afconvert -f m4af -d aac -b 192000`. Crossfade
+dithers its 16-bit output (TPDF), so the quantiser is part of its time; its
+AAC decode is bit for bit what it was before.
+
+| Input | Command | Wall (ms) | Instructions | Cycles |
+|---|---|---|---|---|
+| 256 kbit/s ADTS | crossfade | 197 | 2.39e9 | 0.58e9 |
+| | crossfade `--threads 1` | 182 | 2.38e9 | 0.57e9 |
+| | afconvert | 223 | 1.59e9 | 0.61e9 |
+| | main before | 425 | 4.60e9 | 1.31e9 |
+| 96 kbit/s ADTS | crossfade | 147 | 1.91e9 | 0.45e9 |
+| | crossfade `--threads 1` | 148 | 1.91e9 | 0.44e9 |
+| | afconvert | 147 | 1.20e9 | 0.40e9 |
+| | main before | 289 | 3.80e9 | 0.90e9 |
+| 192 kbit/s M4A | crossfade | 192 | 2.24e9 | 0.55e9 |
+| | crossfade `--threads 1` | 186 | 2.23e9 | 0.54e9 |
+| | afconvert | 189 | 1.46e9 | 0.51e9 |
+| | main before | 360 | 4.24e9 | 1.12e9 |
+
+The thread count does not matter: AAC decodes on the pipeline thread, and a
+second thread writes the file either way.
+
+What made the difference, measured with the in-process benchmark
+(`cargo run --release -p crossfade-aac --features decoder --example bench -- in.aac`,
+which prints a hash of the output so a change that alters a bit shows),
+cycles for the 256 / 96 kbit/s files: 1.10 / 0.69 e9 on `main`, then
+
+- a bit reader holding a 64-bit word (on its own no faster, but it lets one
+  peek cover a whole codeword and its sign bits);
+- Huffman entries that carry a codeword's coefficients, which of them take a
+  sign bit and the total length, so a codeword is one lookup; the sign applied
+  by flipping the sign bit rather than by a branch on a random sign (the
+  largest single gain), and the band loop working on a register copy of the
+  reader: 0.69 / 0.56 (measured with the old, serial hash);
+- the FFT's butterfly stages written so they vectorise, the pre-twiddle in
+  natural order with the bit reversal folded into the FFT's first pass:
+  0.49 / 0.34;
+- windowing and overlap-add in one pass into a planar buffer, then one
+  interleaving pass; intensity-stereo gains from a table: 0.41 / 0.27;
+- the engine side: the adapter decodes straight into the frame it hands out
+  (and reuses frames, which it meant to and did not), and the TPDF quantiser's
+  arithmetic vectorises (converting through `i64`, clamping as an integer,
+  counting clips in integer lanes; the generator's draws run a block ahead,
+  the same draws in the same order).
+
+Every step kept the output bit for bit (the hashes, the frozen digests and the
+ISO conformance tier), except one deliberate change: noise substitution is now
+seeded from each block's bytes, so a seek gives the same noise as a straight
+run.
+
+What is left, from a time profile of the whole process on a 25-minute
+96 kbit/s file (share of samples, both threads): spectral parsing and
+dequantisation (`Ics::read`) 24%, the IMDCT 22%, the quantiser 18%, the
+kernel writing the file on the I/O thread 13%, window and overlap-add 3%,
+`f32` to `f64` conversion before the quantiser 3%, the rest small. At
+256 kbit/s parsing grows to 43%. The quantiser is now mostly SplitMix64's
+two 64-bit multiplies per sample, which have no vector form without `unsafe`;
+the parse is bound by the chain from one codeword's length to the next lookup.
+What could still be had: merging two FFT stages per pass (tried; written
+safely it did not vectorise and lost), folding the post-twiddle into the
+window-and-add pass, and quantising straight from `f32` without the `f64`
+working buffer when a chain only quantises.
+
 ## Repeating it
 
 ```sh
