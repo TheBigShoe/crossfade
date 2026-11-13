@@ -1,4 +1,5 @@
 use super::*;
+use crate::packet_duration;
 
 #[test]
 fn a_decoder_has_one_or_two_channels() {
@@ -26,28 +27,65 @@ fn an_invalid_packet_is_an_error_and_appends_nothing() {
     assert_eq!(out, vec![1.0, 2.0]);
 }
 
+/// Deterministic bytes: SILK decodes any, and CELT nearly any.
+fn noise(seed: u32, len: usize) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9) | 1;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+/// A code 0 packet of `config` with `len` bytes of noise after the TOC.
+fn packet(config: u8, stereo: bool, seed: u32, len: usize) -> Vec<u8> {
+    let mut p = vec![(config << 3) | (u8::from(stereo) << 2)];
+    p.extend(noise(seed, len));
+    p
+}
+
+fn bounded(pcm: &[f32]) -> bool {
+    pcm.iter().all(|x| x.is_finite() && x.abs() <= 4.0)
+}
+
 #[test]
-fn each_mode_goes_to_its_layer() {
+fn each_mode_decodes() {
     // A 20 ms CELT FB frame, a 20 ms SILK WB frame, a 20 ms hybrid FB frame.
-    let celt = [(31 << 3), 0x12, 0x34, 0x56];
-    let silk = [(9 << 3), 0x12, 0x34, 0x56];
-    let hybrid = [(15 << 3), 0x12, 0x34, 0x56];
-    let mut out = vec![];
-    let mut d = Decoder::new(2).unwrap();
-    assert_eq!(d.decode(Some(&celt), &mut out), Ok(960));
-    assert_eq!(out.len(), 960 * 2);
-    out.clear();
-    // SILK decodes any bytes; hybrid gets past SILK to the part not built.
-    let mut d = Decoder::new(2).unwrap();
-    assert_eq!(d.decode(Some(&silk), &mut out), Ok(960));
-    assert_eq!(out.len(), 960 * 2);
-    out.clear();
-    let mut d = Decoder::new(2).unwrap();
-    assert_eq!(
-        d.decode(Some(&hybrid), &mut out),
-        Err(Error::Unsupported("hybrid decoding is not built yet"))
-    );
-    assert!(out.is_empty());
+    for config in [31, 9, 15] {
+        let mut d = Decoder::new(2).unwrap();
+        let mut out = vec![];
+        assert_eq!(d.decode(Some(&packet(config, false, 7, 60)), &mut out), Ok(960));
+        assert_eq!(out.len(), 960 * 2);
+        assert!(bounded(&out));
+        assert_ne!(d.final_range(), 0, "config {config}");
+    }
+}
+
+/// One packet of each kind the switches go through: SILK NB/MB/WB 10-60 ms, hybrid SWB/FB
+/// 10-20 ms, CELT NB-FB 2.5-20 ms, mono and stereo.
+const CONFIGS: [u8; 12] = [0, 3, 5, 11, 12, 15, 16, 19, 23, 26, 28, 31];
+
+#[test]
+fn every_mode_switch_decodes_the_packets_duration() {
+    for &a in &CONFIGS {
+        for &b in &CONFIGS {
+            for channels in [1, 2] {
+                let mut d = Decoder::new(channels).unwrap();
+                let mut out = vec![];
+                for (i, &config) in [a, b, a].iter().enumerate() {
+                    let p = packet(config, i == 1, u32::from(a) * 64 + u32::from(b), 80);
+                    let want = packet_duration(&p).unwrap();
+                    out.clear();
+                    assert_eq!(d.decode(Some(&p), &mut out), Ok(want), "{a} -> {b}");
+                    assert_eq!(out.len(), want * channels);
+                    assert!(bounded(&out), "{a} -> {b}: {out:?}");
+                }
+            }
+        }
+    }
 }
 
 #[test]
