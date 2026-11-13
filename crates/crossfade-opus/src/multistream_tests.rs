@@ -209,3 +209,14 @@ fn every_mapping_is_checked_at_construction() {
         );
     }
 }
+
+#[test]
+fn conceal_reaches_every_stream() {
+    let m = mapping(1, 2, 1, &[0, 1, 2]);
+    let mut ms = MultistreamDecoder::new(&m, 3).unwrap();
+    let mut out = vec![];
+    assert_eq!(ms.conceal(240, &mut out), Ok(240));
+    assert_eq!(out.len(), 240 * 3);
+    assert!(ms.conceal(7, &mut out).is_err());
+    assert_eq!(out.len(), 240 * 3);
+}

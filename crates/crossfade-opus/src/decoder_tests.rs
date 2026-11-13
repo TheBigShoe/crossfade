@@ -205,3 +205,22 @@ fn the_gain_scales_every_sample() {
         assert_eq!(gained.gain(), gain);
     }
 }
+
+#[test]
+fn conceal_gives_any_whole_number_of_2_5_ms() {
+    // opus_decode(NULL, frame_size): before any audio, silence; after, concealment.
+    let mut d = Decoder::new(2).unwrap();
+    let mut out = vec![];
+    assert_eq!(d.conceal(600, &mut out), Ok(600));
+    assert_eq!(out, vec![0.0; 1200]);
+    d.decode(Some(&packet(9, false, 1, 50)), &mut out).unwrap();
+    for frames in [120, 480, 1080, 5760] {
+        out.clear();
+        assert_eq!(d.conceal(frames, &mut out), Ok(frames));
+        assert_eq!(out.len(), frames * 2);
+        assert_eq!(d.last_packet_duration(), frames);
+    }
+    for frames in [0, 100, 5880] {
+        assert!(matches!(d.conceal(frames, &mut out), Err(Error::BadArgument(_))));
+    }
+}
