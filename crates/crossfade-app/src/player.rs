@@ -24,11 +24,13 @@
 
 mod convert;
 mod feed;
+mod follow;
 mod sink;
 mod worker;
 
 pub use convert::device_layout;
 pub use feed::Feed;
+pub use follow::Follow;
 pub use sink::{VirtualOutput, VirtualSink};
 
 use crossfade_core::{JobIo, Limits, StreamInfo};
