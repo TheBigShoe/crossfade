@@ -53,9 +53,9 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-dsp` | Sample-format conversion (its module doc is the project's rounding rule), the filter `Chain`, the filters (one module each, with their `FilterPlan`s; `resample` wraps `crossfade-resample`), `dither` (TPDF, clip count), `level` (dB through `libm`) |
 | `crossfade-graph` | `Job` (plain serialisable data), `filter` (the user's filter text and JSON, units, and `plan`, the one mapping to the dsp's plans), `describe`/`validate` and `describe_concat`/`validate_concat` (the I/O-free plan and check `Pipeline::open` shares), `processing`, `Timeline` (the gapless trim after every decoder), `Pipeline::step`/`step_with` with transcode (one input or a join) and stream-copy engines, `run` with events and cancel, `probe`, `DecodeSession` (one input decoded frame by frame on its timeline, with exact `seek`), `decode_frames` (a decode-only pass for analysis, read through a session) |
 | `crossfade-testkit` | Signal generators, PCM oracle, metrics, faulty I/O, manual clock (dev-only) |
-| `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout |
+| `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet`, `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout, and the preview `player` (`Player` over an `AudioSink`: a decode thread writes converted `f32` ahead into an `rtrb` ring per load or seek, `Feed::fill` is the wait-free device side, the position counts what was pulled; `VirtualSink` for tests; `Follow` for the playhead) |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
-| `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models, the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
+| `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models (the waveform strip's transport too), `audio_out` (the default output device through `cpal`), the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
 | `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest (single files and `[[archive]]` members; `expect = "data"` for reference files), fetch/seed/verify into `.corpus-cache` (`--only <id prefix>`, repeatable), `require(id)` and `require_all(prefix)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |
@@ -222,7 +222,9 @@ UI work: views stay thin and render a `crossfade-app` model; test the model
 first, then the view with `#[gpui_test]` (headless, no display). A convert
 built in the GUI must equal `crossfade_cli::request_from_args` for the same
 intent (the parity tests). Review `just screenshots` output before handing over
-UI changes. Tests and screenshots never read or write the real config
+UI changes. Audio output (`cpal`) lives only in `crossfade-ui` and is opened only by
+`open_main_window`; tests and screenshots play through `VirtualSink`, and nothing on the
+device's callback path blocks, locks or allocates. Tests and screenshots never read or write the real config
 directory. The first GPUI build takes several minutes; a `target/` cloned from
 another checkout (`cp -Rc`) needs `cargo clean -p <each workspace crate>` first
 or stale artifacts are reused.
