@@ -1,8 +1,8 @@
 //! Multistream encoding for mapping family 1 (RFC 7845 5.1.1.2): the channels of a Vorbis
 //! layout as stereo and mono streams, each with its own [`Encoder`], their packets joined
 //! with every one but the last self-delimited (RFC 6716 Appendix B). The layouts are
-//! libopus's `vorbis_mappings`; there is no surround masking or LFE mode yet, the bitrate is
-//! shared by channel count.
+//! libopus's `vorbis_mappings` and the bitrate is shared as its `surround_rate_allocation`
+//! does; the LFE stream is coded as one. There is no surround masking yet.
 
 use crate::encoder::Encoder;
 use crate::error::{Error, Result};
@@ -56,6 +56,9 @@ impl MultistreamEncoder {
             pcm: Vec::new(),
             packet: Vec::new(),
         };
+        if let Some(lfe) = e.lfe_stream() {
+            e.streams[lfe].set_lfe(true);
+        }
         e.set_bitrate(64_000 * channels as u32)?;
         Ok(e)
     }
@@ -69,17 +72,67 @@ impl MultistreamEncoder {
         self.bitrate
     }
 
-    /// Sets the bitrate of the whole stream, shared between the streams by their channels:
-    /// 6,000 to 510,000 bits per second for each.
+    /// The stream that carries the LFE channel, in the layouts that have one (the last, from
+    /// six channels up).
+    fn lfe_stream(&self) -> Option<usize> {
+        (self.table.len() >= 6).then(|| self.streams.len() - 1)
+    }
+
+    /// `surround_rate_allocation`: each stream's share of `bitrate`. A fixed part per
+    /// channel and per stream, then the rest by weight: a stereo pair twice a mono stream,
+    /// the LFE an eighth of one.
+    fn rates(&self, bitrate: u32) -> Vec<u32> {
+        let frame_rate = (48_000 / self.frame_size() as i64).max(50);
+        let bitrate = i64::from(bitrate);
+        let nb_lfe = i64::from(self.lfe_stream().is_some());
+        let nb_coupled = self.coupled as i64;
+        let nb_uncoupled = self.streams.len() as i64 - nb_coupled - nb_lfe;
+        let nb_normal = 2 * nb_coupled + nb_uncoupled;
+        // What a channel costs just to exist, and the same for the LFE.
+        let channel_offset = 40 * frame_rate;
+        let lfe_offset = (bitrate / 20).min(3000) + 15 * frame_rate;
+        let stream_offset =
+            ((bitrate - channel_offset * nb_normal - lfe_offset * nb_lfe) / nb_normal / 2)
+                .clamp(0, 20_000);
+        const COUPLED_RATIO: i64 = 512;
+        const LFE_RATIO: i64 = 32;
+        let total = (nb_uncoupled << 8) + COUPLED_RATIO * nb_coupled + nb_lfe * LFE_RATIO;
+        let channel_rate = 256
+            * (bitrate
+                - lfe_offset * nb_lfe
+                - stream_offset * (nb_coupled + nb_uncoupled)
+                - channel_offset * nb_normal)
+            / total;
+        (0..self.streams.len())
+            .map(|s| {
+                let rate = if s < self.coupled {
+                    2 * channel_offset
+                        + (stream_offset + ((channel_rate * COUPLED_RATIO) >> 8)).max(0)
+                } else if Some(s) == self.lfe_stream() {
+                    (lfe_offset + ((channel_rate * LFE_RATIO) >> 8)).max(0)
+                } else {
+                    channel_offset + (stream_offset + channel_rate).max(0)
+                };
+                rate.clamp(0, i64::from(u32::MAX)) as u32
+            })
+            .collect()
+    }
+
+    /// Sets the bitrate of the whole stream, 6,000 to 510,000 bits per second for each of
+    /// its channels on average; the streams share it by weight (a pair twice a mono stream,
+    /// the LFE a fraction).
     pub fn set_bitrate(&mut self, bits_per_second: u32) -> Result<()> {
-        let channels = self.table.len() as u64;
-        let share = |s: usize| {
-            (u64::from(bits_per_second) * self.stream_channels(s) as u64 / channels) as u32
-        };
-        // Checked for every stream before any is changed.
+        let channels = self.table.len() as u32;
+        if !(6_000 * channels..=510_000 * channels).contains(&bits_per_second) {
+            return Err(Error::BadArgument(
+                "an Opus bitrate is 6 to 510 kb/s a channel",
+            ));
+        }
+        // Checked for every stream before any is changed; a starved stream keeps the
+        // format's least.
         let mut probe = self.streams.clone();
-        for (s, e) in probe.iter_mut().enumerate() {
-            e.set_bitrate(share(s))?;
+        for (e, rate) in probe.iter_mut().zip(self.rates(bits_per_second)) {
+            e.set_bitrate(rate.clamp(6_000, 510_000))?;
         }
         self.streams = probe;
         self.bitrate = bits_per_second;

@@ -11,6 +11,8 @@ use crate::range_encoder::RangeEncoder;
 const BITRATES: std::ops::RangeInclusive<u32> = 6_000..=510_000;
 /// The first CELT full-band configuration (2.5 ms; 5, 10 and 20 ms follow).
 const CONFIG_CELT_FB: u8 = 28;
+/// The first CELT narrow-band configuration, for an LFE stream.
+const CONFIG_CELT_NB: u8 = 16;
 
 /// An Opus encoder for one mono or stereo stream at 48 kHz.
 #[derive(Debug, Clone)]
@@ -20,6 +22,7 @@ pub struct Encoder {
     bitrate: u32,
     frame_size: usize,
     vbr: bool,
+    lfe: bool,
 }
 
 impl Encoder {
@@ -34,6 +37,7 @@ impl Encoder {
             bitrate: 64_000 * channels as u32,
             frame_size: 960,
             vbr: false,
+            lfe: false,
         })
     }
 
@@ -65,6 +69,13 @@ impl Encoder {
     /// size.
     pub fn set_vbr(&mut self, vbr: bool) {
         self.vbr = vbr;
+    }
+
+    /// Codes the stream as a low-frequency effects channel (`OPUS_SET_LFE`, as a surround
+    /// encoder sets it): narrow band, nearly all of its bits in the lowest band.
+    pub(crate) fn set_lfe(&mut self, lfe: bool) {
+        self.lfe = lfe;
+        self.celt.set_lfe(lfe);
     }
 
     /// Samples per channel that [`encode`](Self::encode) takes.
@@ -134,7 +145,7 @@ impl Encoder {
         let frame = CeltFrame {
             frame_size: self.frame_size,
             start_band: 0,
-            end_band: 21,
+            end_band: if self.lfe { 13 } else { 21 },
             stream_channels: self.channels,
             accumulate: false,
         };
@@ -150,7 +161,12 @@ impl Encoder {
         let data = renc
             .done()
             .ok_or(Error::Corrupt("the frame did not fit its bytes"))?;
-        let toc = ((CONFIG_CELT_FB + lm as u8) << 3) | (u8::from(self.channels == 2) << 2);
+        let config = if self.lfe {
+            CONFIG_CELT_NB
+        } else {
+            CONFIG_CELT_FB
+        };
+        let toc = ((config + lm as u8) << 3) | (u8::from(self.channels == 2) << 2);
         out.push(toc);
         out.extend_from_slice(&data);
         Ok(())

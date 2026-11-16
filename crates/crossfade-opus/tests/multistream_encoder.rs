@@ -71,7 +71,13 @@ fn every_channel_count_decodes_back_channel_for_channel() {
                 "{channels} channels"
             );
         }
-        for ch in 0..channels {
+        // From six channels up the last is the LFE, which keeps only its lows (its own test).
+        let full_range = if channels >= 6 {
+            channels - 1
+        } else {
+            channels
+        };
+        for ch in 0..full_range {
             let snr = snr_db(&pcm, &out, channels, ch, usize::from(head.pre_skip));
             assert!(snr > 20.0, "{channels} channels, channel {ch}: {snr:.1} dB");
         }
@@ -146,8 +152,7 @@ fn the_lfe_stream_gets_a_small_share_and_a_stereo_pair_more_than_a_mono_stream()
     // The whole is still the bitrate: 640 bytes a frame.
     assert!((630..=650).contains(&total), "{sizes:?}");
     assert_eq!(
-        sizes[0],
-        sizes[1] + 0,
+        sizes[0], sizes[1],
         "the two pairs alike but for a length byte: {sizes:?}"
     );
     assert!(

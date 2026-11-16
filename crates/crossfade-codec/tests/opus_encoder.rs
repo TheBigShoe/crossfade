@@ -266,7 +266,15 @@ fn surround_goes_through_in_the_layouts_own_channel_order() {
             }
         }
         let got = &out[pre_skip * ch..][..frames * ch];
+        let lfe = s
+            .layout()
+            .positions()
+            .and_then(|p| p.iter().position(|c| *c == crossfade_core::Channel::Lfe));
         for c in 0..ch {
+            // The LFE channel keeps only its lows: these tones are not for it.
+            if Some(c) == lfe {
+                continue;
+            }
             let (mut sig, mut err) = (0.0f64, 0.0f64);
             for i in 4000..frames {
                 let (w, g) = (f64::from(pcm[i * ch + c]), f64::from(got[i * ch + c]));

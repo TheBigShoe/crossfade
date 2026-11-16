@@ -288,7 +288,17 @@ fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
     assert_eq!(stream.frames, Some(48_000));
     let got = decoded(&mut io, "six.opus");
     assert_eq!(got.len(), 48_000 * 6);
-    assert!(snr_against_the_sine(&got, 6) > 100.0);
+    // The fourth channel is the LFE, which keeps only its lows: not this 440 Hz.
+    let full_range: Vec<f64> = got
+        .chunks(6)
+        .flat_map(|f| [f[0], f[1], f[2], f[4], f[5]])
+        .collect();
+    assert!(snr_against_the_sine(&full_range, 5) > 100.0);
+    let lfe_power: f64 = got.chunks(6).map(|f| f[3] * f[3]).sum::<f64>() / 48_000.0;
+    assert!(
+        lfe_power < 0.125 * 0.01,
+        "the LFE's 440 Hz is gone: {lfe_power}"
+    );
     // A labelled source of that layout says nothing; side surrounds are Opus's rear pair.
     for (name, notes) in [
         ("5.1-back", vec![]),
