@@ -277,6 +277,22 @@ const ROWS: &[Row] = &[
         steps: &[Do::Container(Container::Aiff), Do::Format("s24")],
         cli: &["-o", "in-s24.aiff", "--sample-format", "s24"],
     },
+    // Apple Lossless output.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::M4a)],
+        cli: &["-o", "in.m4a"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("alac"), Do::Format("s24")],
+        cli: &["-o", "in-s24.m4a", "--sample-format", "s24"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.m4a")],
+        cli: &["-o", "typed.m4a"],
+    },
     // Opus output.
     Row {
         input: "in.wav",

@@ -118,6 +118,7 @@ fn presets_map_to_formats_and_back() {
             ("flac-24", "FLAC 24-bit"),
             ("aiff", "AIFF"),
             ("opus", "Opus"),
+            ("alac", "Apple Lossless"),
         ]
     );
     let mut s = sheet("a.wav");
@@ -320,6 +321,7 @@ fn typing_a_writable_extension_switches_the_container() {
         ("a.oga", Container::OggFlac),
         ("a.OGG", Container::OggFlac),
         ("a.opus", Container::OggOpus),
+        ("a.m4a", Container::M4a),
     ] {
         s.set_output(typed.into());
         assert_eq!(s.container(), container, "{typed}");
@@ -331,7 +333,7 @@ fn typing_a_writable_extension_switches_the_container() {
     assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .oga, .ogg, .opus and .aiff files."
+        "Crossfade can save .wav, .flac, .oga, .ogg, .opus, .m4a and .aiff files."
     );
 }
 
@@ -391,6 +393,36 @@ fn opus_is_a_container_with_nothing_to_choose_about_the_samples() {
     s.set_format(FormatChoice::Format(SampleFormat::S24));
     s.set_container(Container::Wav);
     assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
+}
+
+#[test]
+fn m4a_is_a_container_for_apple_lossless_with_whole_number_formats() {
+    let mut s = sheet(&p(&["music", "song.wav"]));
+    s.set_container(Container::M4a);
+    assert_eq!(s.output(), p(&["music", "song.m4a"]));
+    assert_eq!(Container::M4a.label(), "Apple Lossless");
+    assert!(Container::ALL.contains(&Container::M4a));
+    // 16-, 24- and 32-bit, never float or 8-bit; no level.
+    assert_eq!(
+        s.format_options(),
+        [
+            FormatChoice::SameAsSource,
+            FormatChoice::Format(SampleFormat::S16),
+            FormatChoice::Format(SampleFormat::S24),
+            FormatChoice::Format(SampleFormat::S32),
+        ]
+    );
+    assert!(!s.level_visible() && !s.copy_available());
+    s.set_format(FormatChoice::Format(SampleFormat::F32));
+    assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
+    assert_eq!(
+        s.hint().as_deref(),
+        Some("Apple Lossless stores whole-number samples, so this will be saved as 24-bit.")
+    );
+    assert_eq!(s.problems(&nothing_exists), []);
+    let mut s = sheet("in.wav");
+    s.apply_preset("alac");
+    assert_eq!((s.container(), s.output()), (Container::M4a, "in.m4a"));
 }
 
 #[test]
