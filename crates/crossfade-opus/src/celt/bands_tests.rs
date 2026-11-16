@@ -100,6 +100,7 @@ fn bands_without_bits_fold_or_fill_with_unit_norm() {
         coded_bands: 21,
         band_e: &[0.0; 2 * NB_EBANDS],
         disable_inv: false,
+        theta_rdo: false,
     };
     let mut x = vec![0.0f32; 960];
     let mut masks = [0u8; 2 * NB_EBANDS];
@@ -147,6 +148,7 @@ fn hybrid_folding_repeats_the_first_band_into_the_second() {
             coded_bands: 21,
             band_e: &[0.0; 2 * NB_EBANDS],
             disable_inv: false,
+            theta_rdo: false,
         };
         let mut x = vec![0.0f32; 120 * m];
         let mut masks = [0u8; 2 * NB_EBANDS];
@@ -213,6 +215,7 @@ fn shape_round_trip(
     spread: i32,
     intensity: usize,
     dual_stereo: bool,
+    theta_rdo: bool,
 ) -> ShapeTrip {
     use crate::celt::ec::Enc;
     use crate::celt::rate::{AllocHint, compute_allocation, init_caps};
@@ -256,6 +259,7 @@ fn shape_round_trip(
         coded_bands: alloc.coded_bands,
         band_e: &[0.0; 2 * NB_EBANDS],
         disable_inv: false,
+        theta_rdo,
     };
     let mut enc_masks = [0u8; 2 * NB_EBANDS];
     let mut enc_seed = 77;
@@ -344,7 +348,8 @@ fn the_decoder_rebuilds_the_shapes_the_encoder_resynthesised_bit_for_bit() {
                 }
                 let tf = if tf == -2 { -(lm as i32).min(2) } else { tf };
                 for spread in [0, 2, 3] {
-                    let t = shape_round_trip(1, lm, bytes, short_blocks, tf, spread, 0, false);
+                    let t =
+                        shape_round_trip(1, lm, bytes, short_blocks, tf, spread, 0, false, false);
                     assert_eq!(t.decoded, t.coded, "mono lm {lm} {bytes} bytes tf {tf}");
                     for (intensity, dual) in [(21, false), (8, false), (0, false), (21, true)] {
                         let t = shape_round_trip(
@@ -356,6 +361,8 @@ fn the_decoder_rebuilds_the_shapes_the_encoder_resynthesised_bit_for_bit() {
                             spread,
                             intensity,
                             dual,
+                            // The angle search is tried on every other case.
+                            (bytes + lm + intensity) % 2 == 0,
                         );
                         assert_eq!(
                             t.decoded, t.coded,
@@ -374,7 +381,7 @@ fn more_bits_bring_the_coded_shapes_closer_to_the_originals() {
         let like: Vec<f32> = [10usize, 40, 160, 600]
             .iter()
             .map(|&bytes| {
-                let t = shape_round_trip(c, 3, bytes, false, 0, 2, 21, false);
+                let t = shape_round_trip(c, 3, bytes, false, 0, 2, 21, false, false);
                 likeness(&t.orig, &t.decoded, 3)
             })
             .collect();
@@ -382,4 +389,31 @@ fn more_bits_bring_the_coded_shapes_closer_to_the_originals() {
         assert!(like[3] > 0.97, "c {c}: {like:?}");
         assert!(like[0] < 0.5, "c {c}: {like:?}");
     }
+}
+
+#[test]
+fn searching_the_stereo_angles_brings_the_coded_shapes_closer() {
+    // The same frames coded with each band's angle rounded both ways and the nearer kept:
+    // never much worse, and better on the whole.
+    let mut gain = 0.0f32;
+    let mut cases = 0;
+    for lm in 1..4 {
+        for bytes in [30usize, 60, 120, 240] {
+            let plain = shape_round_trip(2, lm, bytes, false, 0, 2, 21, false, false);
+            let searched = shape_round_trip(2, lm, bytes, false, 0, 2, 21, false, true);
+            assert_eq!(searched.decoded, searched.coded, "lm {lm} {bytes} bytes");
+            let (a, b) = (
+                likeness(&plain.orig, &plain.decoded, lm),
+                likeness(&searched.orig, &searched.decoded, lm),
+            );
+            assert!(b > a - 0.01, "lm {lm} {bytes} bytes: {b} against {a}");
+            gain += b - a;
+            cases += 1;
+        }
+    }
+    assert!(
+        gain / cases as f32 > 0.001,
+        "mean gain {}",
+        gain / cases as f32
+    );
 }
