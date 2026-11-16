@@ -127,6 +127,11 @@ impl PageWriter {
         }
     }
 
+    /// Pages closed so far.
+    pub(super) fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
     /// Closes the stream with an end-of-stream page (empty if nothing is open).
     pub(super) fn finish(&mut self) {
         self.emit(EOS);
