@@ -188,15 +188,15 @@ fn opus_from_opus_and_what_opus_cannot_take_are_said_by_name() {
         "codec opus cannot be written into wav"
     );
 
-    // A layout Opus has no order for: here side surrounds, labelled by a conversion first.
+    // A layout Opus has no order for, labelled by a conversion first.
     let plain = spec(
         48_000,
         SampleFormat::S16,
-        ChannelLayout::unpositioned(6).unwrap(),
+        ChannelLayout::unpositioned(4).unwrap(),
     );
-    io.insert("six.wav", sine_wav(&plain, 4800).1);
-    let mut j = job("six.wav", "side.wav", None);
-    j.outputs[0].audio.channels = Some(crossfade_graph::filter::parse_channels("5.1").unwrap());
+    io.insert("four.wav", sine_wav(&plain, 4800).1);
+    let mut j = job("four.wav", "foreign.wav", None);
+    j.outputs[0].audio.channels = Some(crossfade_graph::filter::parse_channels("3.1").unwrap());
     run(
         &j,
         &mut io,
@@ -206,9 +206,9 @@ fn opus_from_opus_and_what_opus_cannot_take_are_said_by_name() {
     )
     .unwrap();
     assert_eq!(
-        refusal(&mut io, &job("side.wav", "out.opus", None)),
-        "opus cannot hold the layout 5.1 (opus takes mono, stereo, 3.0, quad, 5.0-back, \
-         5.1-back, 6.1 or 7.1; choose --channels)"
+        refusal(&mut io, &job("foreign.wav", "out.opus", None)),
+        "opus cannot hold the layout 3.1 (opus takes mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 \
+         or 7.1; choose --channels)"
     );
     assert_eq!(io.get("out.opus"), None);
 }
@@ -289,9 +289,11 @@ fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
     let got = decoded(&mut io, "six.opus");
     assert_eq!(got.len(), 48_000 * 6);
     assert!(snr_against_the_sine(&got, 6) > 100.0);
-    // A labelled source of that layout says nothing; one with side surrounds gets there by
-    // naming the layout.
-    for (name, note_free) in [("5.1-back", true), ("5.1", true)] {
+    // A labelled source of that layout says nothing; side surrounds are Opus's rear pair.
+    for (name, notes) in [
+        ("5.1-back", vec![]),
+        ("5.1", vec!["5.1 is written as 5.1-back".to_string()]),
+    ] {
         let mut j = job("six.wav", "labelled.wav", None);
         j.outputs[0].audio.channels = Some(crossfade_graph::filter::parse_channels(name).unwrap());
         run(
@@ -302,11 +304,9 @@ fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
             &mut |_| {},
         )
         .unwrap();
-        let mut j = job("labelled.wav", "labelled.opus", None);
-        j.outputs[0].audio.channels =
-            Some(crossfade_graph::filter::parse_channels("5.1-back").unwrap());
+        let j = job("labelled.wav", "labelled.opus", None);
         let p = Pipeline::open(&j, &mut io, &Limits::default()).unwrap();
-        assert_eq!(p.plan().notes.is_empty(), note_free, "{name}");
+        assert_eq!(p.plan().notes, notes, "{name}");
         assert_eq!(p.plan().output.audio.layout(), &layout, "{name}");
     }
 }

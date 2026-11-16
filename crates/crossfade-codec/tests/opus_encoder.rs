@@ -129,14 +129,23 @@ fn only_48_khz_float_mono_or_stereo_is_taken() {
         refused(spec(48_000, SampleFormat::S16, ChannelLayout::stereo())),
         "opus is encoded from f32 samples, not s16"
     );
-    // Surround is taken in the layouts Vorbis orders, with back surrounds for 5.0 and 5.1.
-    let hint =
-        "opus takes mono, stereo, 3.0, quad, 5.0-back, 5.1-back, 6.1 or 7.1; choose --channels";
-    let side = ChannelLayout::from_name("5.1").unwrap();
+    // Surround is taken in the layouts Vorbis orders; side surrounds stand for its rear pair.
+    let hint = "opus takes mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 or 7.1; choose --channels";
+    let foreign = ChannelLayout::from_name("3.1").unwrap();
     assert_eq!(
-        refused(spec(48_000, SampleFormat::F32, side)),
-        format!("opus cannot hold the layout 5.1 ({hint})")
+        refused(spec(48_000, SampleFormat::F32, foreign)),
+        format!("opus cannot hold the layout 3.1 ({hint})")
     );
+    let side = spec(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::from_name("5.1").unwrap(),
+    );
+    assert_eq!(
+        crossfade_codec::opus::stream_layout(side.layout()),
+        ChannelLayout::from_name("5.1-back").unwrap()
+    );
+    assert!(crossfade_codec::opus::head(&side).is_ok());
     // Unlabelled channels are taken as the layout Opus has for their count (a plain
     // multichannel WAV is like that).
     let unlabelled = spec(
