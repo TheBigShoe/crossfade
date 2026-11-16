@@ -33,15 +33,18 @@ pub enum Container {
     OggFlac,
     /// Opus in an Ogg stream, `.opus`.
     OggOpus,
+    /// Apple Lossless in an MP4 file, `.m4a`.
+    M4a,
 }
 
 impl Container {
-    pub const ALL: [Container; 5] = [
+    pub const ALL: [Container; 6] = [
         Container::Wav,
         Container::Flac,
         Container::Aiff,
         Container::OggFlac,
         Container::OggOpus,
+        Container::M4a,
     ];
 
     pub fn label(self) -> &'static str {
@@ -51,6 +54,7 @@ impl Container {
             Self::Aiff => "AIFF",
             Self::OggFlac => "Ogg FLAC",
             Self::OggOpus => "Opus",
+            Self::M4a => "Apple Lossless",
         }
     }
 
@@ -62,6 +66,7 @@ impl Container {
             Self::Aiff => "aiff",
             Self::OggFlac => "oga",
             Self::OggOpus => "opus",
+            Self::M4a => "m4a",
         }
     }
 
@@ -81,6 +86,7 @@ impl Container {
             "flac" => Some(Self::Flac),
             "oga" | "ogg" => Some(Self::OggFlac),
             "opus" => Some(Self::OggOpus),
+            "m4a" => Some(Self::M4a),
             _ => Some(Self::Aiff),
         }
     }
@@ -155,6 +161,12 @@ pub const PRESETS: &[Preset] = &[
         Container::OggOpus,
         FormatChoice::SameAsSource,
     ),
+    preset(
+        "alac",
+        "Apple Lossless",
+        Container::M4a,
+        FormatChoice::SameAsSource,
+    ),
 ];
 
 /// FLAC's highest level.
@@ -185,7 +197,7 @@ impl Problem {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
             Self::Extension => {
-                "Crossfade can save .wav, .flac, .oga, .ogg, .opus and .aiff files.".into()
+                "Crossfade can save .wav, .flac, .oga, .ogg, .opus, .m4a and .aiff files.".into()
             }
             Self::Source(text) | Self::Adjust { message: text, .. } => text.clone(),
         }
@@ -354,6 +366,9 @@ impl ConvertSheet {
             Container::Flac | Container::OggFlac => {
                 format!("FLAC stores whole-number samples, so this will be saved as {bits}-bit.")
             }
+            Container::M4a => format!(
+                "Apple Lossless stores whole-number samples, so this will be saved as {bits}-bit."
+            ),
             _ => format!(
                 "This file type cannot store that format, so this will be saved as {bits}-bit."
             ),
