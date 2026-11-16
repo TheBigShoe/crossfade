@@ -118,14 +118,19 @@ impl MultistreamEncoder {
             .collect()
     }
 
-    /// Sets the bitrate of the whole stream, 6,000 to 510,000 bits per second for each of
-    /// its channels on average; the streams share it by weight (a pair twice a mono stream,
+    /// The bitrates a stream of `channels` (1 to 8) channels takes: 6,000 to 510,000 bits
+    /// per second for each of its streams.
+    pub fn bitrate_range(channels: usize) -> std::ops::RangeInclusive<u32> {
+        let streams = u32::from(VORBIS_MAPPINGS[channels.clamp(1, 8) - 1].0);
+        6_000 * streams..=510_000 * streams
+    }
+
+    /// Sets the bitrate of the whole stream, within [`bitrate_range`](Self::bitrate_range); the streams share it by weight (a pair twice a mono stream,
     /// the LFE a fraction).
     pub fn set_bitrate(&mut self, bits_per_second: u32) -> Result<()> {
-        let channels = self.table.len() as u32;
-        if !(6_000 * channels..=510_000 * channels).contains(&bits_per_second) {
+        if !Self::bitrate_range(self.table.len()).contains(&bits_per_second) {
             return Err(Error::BadArgument(
-                "an Opus bitrate is 6 to 510 kb/s a channel",
+                "an Opus bitrate is 6 to 510 kb/s a stream",
             ));
         }
         // Checked for every stream before any is changed; a starved stream keeps the

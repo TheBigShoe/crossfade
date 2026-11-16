@@ -84,7 +84,8 @@ proptest! {
 #[derive(Debug, Clone)]
 struct SurroundCase {
     channels: usize,
-    per_channel: u32,
+    /// Where in the layout's bitrate range, in thousandths.
+    rate: u32,
     vbr: bool,
     samples: Vec<u32>,
 }
@@ -92,13 +93,13 @@ struct SurroundCase {
 fn surround_case() -> impl Strategy<Value = SurroundCase> {
     (
         1usize..=8,
-        6_000u32..=510_000,
+        0u32..=1000,
         any::<bool>(),
         prop::collection::vec(any::<u32>(), 0..64),
     )
-        .prop_map(|(channels, per_channel, vbr, samples)| SurroundCase {
+        .prop_map(|(channels, rate, vbr, samples)| SurroundCase {
             channels,
-            per_channel,
+            rate,
             vbr,
             samples,
         })
@@ -113,7 +114,10 @@ proptest! {
     ) {
         use crossfade_opus::{MultistreamDecoder, MultistreamEncoder};
         let mut enc = MultistreamEncoder::new(c.channels).unwrap();
-        enc.set_bitrate(c.per_channel * c.channels as u32).unwrap();
+        let range = MultistreamEncoder::bitrate_range(c.channels);
+        let span = u64::from(range.end() - range.start());
+        let bitrate = range.start() + (span * u64::from(c.rate) / 1000) as u32;
+        enc.set_bitrate(bitrate).unwrap();
         enc.set_vbr(c.vbr);
         let head = enc.head(48_000);
         let mut dec = MultistreamDecoder::new(&head.mapping, c.channels).unwrap();

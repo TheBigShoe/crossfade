@@ -283,15 +283,22 @@ struct OpusEncoder {
     draining: bool,
 }
 
-/// Why `bitrate` (bits per second) is not one Opus takes, if it is not.
-pub fn check_bitrate(bitrate: u32) -> Result<(), Error> {
-    if (6_000..=510_000).contains(&bitrate) {
-        Ok(())
-    } else {
-        Err(Error::Unsupported {
-            what: format!("bitrate {bitrate} (opus takes 6000 to 510000 bits per second)"),
-        })
+/// Why `bitrate` (bits per second) is not one Opus takes for `channels` channels, if it is
+/// not: each stream of a surround layout has the format's range to itself.
+pub fn check_bitrate(bitrate: u32, channels: usize) -> Result<(), Error> {
+    let range = crossfade_opus::MultistreamEncoder::bitrate_range(channels);
+    if range.contains(&bitrate) {
+        return Ok(());
     }
+    let (lo, hi) = (range.start(), range.end());
+    let whose = if channels > 2 {
+        format!(" for {channels} channels")
+    } else {
+        String::new()
+    };
+    Err(Error::Unsupported {
+        what: format!("bitrate {bitrate} (opus takes {lo} to {hi} bits per second{whose})"),
+    })
 }
 
 /// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, one stream per channel
@@ -304,11 +311,8 @@ pub fn encoder(spec: &AudioSpec, bitrate: Option<u32>) -> Result<Box<dyn Encoder
     let mut inner = crossfade_opus::MultistreamEncoder::new(channels).map_err(engine_error)?;
     inner.set_vbr(true);
     if let Some(b) = bitrate {
-        check_bitrate(b)?;
-        // Each stream has the format's range to itself.
-        inner.set_bitrate(b).map_err(|_| Error::Unsupported {
-            what: format!("bitrate {b} is out of range for {channels} channels of opus"),
-        })?;
+        check_bitrate(b, channels)?;
+        inner.set_bitrate(b).map_err(engine_error)?;
     }
     Ok(Box::new(OpusEncoder {
         inner,

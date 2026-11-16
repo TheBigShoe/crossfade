@@ -261,7 +261,11 @@ fn output_plan(
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
     encode_options(codec, settings.compression_level)?;
-    bitrate_option(codec, settings.bitrate)?;
+    bitrate_option(
+        codec,
+        settings.bitrate,
+        usize::from(out_spec.layout().channels()),
+    )?;
     // Opus's header is known before any audio, and its muxer writes it first.
     let mut opus_note = None;
     let (out_spec, extradata, depth) = if codec == CodecId::Opus {
@@ -349,7 +353,11 @@ pub(crate) fn resolve(
     let out = &plan.output;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
-        bitrate: bitrate_option(out.codec, settings.bitrate)?,
+        bitrate: bitrate_option(
+            out.codec,
+            settings.bitrate,
+            usize::from(out.audio.layout().channels()),
+        )?,
         ..encode_options(out.codec, settings.compression_level)?
     };
     let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
@@ -574,7 +582,11 @@ pub(crate) fn resolve_join(
     let encoder_threads = codec_threads(threads, inputs[0].codec, out.codec).1;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
-        bitrate: bitrate_option(out.codec, settings.bitrate)?,
+        bitrate: bitrate_option(
+            out.codec,
+            settings.bitrate,
+            usize::from(out.audio.layout().channels()),
+        )?,
         ..encode_options(out.codec, settings.compression_level)?
     };
     let chain_format = if measuring.is_some() {

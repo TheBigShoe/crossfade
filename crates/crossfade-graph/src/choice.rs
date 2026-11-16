@@ -114,11 +114,16 @@ pub(crate) fn share_threads(
     }
 }
 
-/// The bitrate option for `codec`: it only means something to Opus.
-pub(crate) fn bitrate_option(codec: CodecId, bitrate: Option<u32>) -> Result<Option<u32>, Error> {
+/// The bitrate option for `codec` writing `channels` channels: it only means something to
+/// Opus, whose range grows with a surround layout's streams.
+pub(crate) fn bitrate_option(
+    codec: CodecId,
+    bitrate: Option<u32>,
+    channels: usize,
+) -> Result<Option<u32>, Error> {
     match bitrate {
         Some(_) if codec != CodecId::Opus => Err(unsupported("--bitrate applies to opus only")),
-        Some(b) => crossfade_codec::opus::check_bitrate(b).map(|()| Some(b)),
+        Some(b) => crossfade_codec::opus::check_bitrate(b, channels).map(|()| Some(b)),
         None => Ok(None),
     }
 }
