@@ -164,16 +164,80 @@ mod tests;
 /// Samples per packet: 20 ms.
 const FRAME: usize = 960;
 
-/// Why `spec` cannot be encoded as Opus, if it cannot: the encoder takes 48 kHz `F32`, mono
-/// or stereo.
+/// The layout a stream encoded from `layout` reads back with: `layout` itself; for 3 to 8
+/// unlabelled channels (a plain multichannel WAV) the layout Opus has for that count, whose
+/// order they are taken to be in; and for side surrounds with no back ones (quad-side, 5.0,
+/// 5.1) the same with back surrounds, Opus's one rear pair.
+pub fn stream_layout(layout: &crossfade_core::ChannelLayout) -> crossfade_core::ChannelLayout {
+    use crossfade_core::{Channel, ChannelLayout};
+    let Ok(n) = u8::try_from(layout.channels()) else {
+        return layout.clone();
+    };
+    let Ok(vorbis) = ChannelLayout::vorbis_order(n) else {
+        return layout.clone();
+    };
+    match layout.positions() {
+        None if (3..=8).contains(&n) => vorbis,
+        Some(p) if !p.contains(&Channel::BackLeft) && !p.contains(&Channel::BackRight) => {
+            let rear = |c: &Channel| match c {
+                Channel::SideLeft => Channel::BackLeft,
+                Channel::SideRight => Channel::BackRight,
+                other => *other,
+            };
+            let moved: Vec<Channel> = p.iter().map(rear).collect();
+            // The WAVE order of the two pairs is the same, so the channels stay in place.
+            if vorbis.positions() == Some(moved.as_slice()) {
+                vorbis
+            } else {
+                layout.clone()
+            }
+        }
+        _ => layout.clone(),
+    }
+}
+
+/// For each channel Opus codes (Vorbis order), the channel of `layout` it takes; `None` when
+/// they are the same. An error names why the layout cannot be coded: more than two channels
+/// must be one of the layouts Vorbis orders.
+fn coded_order(layout: &crossfade_core::ChannelLayout) -> Result<Option<Vec<usize>>, Error> {
+    let channels = layout.channels();
+    if channels <= 2 {
+        return Ok(None);
+    }
+    let written = stream_layout(layout);
+    let order = u8::try_from(channels)
+        .ok()
+        .and_then(speakers)
+        .and_then(|codec| {
+            let positions = written.positions()?;
+            let order: Option<Vec<usize>> = codec
+                .iter()
+                .map(|c| positions.iter().position(|p| p == c))
+                .collect();
+            order.filter(|o| o.len() == positions.len())
+        });
+    match order {
+        Some(o) => Ok(Some(o)),
+        None => {
+            let what = match layout.name() {
+                Some(name) => format!("the layout {name}"),
+                None => format!("{channels} unlabelled channels"),
+            };
+            Err(Error::Unsupported {
+                what: format!(
+                    "opus cannot hold {what} (opus takes mono, stereo, 3.0, quad, 5.0, 5.1, 6.1 or \
+                     7.1; choose --channels)"
+                ),
+            })
+        }
+    }
+}
+
+/// Why `spec` cannot be encoded as Opus, if it cannot: the encoder takes 48 kHz `F32` in
+/// mono, stereo or a layout Vorbis orders.
 pub fn check_encodable(spec: &AudioSpec) -> Result<(), Error> {
     let refuse = |what: String| Err(Error::Unsupported { what });
-    let channels = spec.layout().channels();
-    if channels > 2 {
-        return refuse(format!(
-            "opus encoding takes mono or stereo, not {channels} channels; choose --channels stereo"
-        ));
-    }
+    coded_order(spec.layout())?;
     if spec.sample_rate() != 48_000 {
         return refuse(format!(
             "opus is encoded at 48000 Hz, not {} Hz",
@@ -193,7 +257,7 @@ pub fn check_encodable(spec: &AudioSpec) -> Result<(), Error> {
 /// muxer writes it first.
 pub fn head(spec: &AudioSpec) -> Result<Vec<u8>, Error> {
     check_encodable(spec)?;
-    let enc = crossfade_opus::Encoder::new(usize::from(spec.layout().channels()))
+    let enc = crossfade_opus::MultistreamEncoder::new(usize::from(spec.layout().channels()))
         .map_err(engine_error)?;
     Ok(enc.head(spec.sample_rate()).to_bytes())
 }
@@ -203,8 +267,10 @@ pub fn head(spec: &AudioSpec) -> Result<Vec<u8>, Error> {
 /// After `drain` the input is padded with silence until every sample has come out of a
 /// decoder.
 struct OpusEncoder {
-    inner: crossfade_opus::Encoder,
+    inner: crossfade_opus::MultistreamEncoder,
     channels: usize,
+    /// For each coded channel, the input channel it takes; `None` when they are the same.
+    order: Option<Vec<usize>>,
     head: Vec<u8>,
     /// Samples not yet encoded, from `at` on.
     pending: Vec<f32>,
@@ -228,20 +294,26 @@ pub fn check_bitrate(bitrate: u32) -> Result<(), Error> {
     }
 }
 
-/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, at a variable bitrate
+/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, one stream per channel
+/// pair or channel above stereo, at a variable bitrate
 /// around `bitrate` bits per second, or 64 kb/s a channel.
 pub fn encoder(spec: &AudioSpec, bitrate: Option<u32>) -> Result<Box<dyn Encoder>, Error> {
     let head = head(spec)?;
     let channels = usize::from(spec.layout().channels());
-    let mut inner = crossfade_opus::Encoder::new(channels).map_err(engine_error)?;
+    let order = coded_order(spec.layout())?;
+    let mut inner = crossfade_opus::MultistreamEncoder::new(channels).map_err(engine_error)?;
     inner.set_vbr(true);
     if let Some(b) = bitrate {
         check_bitrate(b)?;
-        inner.set_bitrate(b).map_err(engine_error)?;
+        // Each stream has the format's range to itself.
+        inner.set_bitrate(b).map_err(|_| Error::Unsupported {
+            what: format!("bitrate {b} is out of range for {channels} channels of opus"),
+        })?;
     }
     Ok(Box::new(OpusEncoder {
         inner,
         channels,
+        order,
         head,
         pending: Vec::new(),
         at: 0,
@@ -265,7 +337,14 @@ impl Encoder for OpusEncoder {
         // What was encoded is dropped before more is added, so the buffer stays small.
         self.pending.drain(..self.at);
         self.at = 0;
-        self.pending.extend_from_slice(samples);
+        match &self.order {
+            None => self.pending.extend_from_slice(samples),
+            Some(order) => {
+                for frame in samples.chunks_exact(self.channels) {
+                    self.pending.extend(order.iter().map(|&k| frame[k]));
+                }
+            }
+        }
         self.fed += (samples.len() / self.channels) as u64;
         Ok(())
     }

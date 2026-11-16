@@ -263,10 +263,27 @@ fn output_plan(
     encode_options(codec, settings.compression_level)?;
     bitrate_option(codec, settings.bitrate)?;
     // Opus's header is known before any audio, and its muxer writes it first.
-    let (extradata, depth) = if codec == CodecId::Opus {
-        (crossfade_codec::opus::head(&out_spec)?, None)
+    let mut opus_note = None;
+    let (out_spec, extradata, depth) = if codec == CodecId::Opus {
+        let extradata = crossfade_codec::opus::head(&out_spec)?;
+        // Unlabelled channels read back as the layout Opus has for their count.
+        let written = crossfade_codec::opus::stream_layout(out_spec.layout());
+        let spec = if written == *out_spec.layout() {
+            out_spec
+        } else {
+            let from = match out_spec.layout().name() {
+                Some(name) => format!("{name} is"),
+                None => format!("{} unlabelled channels are", written.channels()),
+            };
+            opus_note = Some(format!(
+                "{from} written as {}",
+                written.name().unwrap_or("opus orders them")
+            ));
+            AudioSpec::new(out_spec.sample_rate(), out_spec.format(), written)?
+        };
+        (spec, extradata, None)
     } else {
-        (Vec::new(), depth)
+        (out_spec, Vec::new(), depth)
     };
     let output = StreamInfo {
         frames,
@@ -276,6 +293,7 @@ fn output_plan(
     };
     let mut all = Vec::from_iter(sample_format_note(input, settings));
     all.extend(notes(in_spec, chain));
+    all.extend(opus_note);
     Ok(OutputPlan {
         output_format,
         output,
