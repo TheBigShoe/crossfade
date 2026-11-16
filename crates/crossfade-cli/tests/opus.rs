@@ -303,3 +303,79 @@ fn bitrate_takes_bits_or_kilobits_and_only_for_opus() {
         );
     }
 }
+
+#[test]
+fn tags_joins_trims_and_normalising_all_reach_an_opus_file() {
+    let d = Dir::new("paths");
+    let (bytes, _, _) = ogg();
+    std::fs::write(d.path("in.opus"), &bytes).unwrap();
+    let ok = |args: &[&str]| {
+        let out = run(args);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        text(&out.stderr)
+    };
+    // The source's tags travel through FLAC and back into Opus.
+    ok(&["convert", &d.path("in.opus"), "-o", &d.path("a.flac")]);
+    ok(&["convert", &d.path("a.flac"), "-o", &d.path("tagged.opus")]);
+    let report = text(&run(&["probe", &d.path("tagged.opus")]).stdout);
+    assert!(report.contains("Tone"), "{report}");
+
+    let frames = |name: &str| -> u64 {
+        let json = text(&run(&["probe", &d.path(name), "--json"]).stdout);
+        let at = json.find("\"frames\":").unwrap_or_else(|| panic!("{json}"));
+        json[at + 9..]
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap()
+    };
+    let one = frames("tagged.opus");
+    // A join is as long as its parts.
+    ok(&[
+        "concat",
+        &d.path("a.flac"),
+        &d.path("a.flac"),
+        "-o",
+        &d.path("twice.opus"),
+    ]);
+    assert_eq!(frames("twice.opus"), 2 * one);
+    // A trim to 50 ms, at Opus's 48 kHz.
+    ok(&[
+        "convert",
+        &d.path("a.flac"),
+        "-o",
+        &d.path("cut.opus"),
+        "--filter",
+        "trim start=0.1s duration=0.05s",
+    ]);
+    assert!(one > 12_000, "{one}");
+    assert_eq!(frames("cut.opus"), 2_400);
+    // Normalising measures first, then encodes at the gain found.
+    ok(&[
+        "convert",
+        &d.path("a.flac"),
+        "-o",
+        &d.path("loud.opus"),
+        "--filter",
+        "normalize -20LUFS",
+    ]);
+    let json = text(&run(&["probe", &d.path("loud.opus"), "--loudness", "--json"]).stdout);
+    let at = json
+        .find("\"integrated_lufs\":")
+        .unwrap_or_else(|| panic!("{json}"));
+    let lufs: f64 = json[at + 18..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+        .collect::<String>()
+        .parse()
+        .unwrap();
+    assert!((lufs + 20.0).abs() < 1.0, "{lufs} LUFS");
+}
