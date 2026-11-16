@@ -1,5 +1,6 @@
 //! Ogg Opus through the real binary: probe, conversion to FLAC (16-bit, with the lossy note)
-//! and to float WAV with the decoder's own samples, pre-skip dropped and the end trimmed.
+//! and to float WAV with the decoder's own samples, pre-skip dropped and the end trimmed;
+//! stream copy into Ogg Opus, and the refusal of what would need an Opus encoder.
 
 use crossfade_opus::Decoder;
 use crossfade_opus::testing::ogg::{self as w, OggLayout};
@@ -120,4 +121,101 @@ fn opus_converts_to_16_bit_flac_with_a_note_and_to_float_exactly() {
         .collect();
     let wav = std::fs::read(d.path("of.wav")).unwrap();
     assert!(data_chunk(&wav) == want, "float output differs");
+}
+
+#[test]
+fn opus_is_copied_into_ogg_opus_and_decodes_the_same() {
+    let d = Dir::new("copy");
+    let (bytes, _, frames) = ogg();
+    std::fs::write(d.path("in.opus"), &bytes).unwrap();
+    for name in ["out.opus", "out.ogg"] {
+        let out = run(&[
+            "convert",
+            &d.path("in.opus"),
+            "-o",
+            &d.path(name),
+            "--codec",
+            "copy",
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    // The same stream whatever the extension, and not the source's pages or vendor.
+    let copy = std::fs::read(d.path("out.opus")).unwrap();
+    assert!(copy == std::fs::read(d.path("out.ogg")).unwrap());
+    assert!(copy != bytes);
+
+    let probe = |name: &str| text(&run(&["probe", &d.path(name)]).stdout);
+    let shown = probe("out.opus");
+    assert!(
+        shown.contains("audio, opus, 48000 Hz, stereo, f32, "),
+        "{shown}"
+    );
+    assert!(shown.contains(&format!("({frames} frames)")), "{shown}");
+    assert!(shown.contains("TITLE"), "{shown}");
+
+    for (from, to) in [("in.opus", "a.wav"), ("out.opus", "b.wav")] {
+        let out = run(&[
+            "convert",
+            &d.path(from),
+            "-o",
+            &d.path(to),
+            "--sample-format",
+            "f32",
+        ]);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    }
+    let (a, b) = (
+        std::fs::read(d.path("a.wav")).unwrap(),
+        std::fs::read(d.path("b.wav")).unwrap(),
+    );
+    assert_eq!(data_chunk(&a).len() as u64, frames * 8);
+    assert!(a == b, "the copy decodes differently");
+
+    // A copy of the copy is the copy.
+    let out = run(&[
+        "convert",
+        &d.path("out.opus"),
+        "-o",
+        &d.path("again.opus"),
+        "--codec",
+        "copy",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(copy == std::fs::read(d.path("again.opus")).unwrap());
+}
+
+#[test]
+fn encoding_opus_is_refused_and_leaves_no_file() {
+    let d = Dir::new("no-encoder");
+    let (bytes, _, _) = ogg();
+    std::fs::write(d.path("in.opus"), &bytes).unwrap();
+    let out = run(&["convert", &d.path("in.opus"), "-o", &d.path("pcm.wav")]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    for input in ["pcm.wav", "in.opus"] {
+        let out = run(&["convert", &d.path(input), "-o", &d.path("out.opus")]);
+        assert_eq!(out.status.code(), Some(1), "{input}");
+        let err = text(&out.stderr);
+        assert!(
+            err.contains(
+                "opus encoding is not available yet; --codec copy keeps an opus input as it is"
+            ),
+            "{err}"
+        );
+        assert!(!std::path::Path::new(&d.path("out.opus")).exists());
+    }
+    // PCM has no Opus packets to copy.
+    let out = run(&[
+        "convert",
+        &d.path("pcm.wav"),
+        "-o",
+        &d.path("out.opus"),
+        "--codec",
+        "copy",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("cannot copy pcm_s16le into ogg (ogg holds flac or opus)"),
+        "{err}"
+    );
 }
