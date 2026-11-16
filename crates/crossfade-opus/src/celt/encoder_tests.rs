@@ -47,6 +47,91 @@ fn round_trip(pcm: &[f32], channels: usize, frame_size: usize, bytes: usize) -> 
     out
 }
 
+/// Whether a frame's pitch filter flag is set: the second bit, after the silence flag.
+fn pitch_filter_on(data: &[u8]) -> bool {
+    let mut dec = RangeDecoder::new(data);
+    !dec.dec_bit_logp(15) && dec.dec_bit_logp(1)
+}
+
+/// The frames of `pcm` as [`round_trip`] codes them (and checks them).
+fn frames_of(pcm: &[f32], frame_size: usize, bytes: usize) -> Vec<Vec<u8>> {
+    let mut enc = CeltEncoder::new(1);
+    let mut dec = CeltDecoder::new(1);
+    pcm.chunks_exact(frame_size)
+        .map(|chunk| {
+            let mut renc = RangeEncoder::new(bytes);
+            enc.encode(chunk, &frame(frame_size, 1), &mut renc).unwrap();
+            let rng = renc.rng();
+            let data = renc.done().unwrap();
+            let mut rdec = RangeDecoder::new(&data);
+            let mut buf = vec![0.0f32; frame_size];
+            dec.decode(Some(&mut rdec), &frame(frame_size, 1), &mut buf)
+                .unwrap();
+            assert_eq!(dec.final_range(), rng);
+            data
+        })
+        .collect()
+}
+
+#[test]
+fn a_pitched_voice_turns_the_pitch_filter_on_and_noise_does_not() {
+    // A 150 Hz pulse train with a falling spectrum, as a voiced sound has.
+    let voice: Vec<f32> = (0..960 * 20)
+        .map(|i| {
+            let t = i as f64 / 48000.0;
+            (1..=30)
+                .map(|h| {
+                    0.25 / f64::from(h)
+                        * libm::sin(std::f64::consts::TAU * 150.0 * f64::from(h) * t)
+                })
+                .sum::<f64>() as f32
+        })
+        .collect();
+    for frame_size in [240, 960] {
+        let frames = frames_of(&voice, frame_size, 60 * frame_size / 960 + 20);
+        let on = frames[4..].iter().filter(|f| pitch_filter_on(f)).count();
+        assert!(
+            on * 10 >= (frames.len() - 4) * 9,
+            "{frame_size}: {on} of {}",
+            frames.len() - 4
+        );
+    }
+    let mut s = 99u32;
+    let noise: Vec<f32> = (0..960 * 20)
+        .map(|_| {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((s >> 9) as f32 / (1u32 << 23) as f32 - 0.5) * 0.5
+        })
+        .collect();
+    let frames = frames_of(&noise, 960, 80);
+    assert_eq!(frames.iter().filter(|f| pitch_filter_on(f)).count(), 0);
+    // Too few bytes to spend any on it.
+    assert!(
+        frames_of(&voice, 960, 12)
+            .iter()
+            .all(|f| !pitch_filter_on(f))
+    );
+}
+
+#[test]
+fn the_pitch_filter_makes_a_voice_cleaner_at_the_same_rate() {
+    let voice: Vec<f32> = (0..960 * 30)
+        .map(|i| {
+            let t = i as f64 / 48000.0;
+            (1..=30)
+                .map(|h| {
+                    0.25 / f64::from(h)
+                        * libm::sin(std::f64::consts::TAU * 150.0 * f64::from(h) * t)
+                })
+                .sum::<f64>() as f32
+        })
+        .collect();
+    let got = round_trip(&voice, 1, 960, 50);
+    let snr = snr_db(&voice, &got, 1, 960 * 6);
+    // Without the filter: 13.7 dB.
+    assert!(snr > 15.0, "{snr:.1} dB");
+}
+
 /// A few partials and a little noise: music-like, deterministic.
 fn tones(len: usize, channels: usize) -> Vec<f32> {
     let mut s = 12345u32;
