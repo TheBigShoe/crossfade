@@ -148,3 +148,37 @@ proptest! {
         round_trip(config, &pcm);
     }
 }
+
+/// A bright, busy signal: partials up to 9 kHz with slow beating, and a little noise.
+fn bright(frames: usize, channels: usize) -> Vec<i32> {
+    let mut s = 12345u32;
+    (0..frames)
+        .flat_map(|i| {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let n = f64::from(s as i32) / f64::from(i32::MAX) * 0.002;
+            (0..channels)
+                .map(|c| {
+                    let t = i as f64 / 44_100.0;
+                    let tau = std::f64::consts::TAU;
+                    let v = 0.25 * (tau * 1_900.0 * t).sin()
+                        + 0.2 * (tau * 4_700.0 * t + c as f64).sin()
+                        + 0.15 * (tau * 9_100.0 * t).sin() * (tau * 3.0 * t).cos()
+                        + n;
+                    (v * 32_000.0) as i32
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[test]
+fn a_predictor_fitted_to_the_packet_beats_the_fixed_one_on_bright_music() {
+    let config = Config::new(44_100, 2, 16).unwrap();
+    let frames = 4096 * 8;
+    let raw = frames * 2 * 2;
+    let bytes = round_trip(config, &bright(frames, 2));
+    // The fixed starting coefficients alone: 74443 bytes, 0.568 of raw.
+    assert!((bytes as f64) < 0.50 * raw as f64, "{bytes} of {raw}");
+}
