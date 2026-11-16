@@ -8,7 +8,9 @@
 //! packet fails, every frame before it comes out, then its error, and nothing after. A reset
 //! forgets what is queued.
 
-use crossfade_core::{AudioFrame, Decoder, Error, Packet, SampleFormat, Samples, StreamInfo};
+use crossfade_core::{
+    AudioFrame, AudioSpec, Decoder, Encoder, Error, Packet, SampleFormat, Samples, StreamInfo,
+};
 use std::collections::VecDeque;
 
 fn engine_error(e: crossfade_alac::Error) -> Error {
@@ -290,6 +292,170 @@ impl Decoder for AlacDecoder {
         self.failed = false;
         self.held = None;
         self.draining = false;
+    }
+}
+
+/// The bit depth ALAC stores for `spec` and a true depth (`bits`, the format's width when
+/// `None`), or why it cannot.
+fn encode_depth(spec: &AudioSpec, bits: Option<u8>) -> Result<u8, Error> {
+    let refuse = |what: String| Err(Error::Unsupported { what });
+    let format = spec.format();
+    if format.is_float() {
+        return refuse(
+            "alac cannot store floating-point samples; choose --sample-format s16, s24 or s32"
+                .into(),
+        );
+    }
+    let holds = "alac holds 16-, 20-, 24- and 32-bit audio";
+    if format == SampleFormat::U8 {
+        return refuse(format!("{holds}, not 8-bit; choose --sample-format s16"));
+    }
+    let width = format.bits() as u8;
+    let depth = bits.unwrap_or(width);
+    // 20-bit audio travels in the top of a 24-bit container; nothing else is narrower.
+    if depth == width || (depth == 20 && width == 24) {
+        Ok(depth)
+    } else {
+        refuse(format!("{holds}, not {depth}-bit"))
+    }
+}
+
+/// For each ALAC channel, the channel of `spec`'s layout that fills it, or why ALAC cannot
+/// hold the layout: it has one per channel count.
+fn encode_order(spec: &AudioSpec) -> Result<Vec<usize>, Error> {
+    let refuse = |what: String| Err(Error::Unsupported { what });
+    let layout = spec.layout();
+    let wave = u8::try_from(layout.channels())
+        .ok()
+        .and_then(crossfade_alac::wave_layout);
+    let Some(wave) = wave else {
+        return refuse(format!(
+            "alac holds 1 to 8 channels, not {}",
+            layout.channels()
+        ));
+    };
+    let own = crossfade_core::ChannelLayout::from_mask(wave.mask, layout.channels());
+    // Unlabelled channels are taken to be in ALAC's layout for their count.
+    if layout.positions().is_some() && own.as_ref() != Some(layout) {
+        let (has, wants) = (layout.name(), own.as_ref().and_then(|l| l.name()));
+        return refuse(match (has, wants) {
+            (Some(has), Some(wants)) => format!(
+                "alac cannot hold the layout {has} (for {} channels it has {wants})",
+                layout.channels()
+            ),
+            _ => format!("alac has its own layout for {} channels", layout.channels()),
+        });
+    }
+    let mut order = vec![0; wave.from_alac.len()];
+    for (wave_index, &alac_index) in wave.from_alac.iter().enumerate() {
+        order[usize::from(alac_index)] = wave_index;
+    }
+    Ok(order)
+}
+
+/// The config (the 24-byte cookie a container stores) of the stream [`encoder`] writes.
+pub fn config(spec: &AudioSpec, bits: Option<u8>) -> Result<crossfade_alac::Config, Error> {
+    let depth = encode_depth(spec, bits)?;
+    encode_order(spec)?;
+    let channels = spec.layout().channels() as u8;
+    crossfade_alac::Config::new(spec.sample_rate(), channels, depth).map_err(engine_error)
+}
+
+/// Frames of any size in, packets of the config's frame length out (a shorter last one after
+/// `drain`), each stamped with the pts of its first frame.
+struct AlacEncoder {
+    inner: crossfade_alac::Encoder,
+    cookie: [u8; crossfade_alac::Config::LEN],
+    channels: usize,
+    /// For each ALAC channel, the input channel that fills it.
+    order: Vec<usize>,
+    /// Right shift from the container to the stream's depth.
+    justify: u32,
+    /// Samples not yet encoded, in ALAC's order, from `at` on.
+    pending: Vec<i32>,
+    at: usize,
+    next_pts: Option<i64>,
+    draining: bool,
+}
+
+/// An ALAC encoder for `spec`: 16-, 24- or 32-bit integer samples (`bits` 20 for 20-bit audio
+/// in a 24-bit container) in ALAC's layout for the channel count.
+pub fn encoder(spec: &AudioSpec, bits: Option<u8>) -> Result<Box<dyn Encoder>, Error> {
+    let config = config(spec, bits)?;
+    Ok(Box::new(AlacEncoder {
+        inner: crossfade_alac::Encoder::new(config).map_err(engine_error)?,
+        cookie: config.write(),
+        channels: usize::from(config.channels),
+        order: encode_order(spec)?,
+        justify: spec.format().bits() as u32 - u32::from(config.bit_depth),
+        pending: Vec::new(),
+        at: 0,
+        next_pts: None,
+        draining: false,
+    }))
+}
+
+impl Encoder for AlacEncoder {
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        if self.next_pts.is_none() {
+            self.next_pts = Some(frame.pts);
+        }
+        self.pending.drain(..self.at);
+        self.at = 0;
+        let (order, shift) = (&self.order, self.justify);
+        let pending = &mut self.pending;
+        match &frame.samples {
+            Samples::S16(v) => {
+                for f in v.chunks_exact(self.channels) {
+                    pending.extend(order.iter().map(|&k| i32::from(f[k])));
+                }
+            }
+            Samples::S24(v) | Samples::S32(v) => {
+                for f in v.chunks_exact(self.channels) {
+                    pending.extend(order.iter().map(|&k| f[k] >> shift));
+                }
+            }
+            _ => {
+                return Err(Error::Unsupported {
+                    what: "alac is encoded from integer samples".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn receive_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        let per_packet = self.inner.config().frame_length as usize * self.channels;
+        let have = self.pending.len() - self.at;
+        let take = if have >= per_packet {
+            per_packet
+        } else if self.draining && have > 0 {
+            have
+        } else {
+            return Ok(false);
+        };
+        let Some(pts) = self.next_pts else {
+            return Ok(false);
+        };
+        out.data.clear();
+        self.inner
+            .encode(&self.pending[self.at..self.at + take], &mut out.data)
+            .map_err(engine_error)?;
+        self.at += take;
+        let frames = (take / self.channels) as u64;
+        out.stream = 0;
+        out.pts = pts;
+        out.duration = frames;
+        self.next_pts = Some(pts + frames as i64);
+        Ok(true)
+    }
+
+    fn drain(&mut self) {
+        self.draining = true;
+    }
+
+    fn extradata(&self) -> &[u8] {
+        &self.cookie
     }
 }
 

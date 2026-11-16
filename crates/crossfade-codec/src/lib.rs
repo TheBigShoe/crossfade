@@ -105,6 +105,9 @@ pub fn encoder_for_threads(
     if codec == CodecId::Opus {
         return opus::encoder(spec, options.bitrate);
     }
+    if codec == CodecId::Alac {
+        return alac::encoder(spec, options.bits_per_sample);
+    }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),
     })
