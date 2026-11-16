@@ -148,6 +148,11 @@ impl<'a> Enc<'a> {
 /// returns the value coded.
 pub(super) trait Coder {
     const ENCODE: bool;
+    /// The coder's state, for the encoder to try a coding and take it back (nothing for the
+    /// decoder, which never does).
+    type Saved;
+    fn save_state(&self) -> Self::Saved;
+    fn restore_state(&mut self, saved: Self::Saved);
     fn tell_frac(&self) -> i32;
     fn code_bit_logp(&mut self, val: bool, logp: u32) -> bool;
     fn code_uint(&mut self, val: u32, ft: u32) -> u32;
@@ -176,6 +181,11 @@ fn theta_step_symbol(x: i32, qn: i32) -> (u32, u32, u32) {
 
 impl Coder for Ec<'_, '_> {
     const ENCODE: bool = false;
+    type Saved = ();
+
+    fn save_state(&self) {}
+
+    fn restore_state(&mut self, (): ()) {}
 
     fn tell_frac(&self) -> i32 {
         Ec::tell_frac(self)
@@ -232,6 +242,15 @@ impl Coder for Ec<'_, '_> {
 
 impl Coder for Enc<'_> {
     const ENCODE: bool = true;
+    type Saved = RangeEncoder;
+
+    fn save_state(&self) -> RangeEncoder {
+        self.save()
+    }
+
+    fn restore_state(&mut self, saved: RangeEncoder) {
+        self.restore(saved);
+    }
 
     fn tell_frac(&self) -> i32 {
         Enc::tell_frac(self)

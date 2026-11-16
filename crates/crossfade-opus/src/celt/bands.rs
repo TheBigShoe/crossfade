@@ -679,6 +679,9 @@ pub(super) struct AllBands<'a> {
     pub(super) band_e: &'a [f32; 2 * NB_EBANDS],
     /// Never code the intensity stereo phase inversion (the encoder's choice).
     pub(super) disable_inv: bool,
+    /// Code each stereo band's angle rounded down and up and keep the nearer shape (the
+    /// encoder at its highest complexities).
+    pub(super) theta_rdo: bool,
 }
 
 /// `quant_all_bands`: every band's shape, `n` coefficients per channel in `x` (and `y`):
@@ -738,8 +741,8 @@ pub(super) fn quant_all_bands<C: Coder>(
         {
             lowband_offset = i;
         }
-        if i == a.start + 1 {
-            // RFC 8251 section 9: repeat part of the first band so the second can fold.
+        // RFC 8251 section 9: repeat part of the first band so the second can fold.
+        let hybrid_fold = |norm: &mut [f32], norm2: &mut [f32]| {
             let n1 = m * (eb(a.start + 1) - eb(a.start));
             let n2 = m * (eb(a.start + 2) - eb(a.start + 1));
             let offset = m * eb(a.start);
@@ -750,6 +753,9 @@ pub(super) fn quant_all_bands<C: Coder>(
                     norm2.copy_within(from..from + n2 - n1, offset + n1);
                 }
             }
+        };
+        if i == a.start + 1 {
+            hybrid_fold(norm, norm2);
         }
         let tf_change = a.tf_res[i];
         let mut effective_lowband: Option<usize> = None;
@@ -837,6 +843,78 @@ pub(super) fn quant_all_bands<C: Coder>(
                 1.0,
                 y_cm,
             );
+        } else if let Some(yb) = y
+            .as_deref_mut()
+            .filter(|_| C::ENCODE && a.theta_rdo && i < a.intensity)
+        {
+            let yb = &mut yb[lo..lo + n];
+            let cm = x_cm | y_cm;
+            // Left and right weigh by their energies, the quieter one a little more.
+            let (el, er) = (a.band_e[i], a.band_e[NB_EBANDS + i]);
+            let min_e = el.min(er);
+            let (wl, wr) = (el + min_e / 3.0, er + min_e / 3.0);
+            let mut x_save = [0.0f32; MAX_BAND];
+            let mut y_save = [0.0f32; MAX_BAND];
+            x_save[..n].copy_from_slice(xb);
+            y_save[..n].copy_from_slice(yb);
+            let mut ec_save = Some(ctx.ec.save_state());
+            let (bits_save, seed_save) = (ctx.remaining_bits, ctx.seed);
+            let mut likeness = [0.0f32; 2];
+            let mut first = None;
+            for (k, round) in [-1, 1].into_iter().enumerate() {
+                if k == 1 {
+                    // Keep the first coding aside and start again from before it.
+                    let mut kept = ([0.0f32; MAX_BAND], [0.0f32; MAX_BAND], [0.0f32; MAX_BAND]);
+                    kept.0[..n].copy_from_slice(xb);
+                    kept.1[..n].copy_from_slice(yb);
+                    kept.2[..n].copy_from_slice(&norm[lo..lo + n]);
+                    let state = ctx.ec.save_state();
+                    first = Some((kept, state, ctx.remaining_bits, ctx.seed, x_cm));
+                    xb.copy_from_slice(&x_save[..n]);
+                    yb.copy_from_slice(&y_save[..n]);
+                    if let Some(saved) = ec_save.take() {
+                        ctx.ec.restore_state(saved);
+                    }
+                    ctx.remaining_bits = bits_save;
+                    ctx.seed = seed_save;
+                    // The first coding left its shape where the second band folds from.
+                    if i == a.start + 1 {
+                        hybrid_fold(norm, norm2);
+                    }
+                }
+                ctx.theta_round = round;
+                let has = copy_lowband(norm, &mut lowband_scratch);
+                x_cm = quant_band(
+                    &mut ctx,
+                    xb,
+                    Some(&mut *yb),
+                    n,
+                    b,
+                    blocks,
+                    tf_change,
+                    has.then_some(&mut lowband_scratch[..n]),
+                    a.lm as i32,
+                    Some(&mut norm[lo..lo + n]),
+                    0,
+                    1.0,
+                    cm,
+                );
+                let dot = |p: &[f32], q: &[f32]| p.iter().zip(q).map(|(u, v)| u * v).sum::<f32>();
+                likeness[k] = wl * dot(&x_save[..n], xb) + wr * dot(&y_save[..n], yb);
+            }
+            ctx.theta_round = 0;
+            if likeness[0] >= likeness[1]
+                && let Some((kept, state, bits, seed, cm0)) = first
+            {
+                xb.copy_from_slice(&kept.0[..n]);
+                yb.copy_from_slice(&kept.1[..n]);
+                norm[lo..lo + n].copy_from_slice(&kept.2[..n]);
+                ctx.ec.restore_state(state);
+                ctx.remaining_bits = bits;
+                ctx.seed = seed;
+                x_cm = cm0;
+            }
+            y_cm = x_cm;
         } else {
             let yb = y.as_deref_mut().map(|y| &mut y[lo..lo + n]);
             let has = copy_lowband(norm, &mut lowband_scratch);

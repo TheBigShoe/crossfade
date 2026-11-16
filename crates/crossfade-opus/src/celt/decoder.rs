@@ -422,6 +422,7 @@ impl CeltDecoder {
                 coded_bands: alloc.coded_bands,
                 band_e: &[0.0; 2 * NB_EBANDS],
                 disable_inv: false,
+                theta_rdo: false,
             };
             let y = if c == 2 { Some(ya) } else { None };
             quant_all_bands(&all, xa, y, &mut collapse_masks, &mut ec, &mut self.rng);

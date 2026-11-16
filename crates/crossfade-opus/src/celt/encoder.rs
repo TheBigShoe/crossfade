@@ -1571,6 +1571,7 @@ impl CeltEncoder {
                 coded_bands: alloc.coded_bands,
                 band_e: &band_e,
                 disable_inv: self.disable_inv,
+                theta_rdo: self.complexity >= 8,
             };
             let y = (c == 2).then_some(&mut ya[..n]);
             quant_all_bands(&all, xa, y, &mut collapse_masks, &mut enc, &mut self.rng);
