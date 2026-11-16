@@ -115,8 +115,8 @@ struct OutputArgs {
     /// Converted after the filters.
     #[arg(long, value_name = "LAYOUT", value_parser = value(parse_channels))]
     channels: Option<Channels>,
-    /// How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, mono
-    /// or stereo, see --bitrate). Defaults to the container's own.
+    /// How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, see
+    /// --bitrate). Defaults to the container's own.
     #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac", "opus"]))]
     codec: Option<String>,
     /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
