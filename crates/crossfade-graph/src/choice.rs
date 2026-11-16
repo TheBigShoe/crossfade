@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn ogg_writes_flac_only() {
+    fn ogg_encodes_flac_only() {
         assert_eq!(output_codec(FormatId::Ogg, S24, None), Ok(CodecId::Flac));
         assert_eq!(
             output_codec(FormatId::Ogg, S16, Some("flac")),
@@ -196,7 +196,18 @@ mod tests {
         );
         assert_eq!(
             what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
-            "codec pcm cannot be written into ogg (ogg holds flac only)"
+            "codec pcm cannot be written into ogg (ogg holds flac, or opus with --codec copy)"
+        );
+        // Ogg holds Opus, but only a copy can put it there until there is an encoder.
+        for f in ALL {
+            assert_eq!(
+                what(output_codec(FormatId::Ogg, f, Some("opus"))),
+                "opus encoding is not available yet; --codec copy keeps an opus input as it is"
+            );
+        }
+        assert_eq!(
+            what(output_codec(FormatId::Wav, S16, Some("opus"))),
+            "codec opus cannot be written into wav"
         );
         assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
     }
@@ -250,6 +261,13 @@ mod tests {
             assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
         }
         assert!(can_hold(FormatId::Ogg, Flac));
+        assert!(can_hold(FormatId::Ogg, Opus));
+        for f in [FormatId::Wav, FormatId::Aiff, FormatId::Flac] {
+            assert!(!can_hold(f, Opus), "{f:?}");
+        }
+        for c in [Vorbis, Mp3, Aac, Alac] {
+            assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
+        }
     }
 
     #[test]
