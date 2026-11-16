@@ -1,11 +1,14 @@
 //! The packet encoder: one frame of every channel in, one packet out, the inverse of
 //! [`Decoder`](crate::Decoder).
 //!
-//! Each element is coded three ways at most and the smallest kept: predicted with the
-//! channels as they are, predicted as mid and side (a pair only), or not compressed at all
-//! (the format's escape), so a packet is never larger than its samples and a few header bytes.
-//! The predictor starts every packet from the reference encoder's initial coefficients, so
-//! packets do not depend on one another and the same input always gives the same bytes.
+//! Each element is predicted with its channels as they are or, a pair, as mid and side
+//! (whichever leaves the smaller residuals), and kept unless it is larger than not compressing
+//! at all (the format's escape), so a packet is never larger than its samples and a few
+//! header bytes.
+//! The predictor starts every packet from coefficients fitted to it by least squares, or from
+//! the reference encoder's initial ones where those do better; nothing is carried from packet
+//! to packet, so packets do not depend on one another and the same input always gives the
+//! same bytes.
 
 use crate::bits::sign_extend;
 use crate::write::{BitWriter, predict, put_residuals};
@@ -45,6 +48,100 @@ fn initial_coefs() -> [i16; ORDER] {
     c[1] = ((-29 * (1 << DEN_SHIFT)) >> 4) as i16;
     c[2] = ((-2 * (1 << DEN_SHIFT)) >> 4) as i16;
     c
+}
+
+/// The coefficients that best predict `x` in the predictor's own form (each sample, less the
+/// one `ORDER + 1` back, from the `ORDER` before it less the same), by least squares over the
+/// packet. `None` for a packet too short or too regular to fit. Plain `f64` arithmetic, so
+/// the same coefficients on every platform.
+#[allow(clippy::needless_range_loop)] // a matrix, indexed as one
+fn fitted_coefs(x: &[i32]) -> Option<[i16; ORDER]> {
+    if x.len() < 8 * ORDER {
+        return None;
+    }
+    // The normal equations, R c = p.
+    let mut r = [[0.0f64; ORDER]; ORDER];
+    let mut p = [0.0f64; ORDER];
+    let mut d = [0.0f64; ORDER];
+    // Every other sample tells as much about a long packet as every one.
+    let step = if x.len() >= 1024 { 2 } else { 1 };
+    for j in (ORDER + 1..x.len()).step_by(step) {
+        let top = f64::from(x[j - ORDER - 1]);
+        for (k, d) in d.iter_mut().enumerate() {
+            *d = f64::from(x[j - 1 - k]) - top;
+        }
+        let y = f64::from(x[j]) - top;
+        for k in 0..ORDER {
+            p[k] += d[k] * y;
+            for l in k..ORDER {
+                r[k][l] += d[k] * d[l];
+            }
+        }
+    }
+    for k in 0..ORDER {
+        for l in 0..k {
+            r[k][l] = r[l][k];
+        }
+        // A little weight on the diagonal keeps a pure tone's equations solvable.
+        r[k][k] = r[k][k] * (1.0 + 1e-9) + 1.0;
+    }
+    // Gaussian elimination with partial pivoting.
+    for i in 0..ORDER {
+        let pivot = (i..ORDER).max_by(|&a, &b| r[a][i].abs().total_cmp(&r[b][i].abs()))?;
+        if r[pivot][i].abs() < 1e-9 {
+            return None;
+        }
+        r.swap(i, pivot);
+        p.swap(i, pivot);
+        for row in i + 1..ORDER {
+            let f = r[row][i] / r[i][i];
+            for col in i..ORDER {
+                r[row][col] -= f * r[i][col];
+            }
+            p[row] -= f * p[i];
+        }
+    }
+    let mut c = [0.0f64; ORDER];
+    for i in (0..ORDER).rev() {
+        let mut sum = p[i];
+        for col in i + 1..ORDER {
+            sum -= r[i][col] * c[col];
+        }
+        c[i] = sum / r[i][i];
+    }
+    let mut out = [0i16; ORDER];
+    for (o, c) in out.iter_mut().zip(c) {
+        let q = (c * f64::from(1 << DEN_SHIFT)).round();
+        if !q.is_finite() {
+            return None;
+        }
+        *o = q.clamp(-32767.0, 32767.0) as i16;
+    }
+    Some(out)
+}
+
+/// The starting coefficients for `samples`: the reference encoder's or the ones fitted to
+/// the packet, whichever leaves the smaller residuals.
+fn starting_coefs(samples: &[i32], chan_bits: u32) -> [i16; ORDER] {
+    let fixed = initial_coefs();
+    match fitted_coefs(samples) {
+        Some(fitted)
+            if residual_cost(samples, chan_bits, fitted)
+                < residual_cost(samples, chan_bits, fixed) =>
+        {
+            fitted
+        }
+        _ => fixed,
+    }
+}
+
+/// The sum of the magnitudes of what the predictor leaves of `samples`, starting from
+/// `coefs`: a stand-in for the bits the residuals will take.
+fn residual_cost(samples: &[i32], chan_bits: u32, mut coefs: [i16; ORDER]) -> u64 {
+    predict(samples, &mut coefs, chan_bits, DEN_SHIFT)
+        .iter()
+        .map(|r| u64::from(r.unsigned_abs()))
+        .sum()
 }
 
 /// Encodes the packets of one stream.
@@ -137,20 +234,25 @@ impl Encoder {
     }
 
     /// One channel's predictor header: its mode, scale, order and starting coefficients.
-    fn channel_head(w: &mut BitWriter) {
+    fn channel_head(w: &mut BitWriter, coefs: &[i16; ORDER]) {
         w.put(4, 0); // mode: no prediction on prediction
         w.put(4, u64::from(DEN_SHIFT));
         w.put(3, u64::from(PB_FACTOR));
         w.put(5, ORDER as u64);
-        for c in initial_coefs() {
+        for &c in coefs {
             w.put(16, u64::from(c as u16));
         }
     }
 
     /// One channel's residuals from the predictor [`channel_head`](Self::channel_head)
-    /// describes.
-    fn channel_residuals(&self, w: &mut BitWriter, samples: &[i32], chan_bits: u32) {
-        let mut coefs = initial_coefs();
+    /// describes, starting from `coefs`.
+    fn channel_residuals(
+        &self,
+        w: &mut BitWriter,
+        samples: &[i32],
+        chan_bits: u32,
+        mut coefs: [i16; ORDER],
+    ) {
         let residuals = predict(samples, &mut coefs, chan_bits, DEN_SHIFT);
         let k = &self.config;
         put_residuals(
@@ -175,13 +277,14 @@ impl Encoder {
         let mut packed = BitWriter::default();
         self.header(&mut packed, num, shift_bytes, false);
         packed.put(16, 0); // mixing parameters, unused by one channel
-        Self::channel_head(&mut packed);
+        let coefs = starting_coefs(&self.u, depth - shift);
+        Self::channel_head(&mut packed, &coefs);
         if shift != 0 {
             for &s in samples.clone() {
                 packed.put(shift, (s as u32 & ((1 << shift) - 1)).into());
             }
         }
-        self.channel_residuals(&mut packed, &self.u, depth - shift);
+        self.channel_residuals(&mut packed, &self.u, depth - shift, coefs);
 
         let raw_bits =
             16 + 32 * usize::from(num != self.config.frame_length as usize) + num * depth as usize;
@@ -204,40 +307,53 @@ impl Encoder {
         // The side channel needs one bit more than the samples.
         let chan_bits = depth - shift + 1;
 
-        let mut best: Option<BitWriter> = None;
-        for mix_res in [0, MIX_RES] {
-            self.u.clear();
-            self.v.clear();
+        // Left and right, or mid and side: whichever the fixed predictor leaves less of.
+        let mix = |mix_res: i32, u: &mut Vec<i32>, v: &mut Vec<i32>| {
+            u.clear();
+            v.clear();
             for (l, r) in frames.clone() {
                 let (l, r) = (l >> shift, r >> shift);
                 if mix_res == 0 {
-                    self.u.push(l);
-                    self.v.push(r);
+                    u.push(l);
+                    v.push(r);
                 } else {
                     let rest = (1 << MIX_BITS) - mix_res;
-                    self.u.push((mix_res * l + rest * r) >> MIX_BITS);
-                    self.v.push(l - r);
+                    u.push((mix_res * l + rest * r) >> MIX_BITS);
+                    v.push(l - r);
                 }
             }
-            let mut packed = BitWriter::default();
-            self.header(&mut packed, num, shift_bytes, false);
-            packed.put(8, u64::from(MIX_BITS));
-            packed.put(8, u64::from(mix_res as u8));
-            Self::channel_head(&mut packed);
-            Self::channel_head(&mut packed);
-            if shift != 0 {
-                let mask = (1u32 << shift) - 1;
-                for (l, r) in frames.clone() {
-                    packed.put(shift, (l as u32 & mask).into());
-                    packed.put(shift, (r as u32 & mask).into());
-                }
-            }
-            self.channel_residuals(&mut packed, &self.u, chan_bits);
-            self.channel_residuals(&mut packed, &self.v, chan_bits);
-            if best.as_ref().is_none_or(|b| packed.len() < b.len()) {
-                best = Some(packed);
+        };
+        let left_right = {
+            mix(0, &mut self.u, &mut self.v);
+            residual_cost(&self.u, chan_bits, initial_coefs())
+                + residual_cost(&self.v, chan_bits, initial_coefs())
+        };
+        mix(MIX_RES, &mut self.u, &mut self.v);
+        let mid_side = residual_cost(&self.u, chan_bits, initial_coefs())
+            + residual_cost(&self.v, chan_bits, initial_coefs());
+        let mix_res = if mid_side < left_right { MIX_RES } else { 0 };
+        if mix_res == 0 {
+            mix(0, &mut self.u, &mut self.v);
+        }
+
+        let mut packed = BitWriter::default();
+        self.header(&mut packed, num, shift_bytes, false);
+        packed.put(8, u64::from(MIX_BITS));
+        packed.put(8, u64::from(mix_res as u8));
+        let coefs_u = starting_coefs(&self.u, chan_bits);
+        let coefs_v = starting_coefs(&self.v, chan_bits);
+        Self::channel_head(&mut packed, &coefs_u);
+        Self::channel_head(&mut packed, &coefs_v);
+        if shift != 0 {
+            let mask = (1u32 << shift) - 1;
+            for (l, r) in frames.clone() {
+                packed.put(shift, (l as u32 & mask).into());
+                packed.put(shift, (r as u32 & mask).into());
             }
         }
+        self.channel_residuals(&mut packed, &self.u, chan_bits, coefs_u);
+        self.channel_residuals(&mut packed, &self.v, chan_bits, coefs_v);
+        let best = Some(packed);
         let raw_bits = 16
             + 32 * usize::from(num != self.config.frame_length as usize)
             + 2 * num * depth as usize;

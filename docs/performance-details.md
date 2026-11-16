@@ -271,6 +271,30 @@ synthetic: harmonic tones that change every second with a noise burst on every h
 - To repeat: any 48 kHz WAV, `crossfade convert in.wav -o ours.opus`, `opusenc --bitrate
   <kb/s> in.wav ref.opus`, `opusdec x.opus x.wav`, timed with the shell.
 
+## ALAC encoding against FFmpeg, on Linux
+
+The same cloud machine and synthetic 16-bit 48 kHz files as the Opus table above, FFmpeg
+6.1.1 (`apt-get install ffmpeg`) as the other encoder and as an independent decoder, whole
+process, best of 7.
+
+| Job | Input | `crossfade` | `ffmpeg -c:a alac` |
+|---|---|---|---|
+| Encode to .m4a, time | 30 s stereo | 457 ms | 272 ms |
+| Size | 20 s mono (1,920,044 bytes of WAV) | 1,196,435 | 1,189,291 |
+| Size | 30 s stereo (5,760,044) | 3,613,933 | 3,602,546 |
+| Size | 10 s 5.1 (5,760,044) | 3,733,641 | 3,735,061 |
+| Decode .m4a to WAV, time | 30 s stereo | 59 ms | 111 ms |
+
+- FFmpeg decodes every one of our files to exactly the source samples (`cmp` on raw PCM),
+  the 5.1 file with its channels in the right places; we decode FFmpeg's files likewise.
+- History of the encoder on the stereo file: 710 ms and 3,823,290 bytes with a bit-at-a-time
+  writer and fixed starting coefficients; 242 ms with a byte-at-a-time writer; 3,613,933
+  bytes and 457 ms with the coefficients fitted to each packet (least squares over every
+  other sample, the stereo mix chosen by the fixed predictor's residuals).
+- Where the time goes now: about ten passes of the adaptive predictor per channel pair and
+  packet (to choose the mix and the coefficients), each allocating its residuals. Fewer
+  passes are possible by keeping the residuals of the choice made.
+
 ## MP3 decoding
 
 Our own Layer III decoder (`crossfade-mp3`) against `mpg123` 1.33.7 and

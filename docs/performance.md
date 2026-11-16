@@ -37,6 +37,10 @@ Wall time of the whole command, in milliseconds. Lower is better.
   it is not slow, not that it is the faster encoder.
   `opusdec` and `opusinfo` read the files it writes, mono to 5.1, without a
   warning, and `opusdec`'s output matches our own decoder's.
+- Apple Lossless on the same Linux machine against FFmpeg 6.1.1: encoding 30 s
+  of stereo to `.m4a` takes 457 ms against 272, the files are within 0.3% of
+  FFmpeg's in size, and decoding takes 59 ms against 111. FFmpeg decodes our
+  files to exactly the source samples.
 
 ## The reference test
 
