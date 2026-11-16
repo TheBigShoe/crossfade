@@ -14,17 +14,40 @@ pub(crate) struct BitWriter {
 impl BitWriter {
     /// The low `n` bits of `v`, high first; past 64 bits, zeros (or ones for `u64::MAX`).
     pub(crate) fn put(&mut self, n: u32, v: u64) {
-        for i in (0..n).rev() {
-            let bit = if i < 64 { (v >> i) & 1 } else { v >> 63 };
-            if self.bits.is_multiple_of(8) {
-                self.bytes.push(0);
+        // Bits past the value's 64 repeat its top bit.
+        let mut wide = n.saturating_sub(64);
+        let fill = if v >> 63 != 0 { 0xFF } else { 0 };
+        while wide > 0 {
+            let take = wide.min(8);
+            self.put_chunk(take, fill >> (8 - take));
+            wide -= take;
+        }
+        let mut left = n.min(64);
+        while left > 0 {
+            // Up to the end of the byte being filled, a byte's worth at a time.
+            let take = (8 - (self.bits % 8) as u32).min(left);
+            left -= take;
+            self.put_chunk(take, ((v >> left) & ((1 << take) - 1)) as u8);
+        }
+    }
+
+    /// `take` bits (1 to 8, the low ones of `chunk`) that fit in the byte being filled, or
+    /// start the next.
+    fn put_chunk(&mut self, take: u32, chunk: u8) {
+        let used = (self.bits % 8) as u32;
+        if used == 0 {
+            self.bytes.push(0);
+        }
+        let room = 8 - used;
+        if take <= room {
+            if let Some(last) = self.bytes.last_mut() {
+                *last |= chunk << (room - take);
             }
-            if bit != 0
-                && let Some(last) = self.bytes.last_mut()
-            {
-                *last |= 0x80 >> (self.bits % 8);
-            }
-            self.bits += 1;
+            self.bits += take as usize;
+        } else {
+            // Only the fill above crosses a byte: split it.
+            self.put_chunk(room, chunk >> (take - room));
+            self.put_chunk(take - room, chunk & ((1 << (take - room)) - 1));
         }
     }
 
