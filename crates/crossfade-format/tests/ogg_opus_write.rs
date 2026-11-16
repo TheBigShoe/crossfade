@@ -560,3 +560,57 @@ fn the_identification_header_cannot_change_once_written() {
     m.finish().unwrap();
     assert_eq!(pages(&sink.contents())[0].body, stream.extradata);
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+    /// Whatever the source's packets, pages, pre-skip, front cut and end trimming, what the
+    /// reader shows of it is what it shows of the copy.
+    #[test]
+    fn any_readable_stream_copies_to_one_that_reads_the_same(
+        configs in proptest::collection::vec(0u8..=255, 0..120),
+        multi: bool,
+        seed: u64,
+        per_page in 1usize..9,
+        start in 0i64..100_000,
+        trim in 0i64..2000,
+        pre_skip in 0u16..8000,
+    ) {
+        let audio: Vec<Vec<u8>> = configs
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let seed = seed.wrapping_add(i as u64);
+                let p = w::packets(c & 31, c & 0x20 != 0, 1, usize::from(c >> 6) * 30 + 1, seed)
+                    .remove(0);
+                if multi {
+                    let mono = w::packets(c & 31, false, 1, 20, seed ^ 0x55).remove(0);
+                    w::multistream_packet(&[p, mono])
+                } else {
+                    p
+                }
+            })
+            .collect();
+        let head = if multi {
+            w::opus_head(3, pre_skip, 0, Some((1, 2, 1, &[0, 2, 1])))
+        } else {
+            w::opus_head(2, pre_skip, -256, None)
+        };
+        let layout = OggLayout {
+            packets_per_page: vec![per_page],
+            start,
+            end_trim: trim,
+            ..OggLayout::default()
+        };
+        let source = file(&head, &audio, &layout);
+        // A trim past the only page's audio is a file the reader refuses.
+        if let Ok((_, d)) =
+            open_demuxer(Box::new(Cursor::new(source.clone())), &Limits::default())
+        {
+            let want = read_from(d);
+            let out = copy(&source);
+            assert_same(&read(&out), &want);
+            proptest::prop_assert!(pages(&out).iter().all(|p| p.crc_ok));
+        }
+    }
+}
