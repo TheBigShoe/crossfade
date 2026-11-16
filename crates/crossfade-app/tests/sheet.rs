@@ -117,6 +117,7 @@ fn presets_map_to_formats_and_back() {
             ("flac-cd", "FLAC 16-bit"),
             ("flac-24", "FLAC 24-bit"),
             ("aiff", "AIFF"),
+            ("opus", "Opus"),
         ]
     );
     let mut s = sheet("a.wav");

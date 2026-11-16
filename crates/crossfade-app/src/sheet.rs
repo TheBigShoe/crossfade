@@ -31,14 +31,17 @@ pub enum Container {
     Aiff,
     /// FLAC in an Ogg stream, `.oga`.
     OggFlac,
+    /// Opus in an Ogg stream, `.opus`.
+    OggOpus,
 }
 
 impl Container {
-    pub const ALL: [Container; 4] = [
+    pub const ALL: [Container; 5] = [
         Container::Wav,
         Container::Flac,
         Container::Aiff,
         Container::OggFlac,
+        Container::OggOpus,
     ];
 
     pub fn label(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Container {
             Self::Flac => "FLAC",
             Self::Aiff => "AIFF",
             Self::OggFlac => "Ogg FLAC",
+            Self::OggOpus => "Opus",
         }
     }
 
@@ -57,6 +61,7 @@ impl Container {
             Self::Flac => "flac",
             Self::Aiff => "aiff",
             Self::OggFlac => "oga",
+            Self::OggOpus => "opus",
         }
     }
 
@@ -75,6 +80,7 @@ impl Container {
             "wav" => Some(Self::Wav),
             "flac" => Some(Self::Flac),
             "oga" | "ogg" => Some(Self::OggFlac),
+            "opus" => Some(Self::OggOpus),
             _ => Some(Self::Aiff),
         }
     }
@@ -143,6 +149,12 @@ pub const PRESETS: &[Preset] = &[
         FormatChoice::Format(SampleFormat::S24),
     ),
     preset("aiff", "AIFF", Container::Aiff, FormatChoice::SameAsSource),
+    preset(
+        "opus",
+        "Opus",
+        Container::OggOpus,
+        FormatChoice::SameAsSource,
+    ),
 ];
 
 /// FLAC's highest level.
@@ -172,7 +184,9 @@ impl Problem {
             Self::OutputExists => {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
-            Self::Extension => "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files.".into(),
+            Self::Extension => {
+                "Crossfade can save .wav, .flac, .oga, .ogg, .opus and .aiff files.".into()
+            }
             Self::Source(text) | Self::Adjust { message: text, .. } => text.clone(),
         }
     }
@@ -314,9 +328,11 @@ impl ConvertSheet {
         if self.accepts(self.container, self.requested) {
             return self.requested;
         }
+        // The closest whole-number format, or none at all where there is none to choose.
         [SampleFormat::S24, SampleFormat::S16, SampleFormat::U8]
             .map(FormatChoice::Format)
             .into_iter()
+            .chain([FormatChoice::SameAsSource])
             .find(|choice| self.accepts(self.container, *choice))
             .unwrap_or(self.requested)
     }
@@ -326,6 +342,9 @@ impl ConvertSheet {
         let format = self.format();
         if self.copy() || format == self.requested {
             return None;
+        }
+        if self.container == Container::OggOpus {
+            return Some("Opus has no bit depth to choose.".into());
         }
         let FormatChoice::Format(f) = format else {
             return None;
