@@ -285,3 +285,35 @@ fn surround_goes_through_in_the_layouts_own_channel_order() {
         }
     }
 }
+
+#[test]
+fn a_surround_stream_takes_a_bitrate_in_proportion_to_its_streams() {
+    let wide = spec(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::from_name("7.1").unwrap(),
+    );
+    let with = |s: &AudioSpec, bitrate: u32| {
+        let options = EncodeOptions {
+            bitrate: Some(bitrate),
+            ..EncodeOptions::default()
+        };
+        encoder_for(CodecId::Opus, s, &options).map(|_| ())
+    };
+    // 7.1 is five streams: more than one stream's 510 kb/s is fine, and 20 kb/s is too little.
+    assert_eq!(with(&wide, 640_000), Ok(()));
+    let refused = |r: Result<(), Error>| match r {
+        Err(Error::Unsupported { what }) => what,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        refused(with(&wide, 20_000)),
+        "bitrate 20000 (opus takes 30000 to 2550000 bits per second for 8 channels)"
+    );
+    let stereo = spec(48_000, SampleFormat::F32, ChannelLayout::stereo());
+    assert_eq!(with(&stereo, 6_000), Ok(()));
+    assert_eq!(
+        refused(with(&stereo, 640_000)),
+        "bitrate 640000 (opus takes 6000 to 510000 bits per second)"
+    );
+}

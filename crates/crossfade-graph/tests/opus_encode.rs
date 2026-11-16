@@ -299,6 +299,15 @@ fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
         lfe_power < 0.125 * 0.01,
         "the LFE's 440 Hz is gone: {lfe_power}"
     );
+    // Six channels are four streams: their bitrate may pass what one stream can take.
+    let mut j = job("six.wav", "big.opus", None);
+    j.outputs[0].audio.bitrate = Some(768_000);
+    assert!(Pipeline::open(&j, &mut io, &Limits::default()).is_ok());
+    j.outputs[0].audio.bitrate = Some(12_000);
+    assert_eq!(
+        refusal(&mut io, &j),
+        "bitrate 12000 (opus takes 24000 to 2040000 bits per second for 6 channels)"
+    );
     // A labelled source of that layout says nothing; side surrounds are Opus's rear pair.
     for (name, notes) in [
         ("5.1-back", vec![]),
