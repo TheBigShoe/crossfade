@@ -90,7 +90,8 @@ pub fn create_muxer(
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => ogg::create(sink, stream, tags),
-        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => Err(Error::Unsupported {
+        FormatId::Mp4 => mp4::create(sink, stream, tags),
+        FormatId::Mp3 | FormatId::Adts => Err(Error::Unsupported {
             what: format!("writing {} is not supported yet", format.name()),
         }),
     }
@@ -251,7 +252,11 @@ mod tests {
             unsupported(mk(FormatId::Ogg)),
             "ogg files hold flac or opus, not pcm_s16le"
         );
-        for f in [FormatId::Mp3, FormatId::Mp4, FormatId::Adts] {
+        assert_eq!(
+            unsupported(mk(FormatId::Mp4)),
+            "mp4 files hold alac here, not pcm_s16le"
+        );
+        for f in [FormatId::Mp3, FormatId::Adts] {
             assert_eq!(
                 unsupported(mk(f)),
                 format!("writing {} is not supported yet", f.name())

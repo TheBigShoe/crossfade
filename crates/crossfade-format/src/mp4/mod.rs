@@ -16,6 +16,7 @@ mod demux;
 mod entry;
 mod ilst;
 mod moov;
+mod mux;
 mod table;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSource};
@@ -24,6 +25,8 @@ use crossfade_core::{Demuxer, Error, Limits, MediaSource};
 pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
     demux::open(source, limits)
 }
+
+pub(crate) use mux::create;
 
 #[cfg(test)]
 mod tests;
