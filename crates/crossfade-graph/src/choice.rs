@@ -15,10 +15,10 @@ pub fn output_codec(
     sample_format: SampleFormat,
     requested: Option<&str>,
 ) -> Result<CodecId, Error> {
-    let why = if format == FormatId::Ogg {
-        " (ogg holds flac or opus)"
-    } else {
-        ""
+    let why = match format {
+        FormatId::Ogg => " (ogg holds flac or opus)",
+        FormatId::Mp4 => " (m4a holds alac)",
+        _ => "",
     };
     let refuse = |codec: &str| {
         unsupported(format!(
@@ -50,6 +50,15 @@ pub fn output_codec(
             }
             Ok(CodecId::Flac)
         }
+        FormatId::Mp4 => {
+            accept("alac")?;
+            if sample_format.is_float() {
+                return Err(unsupported(
+                    "alac cannot store floating-point samples; choose --sample-format s16, s24 or s32",
+                ));
+            }
+            Ok(CodecId::Alac)
+        }
         // Any container added later, until it is wired here.
         _ => Err(unsupported(format!(
             "writing {} is not supported yet",
@@ -62,13 +71,15 @@ pub fn output_codec(
 pub fn can_write(format: FormatId) -> bool {
     matches!(
         format,
-        FormatId::Wav | FormatId::Flac | FormatId::Aiff | FormatId::Ogg
+        FormatId::Wav | FormatId::Flac | FormatId::Aiff | FormatId::Ogg | FormatId::Mp4
     )
 }
 
 /// File extensions a front end can offer for an output, canonical spelling first.
 pub fn writable_extensions() -> &'static [&'static str] {
-    &["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus"]
+    &[
+        "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus", "m4a",
+    ]
 }
 
 /// Whether `format` can carry `codec`'s packets unchanged (stream copy).
@@ -85,6 +96,7 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
         ),
         FormatId::Flac => codec == Flac,
         FormatId::Ogg => matches!(codec, Flac | Opus),
+        FormatId::Mp4 => codec == Alac,
         _ => false,
     }
 }

@@ -157,7 +157,7 @@ pub(crate) fn output_format_for(
         Some(f) if can_write(f) => f,
         _ => {
             return Err(unsupported(format!(
-                "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg, .opus)"
+                "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg, .opus, .m4a)"
             )));
         }
     };
@@ -202,10 +202,10 @@ fn plan_output(
             return Err(unsupported("--codec copy cannot take a bitrate"));
         }
         if !can_hold(output_format, input.codec) {
-            let why = if output_format == FormatId::Ogg {
-                " (ogg holds flac or opus)"
-            } else {
-                ""
+            let why = match output_format {
+                FormatId::Ogg => " (ogg holds flac or opus)",
+                FormatId::Mp4 => " (m4a holds alac)",
+                _ => "",
             };
             return Err(unsupported(format!(
                 "cannot copy {} into {}{why}",
@@ -266,28 +266,42 @@ fn output_plan(
         settings.bitrate,
         usize::from(out_spec.layout().channels()),
     )?;
-    // Opus's header is known before any audio, and its muxer writes it first.
-    let mut opus_note = None;
-    let (out_spec, extradata, depth) = if codec == CodecId::Opus {
-        let extradata = crossfade_codec::opus::head(&out_spec)?;
-        // Unlabelled channels read back as the layout Opus has for their count.
-        let written = crossfade_codec::opus::stream_layout(out_spec.layout());
-        let spec = if written == *out_spec.layout() {
-            out_spec
-        } else {
-            let from = match out_spec.layout().name() {
+    // Opus's and ALAC's headers are known before any audio, and their muxers write them
+    // first. Channels with no labels read back as the codec's layout for their count.
+    let mut layout_note = None;
+    let mut written_as =
+        |spec: AudioSpec, written: crossfade_core::ChannelLayout| -> Result<AudioSpec, Error> {
+            if written == *spec.layout() {
+                return Ok(spec);
+            }
+            let from = match spec.layout().name() {
                 Some(name) => format!("{name} is"),
                 None => format!("{} unlabelled channels are", written.channels()),
             };
-            opus_note = Some(format!(
+            layout_note = Some(format!(
                 "{from} written as {}",
-                written.name().unwrap_or("opus orders them")
+                written.name().unwrap_or("the codec orders them")
             ));
-            AudioSpec::new(out_spec.sample_rate(), out_spec.format(), written)?
+            AudioSpec::new(spec.sample_rate(), spec.format(), written)
         };
-        (spec, extradata, None)
-    } else {
-        (out_spec, Vec::new(), depth)
+    let (out_spec, extradata, depth) = match codec {
+        CodecId::Opus => {
+            let extradata = crossfade_codec::opus::head(&out_spec)?;
+            let written = crossfade_codec::opus::stream_layout(out_spec.layout());
+            (written_as(out_spec, written)?, extradata, None)
+        }
+        CodecId::Alac => {
+            // 20 bits in a 24-bit container is the one depth ALAC has below its container's.
+            let depth = depth.filter(|&d| d == 20 && out_spec.format() == SampleFormat::S24);
+            let config = crossfade_codec::alac::config(&out_spec, depth)?;
+            let written = crossfade_codec::alac::stream_layout(out_spec.layout());
+            (
+                written_as(out_spec, written)?,
+                config.write().to_vec(),
+                depth,
+            )
+        }
+        _ => (out_spec, Vec::new(), depth),
     };
     let output = StreamInfo {
         frames,
@@ -297,7 +311,7 @@ fn output_plan(
     };
     let mut all = Vec::from_iter(sample_format_note(input, settings));
     all.extend(notes(in_spec, chain));
-    all.extend(opus_note);
+    all.extend(layout_note);
     Ok(OutputPlan {
         output_format,
         output,

@@ -191,7 +191,9 @@ fn codec_limits_surface_without_a_file() {
 fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
-        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus"]
+        [
+            "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus", "m4a"
+        ]
     );
     let mut io = io();
     let limits = Limits::default();

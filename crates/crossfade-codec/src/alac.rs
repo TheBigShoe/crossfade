@@ -353,6 +353,19 @@ fn encode_order(spec: &AudioSpec) -> Result<Vec<usize>, Error> {
     Ok(order)
 }
 
+/// The layout a stream encoded from `layout` reads back with: `layout` itself, or for
+/// unlabelled channels ALAC's layout for their count, whose order they are taken to be in.
+pub fn stream_layout(layout: &crossfade_core::ChannelLayout) -> crossfade_core::ChannelLayout {
+    if layout.positions().is_some() {
+        return layout.clone();
+    }
+    u8::try_from(layout.channels())
+        .ok()
+        .and_then(crossfade_alac::wave_layout)
+        .and_then(|w| crossfade_core::ChannelLayout::from_mask(w.mask, layout.channels()))
+        .unwrap_or_else(|| layout.clone())
+}
+
 /// The config (the 24-byte cookie a container stores) of the stream [`encoder`] writes.
 pub fn config(spec: &AudioSpec, bits: Option<u8>) -> Result<crossfade_alac::Config, Error> {
     let depth = encode_depth(spec, bits)?;

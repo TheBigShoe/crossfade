@@ -48,7 +48,7 @@ fn refusal(io: &mut MemoryIo, j: &Job) -> String {
 fn convert(io: &mut MemoryIo, j: &Job) -> Vec<Event> {
     let mut events = Vec::new();
     run(j, io, &Limits::default(), &CancelToken::new(), &mut |e| {
-        events.push(e.clone())
+        events.push(e.clone());
     })
     .unwrap();
     events
