@@ -8,6 +8,11 @@ fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
 }
 
+/// Ogg holds Opus, but nothing here encodes it yet: only a copy can put it there.
+pub(crate) fn no_opus_encoder() -> Error {
+    unsupported("opus encoding is not available yet; --codec copy keeps an opus input as it is")
+}
+
 /// The codec to encode with for `format`. `requested` is the job's codec name; `None` is the
 /// container's default. `"copy"` never reaches here: the pipeline handles it first.
 pub fn output_codec(
@@ -16,7 +21,7 @@ pub fn output_codec(
     requested: Option<&str>,
 ) -> Result<CodecId, Error> {
     let why = if format == FormatId::Ogg {
-        " (ogg holds flac only)"
+        " (ogg holds flac, or opus with --codec copy)"
     } else {
         ""
     };
@@ -34,6 +39,9 @@ pub fn output_codec(
         FormatId::Wav => accept("pcm").map(|()| CodecId::pcm_for(sample_format)),
         FormatId::Aiff => accept("pcm").map(|()| CodecId::pcm_be_for(sample_format)),
         FormatId::Flac | FormatId::Ogg => {
+            if format == FormatId::Ogg && requested == Some("opus") {
+                return Err(no_opus_encoder());
+            }
             accept("flac")?;
             if sample_format.is_float() {
                 return Err(unsupported(
@@ -75,7 +83,8 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
             codec,
             PcmS8 | PcmS16Be | PcmS24Be | PcmS32Be | PcmF32Be | PcmF64Be
         ),
-        FormatId::Flac | FormatId::Ogg => codec == Flac,
+        FormatId::Flac => codec == Flac,
+        FormatId::Ogg => matches!(codec, Flac | Opus),
         _ => false,
     }
 }

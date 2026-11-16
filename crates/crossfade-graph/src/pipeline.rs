@@ -124,7 +124,7 @@ impl Pipeline {
                 job.outputs.len()
             )));
         };
-        let output_format = output_format_for(&output.path)?;
+        let output_format = output_format_for(&output.path, &output.audio)?;
         let make_muxer = |io: &mut dyn JobIo,
                           out_stream: &StreamInfo,
                           tags: &Tags|
@@ -344,7 +344,10 @@ impl Pipeline {
             match &mut self.engine {
                 Engine::Copy => {
                     self.muxer.write_packet(&self.packet)?;
-                    self.frames_done += self.packet.duration;
+                    // A lossy stream's packets also hold priming and padding, which are not
+                    // on the timeline that `frames` counts.
+                    let done = self.frames_done.saturating_add(self.packet.duration);
+                    self.frames_done = self.frames_total.map_or(done, |total| done.min(total));
                 }
                 Engine::Transcode(t) => {
                     t.decoder.send_packet(&self.packet)?;

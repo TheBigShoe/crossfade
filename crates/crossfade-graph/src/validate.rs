@@ -1,7 +1,9 @@
 //! Every decision a job needs once its input is known, with no file touched. `Pipeline::open`
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
-use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
+use crate::choice::{
+    can_hold, can_write, encode_options, no_opus_encoder, output_codec, share_threads,
+};
 use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
@@ -142,14 +144,20 @@ pub fn processing(
     }))
 }
 
-/// The container named by `path`'s extension, if we can write it.
-pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
+/// The container named by `path`'s extension, if we can write it. `.opus` also stands for its
+/// codec: with none named in `settings` the job would encode Opus, which is refused.
+pub(crate) fn output_format_for(path: &str, settings: &AudioSettings) -> Result<FormatId, Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
     match FormatId::from_extension(ext) {
-        Some(f) if can_write(f) => Ok(f),
+        Some(f) if can_write(f) => {
+            if ext.eq_ignore_ascii_case("opus") && settings.codec.is_none() {
+                return Err(no_opus_encoder());
+            }
+            Ok(f)
+        }
         _ => Err(unsupported(format!(
             "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
-                 .oga/.ogg)"
+                 .oga/.ogg, and .opus with --codec copy)"
         ))),
     }
 }
@@ -172,7 +180,7 @@ fn plan_output(
         }
         if !can_hold(output_format, input.codec) {
             let why = if output_format == FormatId::Ogg {
-                " (ogg holds flac only)"
+                " (ogg holds flac or opus)"
             } else {
                 ""
             };
@@ -339,7 +347,7 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_output(input, format, settings).map(|(plan, _)| plan)
 }
 
@@ -352,7 +360,7 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
     let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
@@ -555,7 +563,7 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_join(inputs, format, settings).map(|j| j.plan)
 }
 
@@ -566,7 +574,7 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,
