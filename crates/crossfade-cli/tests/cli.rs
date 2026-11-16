@@ -109,7 +109,7 @@ fn convert_help_documents_the_codec_flags() {
     let help = text(&run(&["convert", "--help"]).stdout);
     for want in [
         "--codec <CODEC>",
-        "[possible values: copy, pcm, flac]",
+        "[possible values: copy, pcm, flac, opus]",
         "--compression-level <COMPRESSION_LEVEL>",
         "0 to 8",
     ] {

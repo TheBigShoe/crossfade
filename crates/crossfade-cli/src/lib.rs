@@ -98,7 +98,7 @@ enum Command {
 /// What `convert` and `concat` share: where to write, how, and the processing.
 #[derive(Args)]
 struct OutputArgs {
-    /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC), .opus (Ogg Opus, with --codec copy).
+    /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC), .opus (Ogg Opus).
     #[arg(short, long)]
     output: String,
     /// Output sample format; defaults to the input's.
@@ -115,9 +115,9 @@ struct OutputArgs {
     /// Converted after the filters.
     #[arg(long, value_name = "LAYOUT", value_parser = value(parse_channels))]
     channels: Option<Channels>,
-    /// How audio is written: copy the packets unchanged, raw pcm, or flac. Defaults to the
-    /// container's own.
-    #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac"]))]
+    /// How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, mono
+    /// or stereo, 64 kb/s a channel). Defaults to the container's own.
+    #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac", "opus"]))]
     codec: Option<String>,
     /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]

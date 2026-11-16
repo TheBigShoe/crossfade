@@ -239,7 +239,7 @@ fn pcm_is_encoded_to_opus_by_extension_or_by_name() {
         "convert",
         &d.path("pcm.wav"),
         "-o",
-        &d.path("out.opus"),
+        &d.path("copied.opus"),
         "--codec",
         "copy",
     ]);
