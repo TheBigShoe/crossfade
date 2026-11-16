@@ -180,6 +180,26 @@ pub(super) fn ifft(shift: usize, fin: &[Cpx], fout: &mut [Cpx]) {
     }
 }
 
+/// `opus_fft` of `size(shift)` points, scaled by `1 / size` as the reference's is:
+/// `fout[k] = 1/size sum fin[n] e^(-2 pi i n k / size)`. The reference's inverse is its
+/// forward transform between two conjugations, so this is the inverse between two.
+#[allow(dead_code)] // ENCODER-WIP: until celt::encoder calls it
+pub(super) fn fft(shift: usize, fin: &[Cpx], fout: &mut [Cpx]) {
+    let n = size(shift);
+    let scale = 1.0 / n as f32;
+    let mut scaled = [Cpx::default(); 480];
+    for (to, x) in scaled.iter_mut().zip(&fin[..n]) {
+        *to = Cpx {
+            r: scale * x.r,
+            i: -(scale * x.i),
+        };
+    }
+    ifft(shift, &scaled[..n], fout);
+    for v in fout[..n].iter_mut() {
+        v.i = -v.i;
+    }
+}
+
 #[cfg(test)]
 #[path = "fft_tests.rs"]
 mod tests;

@@ -1,8 +1,9 @@
-//! The inverse MDCT with its windowed overlap-add (`celt/mdct.c`, `clt_mdct_backward`, float
-//! build): pre-rotation, an N/4-point complex inverse FFT, post-rotation, and the TDAC
-//! mirroring into the output with the low-overlap window.
+//! The MDCT (`celt/mdct.c`, float build). Backward (`clt_mdct_backward`): pre-rotation, an
+//! N/4-point complex inverse FFT, post-rotation, and the TDAC mirroring into the output with
+//! the low-overlap window. Forward (`clt_mdct_forward`): window and fold, pre-rotation, the
+//! forward FFT, post-rotation.
 
-use super::fft::{Cpx, ifft, size};
+use super::fft::{Cpx, fft, ifft, size};
 use super::tables::{MDCT_TRIG, OVERLAP, WINDOW};
 
 /// The longest MDCT (`mdct.n`): two 20 ms frames.
@@ -108,6 +109,70 @@ pub(super) fn backward(
             w += 1;
             i += 1;
         }
+    }
+}
+
+/// `clt_mdct_forward`: the MDCT of size `n = 1920 >> shift` of `input`, `n / 2 + overlap`
+/// samples (the block's first and last `(n / 2 - overlap) / 2` samples are zero and not
+/// passed), windowed here; the `n / 2` coefficients go to every `stride`-th place of `out`,
+/// scaled by `4 / n`.
+#[allow(dead_code)] // ENCODER-WIP: until celt::encoder calls it
+pub(super) fn forward(input: &[f32], out: &mut [f32], stride: usize, shift: usize) {
+    let n = MDCT_N >> shift;
+    let n2 = n >> 1;
+    let n4 = n >> 2;
+    let overlap = OVERLAP;
+    let half = overlap >> 1;
+    let trig = |k: usize| MDCT_TRIG[k << shift];
+    let sine = (2.0 * std::f32::consts::PI * 0.125) / n as f32;
+
+    // The block as [a, b, c, d]: window, shuffle and fold into n / 2 values.
+    let mut f = [Cpx::default(); 480];
+    let quarter = (overlap + 3) >> 2;
+    for (i, v) in f[..n4].iter_mut().enumerate() {
+        let xp1 = half + 2 * i;
+        let xp2 = n2 - 1 + half - 2 * i;
+        *v = if i < quarter {
+            // Real part -d - cR, imaginary part -b + aR.
+            let w1 = WINDOW[half + 2 * i];
+            let w2 = WINDOW[half - 1 - 2 * i];
+            Cpx {
+                r: w2 * input[xp1 + n2] + w1 * input[xp2],
+                i: w1 * input[xp1] - w2 * input[xp2 - n2],
+            }
+        } else if i < n4 - quarter {
+            Cpx {
+                r: input[xp2],
+                i: input[xp1],
+            }
+        } else {
+            // Real part a - bR, imaginary part -c - dR.
+            let j = i - (n4 - quarter);
+            let w1 = WINDOW[2 * j];
+            let w2 = WINDOW[overlap - 1 - 2 * j];
+            Cpx {
+                r: -(w1 * input[xp1 - n2]) + w2 * input[xp2],
+                i: w2 * input[xp1] + w1 * input[xp2 + n2],
+            }
+        };
+    }
+    for (i, v) in f[..n4].iter_mut().enumerate() {
+        let (re, im) = (v.r, v.i);
+        let yr = -(re * trig(i)) - im * trig(n4 - i);
+        let yi = -(im * trig(i)) + re * trig(n4 - i);
+        *v = Cpx {
+            r: yr + yi * sine,
+            i: yi - yr * sine,
+        };
+    }
+    let mut f2 = [Cpx::default(); 480];
+    debug_assert_eq!(size(shift), n4);
+    fft(shift, &f[..n4], &mut f2[..n4]);
+    for (i, v) in f2[..n4].iter().enumerate() {
+        let yr = v.i * trig(n4 - i) + v.r * trig(i);
+        let yi = v.r * trig(n4 - i) - v.i * trig(i);
+        out[stride * 2 * i] = yr - yi * sine;
+        out[stride * (n2 - 1 - 2 * i)] = yi + yr * sine;
     }
 }
 
