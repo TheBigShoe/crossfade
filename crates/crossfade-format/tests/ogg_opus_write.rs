@@ -369,3 +369,76 @@ fn a_multistream_header_and_its_packets_pass_through_untouched() {
     assert_eq!(data, a);
     assert_same(&got, &read(&source));
 }
+
+/// Audio packets ending on each audio page, and the page's granule.
+fn audio_pages(file: &[u8]) -> Vec<(usize, i64)> {
+    pages(file)[2..]
+        .iter()
+        .map(|p| (p.lacing.iter().filter(|&&l| l < 255).count(), p.granule))
+        .collect()
+}
+
+#[test]
+fn a_page_holds_at_most_a_second_of_whole_packets() {
+    let head = w::opus_head(2, 312, 0, None);
+    // 120 packets of 20 ms: 50 make a second exactly.
+    let source = file(
+        &head,
+        &w::packets(31, true, 120, 30, 1),
+        &OggLayout::default(),
+    );
+    let out = copy(&source);
+    assert_eq!(
+        audio_pages(&out),
+        [(50, 48_000), (50, 96_000), (20, 115_200)]
+    );
+    assert_same(&read(&out), &read(&source));
+
+    // 40 packets of 60 ms: a seventeenth would pass the second.
+    let source = file(
+        &head,
+        &w::packets(3, true, 40, 30, 2),
+        &OggLayout::default(),
+    );
+    let out = copy(&source);
+    assert_eq!(
+        audio_pages(&out),
+        [(16, 46_080), (16, 92_160), (8, 115_200)]
+    );
+    let p = pages(&out);
+    assert!(p[2..p.len() - 1].iter().all(|p| p.flags == 0));
+    assert_eq!(p.last().unwrap().flags, EOS);
+
+    // 300 packets of 2.5 ms are 0.75 s: the 255 lacing values come first.
+    let source = file(
+        &head,
+        &w::packets(28, true, 300, 30, 3),
+        &OggLayout::default(),
+    );
+    assert_eq!(audio_pages(&copy(&source)), [(255, 30_600), (45, 36_000)]);
+}
+
+#[test]
+fn packets_past_the_end_stay_on_the_page_the_stream_ends_on() {
+    let head = w::opus_head(2, 312, 0, None);
+    let a = w::packets(31, true, 52, 30, 1);
+    let source = file(&head, &a, &OggLayout::default());
+    // The stream ends inside the 50th packet, or right after it: the granule may not go
+    // back on a later page, so the two packets after it join its page.
+    for frames in [47_000, 48_000 - 312] {
+        let mut d = open(&source);
+        let mut stream = d.streams()[0].clone();
+        stream.frames = Some(frames);
+        let (sink, mut m) = muxer(&stream, &Tags::new());
+        let mut p = Packet::default();
+        while d.read_packet(&mut p).unwrap() {
+            m.write_packet(&p).unwrap();
+        }
+        m.finish().unwrap();
+        let out = sink.contents();
+        assert_eq!(audio_pages(&out), [(52, frames as i64 + 312)]);
+        let got = read(&out);
+        assert_eq!(got.stream.frames, Some(frames));
+        assert_eq!(got.packets.len(), 52);
+    }
+}
