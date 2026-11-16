@@ -87,8 +87,10 @@ fn the_encoder_keeps_its_frozen_sizes_and_quality() {
             .map(|&s| f32::from(s) / 32768.0)
             .collect();
         let mono: Vec<f32> = stereo
-            .chunks_exact(2)
-            .map(|f| 0.5 * (f[0] + f[1]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[l, r]| 0.5 * (l + r))
             .collect();
         for (name, is_stereo, bitrate, vbr) in SETTINGS {
             let (pcm, channels) = if is_stereo { (&stereo, 2) } else { (&mono, 1) };
