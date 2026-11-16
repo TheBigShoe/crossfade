@@ -243,6 +243,34 @@ figures are ours alone, taken while a fuzzer ran on one core.
   testvector06 (25.0 s, hybrid FB) 0.06 s, testvector12 (26.6 s, SILK and hybrid mono)
   0.03 s.
 
+## Opus against opus-tools, on Linux
+
+Taken in a cloud container, not on the Mac the other tables come from: a 4-core Intel Xeon
+at 2.1 GHz (x86-64, Linux 6.18), `opus-tools` 0.2 using libopus 1.4 (`apt-get install
+opus-tools`), whole process, best of 11 runs, the machine otherwise idle. The input is
+synthetic: harmonic tones that change every second with a noise burst on every half second,
+16-bit 48 kHz.
+
+| Job | Input | `crossfade` | reference | ms |
+|---|---|---|---|---|
+| Encode, 64 kb/s a channel | 30 s stereo | 307 | `opusenc --bitrate 128` | 339 |
+| Encode, 64 kb/s | 20 s mono | 141 | `opusenc --bitrate 64` | 172 |
+| Decode to 16-bit WAV | 30 s stereo, our own file | 115 | `opusdec` | 224 |
+
+- Our encoder is CELT-only with no tonality or speech analysis; libopus at its default
+  complexity does more, so this shows the port is not slow rather than that it is the
+  faster encoder.
+- **Sizes and a rough quality check.** At the same nominal rate our files are smaller:
+  156 kB against 178 kB (mono), 489 kB against 575 kB (stereo). Signal-to-noise ratio
+  against the input, both decoded by `opusdec`: 20.7 dB against 21.5 dB (mono), 20.2 dB
+  against 20.8 dB (stereo). SNR is not how a perceptual codec is judged; it shows the two
+  encoders spend their bits to similar effect on this signal, no more.
+- **The reference reads our files.** `opusinfo` reports no warning for mono, stereo and
+  six-channel (mapping family 1) files; `opusdec`'s output and our decoder's of the same
+  file agree to 63.6 dB, the 16-bit dither.
+- To repeat: any 48 kHz WAV, `crossfade convert in.wav -o ours.opus`, `opusenc --bitrate
+  <kb/s> in.wav ref.opus`, `opusdec x.opus x.wav`, timed with the shell.
+
 ## MP3 decoding
 
 Our own Layer III decoder (`crossfade-mp3`) against `mpg123` 1.33.7 and
