@@ -129,10 +129,23 @@ fn only_48_khz_float_mono_or_stereo_is_taken() {
         refused(spec(48_000, SampleFormat::S16, ChannelLayout::stereo())),
         "opus is encoded from f32 samples, not s16"
     );
-    let surround = ChannelLayout::from_name("5.1").unwrap();
+    // Surround is taken in the layouts Vorbis orders, with back surrounds for 5.0 and 5.1.
+    let hint =
+        "opus takes mono, stereo, 3.0, quad, 5.0-back, 5.1-back, 6.1 or 7.1; choose --channels";
+    let side = ChannelLayout::from_name("5.1").unwrap();
     assert_eq!(
-        refused(spec(48_000, SampleFormat::F32, surround)),
-        "opus encoding takes mono or stereo, not 6 channels; choose --channels stereo"
+        refused(spec(48_000, SampleFormat::F32, side)),
+        format!("opus cannot hold the layout 5.1 ({hint})")
+    );
+    let unlabelled = ChannelLayout::unpositioned(4).unwrap();
+    assert_eq!(
+        refused(spec(48_000, SampleFormat::F32, unlabelled)),
+        format!("opus cannot hold 4 unlabelled channels ({hint})")
+    );
+    let nine = ChannelLayout::unpositioned(9).unwrap();
+    assert_eq!(
+        refused(spec(48_000, SampleFormat::F32, nine)),
+        format!("opus cannot hold 9 unlabelled channels ({hint})")
     );
 }
 
@@ -193,4 +206,61 @@ fn the_bitrate_is_a_target_the_packets_vary_around() {
         refused(600_000),
         "bitrate 600000 (opus takes 6000 to 510000 bits per second)"
     );
+}
+
+#[test]
+fn surround_goes_through_in_the_layouts_own_channel_order() {
+    for name in ["3.0", "quad", "5.1-back", "7.1"] {
+        let layout = ChannelLayout::from_name(name).unwrap();
+        let ch = usize::from(layout.channels());
+        let s = spec(48_000, SampleFormat::F32, layout);
+        // A different tone in each channel.
+        let frames = 24_000;
+        let pcm: Vec<f32> = (0..frames)
+            .flat_map(|i| {
+                (0..ch).map(move |c| {
+                    let hz = 250.0 + 190.0 * c as f64;
+                    (0.3 * (std::f64::consts::TAU * hz * i as f64 / 48_000.0).sin()) as f32
+                })
+            })
+            .collect();
+        let (packets, extradata) = encode(&s, &pcm, 2000, 0);
+        let head = OpusHead::parse(&extradata).unwrap();
+        assert_eq!(
+            (usize::from(head.channels), head.mapping.family),
+            (ch, 1),
+            "{name}"
+        );
+        let pre_skip = usize::from(head.pre_skip);
+
+        let mut stream = StreamInfo::new(
+            0,
+            CodecId::Opus,
+            s.clone(),
+            TimeBase::new(1, 48_000).unwrap(),
+        );
+        stream.extradata = extradata;
+        let mut dec = decoder_for(&stream).unwrap();
+        let mut out = vec![];
+        let mut f = AudioFrame::new(&s);
+        for p in &packets {
+            dec.send_packet(p).unwrap();
+            while dec.receive_frame(&mut f).unwrap() {
+                let Samples::F32(v) = &f.samples else {
+                    panic!("f32")
+                };
+                out.extend_from_slice(v);
+            }
+        }
+        let got = &out[pre_skip * ch..][..frames * ch];
+        for c in 0..ch {
+            let (mut sig, mut err) = (0.0f64, 0.0f64);
+            for i in 4000..frames {
+                let (w, g) = (f64::from(pcm[i * ch + c]), f64::from(got[i * ch + c]));
+                sig += w * w;
+                err += (w - g) * (w - g);
+            }
+            assert!(sig / err > 50.0, "{name} channel {c}: snr {:.1}", sig / err);
+        }
+    }
 }

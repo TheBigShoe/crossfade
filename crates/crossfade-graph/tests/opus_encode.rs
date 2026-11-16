@@ -196,7 +196,8 @@ fn opus_from_opus_and_what_opus_cannot_take_are_said_by_name() {
     io.insert("six.wav", sine_wav(&surround, 4800).1);
     assert_eq!(
         refusal(&mut io, &job("six.wav", "out.opus", None)),
-        "opus encoding takes mono or stereo, not 6 channels; choose --channels stereo"
+        "opus cannot hold the layout 5.1 (opus takes mono, stereo, 3.0, quad, 5.0-back, \
+         5.1-back, 6.1 or 7.1; choose --channels)"
     );
     assert_eq!(io.get("out.opus"), None);
 }
@@ -242,4 +243,39 @@ fn the_bitrate_setting_sizes_the_file_and_belongs_to_opus_alone() {
     j.outputs[0].audio.bitrate = Some(48_000);
     let text = serde_json::to_string(&j).unwrap();
     assert_eq!(serde_json::from_str::<Job>(&text).unwrap(), j);
+}
+
+#[test]
+fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
+    let layout = ChannelLayout::from_name("5.1-back").unwrap();
+    let s = spec(48_000, SampleFormat::S16, layout.clone());
+    let mut io = MemoryIo::new();
+    io.insert("six.wav", sine_wav(&s, 48_000).1);
+    let quiet = &mut |_: &Event| {};
+    run(
+        &job("six.wav", "six.opus", None),
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        quiet,
+    )
+    .unwrap();
+    let stream = stream_of(&io, "six.opus");
+    assert_eq!(stream.audio.layout(), &layout);
+    assert_eq!(stream.frames, Some(48_000));
+    let got = decoded(&mut io, "six.opus");
+    assert_eq!(got.len(), 48_000 * 6);
+    assert!(snr_against_the_sine(&got, 6) > 100.0);
+    // A side-surround source gets there by naming the layout Opus has.
+    let side = spec(
+        48_000,
+        SampleFormat::S16,
+        ChannelLayout::from_name("5.1").unwrap(),
+    );
+    io.insert("side.wav", sine_wav(&side, 4800).1);
+    let mut j = job("side.wav", "side.opus", None);
+    j.outputs[0].audio.channels =
+        Some(crossfade_graph::filter::parse_channels("5.1-back").unwrap());
+    run(&j, &mut io, &Limits::default(), &CancelToken::new(), quiet).unwrap();
+    assert_eq!(stream_of(&io, "side.opus").audio.layout(), &layout);
 }
