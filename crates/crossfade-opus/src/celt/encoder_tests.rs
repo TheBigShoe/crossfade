@@ -280,3 +280,97 @@ fn reset_makes_the_encoder_as_new() {
     let again: Vec<Vec<u8>> = pcm.chunks(480).map(|c| bytes(&mut a, c)).collect();
     assert_eq!(first, again);
 }
+
+/// The frames of `pcm` coded at a variable bitrate around `bitrate`, each checked against the
+/// decoder; returns their sizes and the decoded signal.
+fn vbr_trip(
+    pcm: &[f32],
+    channels: usize,
+    frame_size: usize,
+    bitrate: i32,
+) -> (Vec<usize>, Vec<f32>) {
+    let mut enc = CeltEncoder::new(channels);
+    enc.set_vbr(Some(bitrate));
+    let mut dec = CeltDecoder::new(channels);
+    let mut sizes = vec![];
+    let mut out = vec![];
+    for chunk in pcm.chunks_exact(frame_size * channels) {
+        let mut renc = RangeEncoder::new(1275);
+        enc.encode(chunk, &frame(frame_size, channels), &mut renc)
+            .unwrap();
+        let rng = renc.rng();
+        let data = renc.done().expect("the frame fits the size it chose");
+        let mut rdec = RangeDecoder::new(&data);
+        let mut buf = vec![0.0f32; frame_size * channels];
+        dec.decode(Some(&mut rdec), &frame(frame_size, channels), &mut buf)
+            .unwrap();
+        assert_eq!(dec.final_range(), rng, "frame {}", sizes.len());
+        sizes.push(data.len());
+        out.extend_from_slice(&buf);
+    }
+    (sizes, out)
+}
+
+#[test]
+fn a_variable_bitrate_spends_near_its_target_on_music_and_two_bytes_on_silence() {
+    for channels in 1..=2 {
+        for (frame_size, bitrate) in [(960, 64_000), (480, 96_000), (120, 128_000)] {
+            let pcm = tones(frame_size * 60, channels);
+            let (sizes, out) = vbr_trip(&pcm, channels, frame_size, bitrate);
+            let mean = sizes[4..].iter().sum::<usize>() as f64 / (sizes.len() - 4) as f64;
+            let target = f64::from(bitrate) * frame_size as f64 / 48_000.0 / 8.0;
+            // A few steady partials are easy: under the target, but not starved.
+            assert!(
+                (0.4 * target..1.3 * target).contains(&mean),
+                "{channels} ch {frame_size} at {bitrate}: {mean:.0} bytes a frame for {target:.0}"
+            );
+            assert!(snr_db(&pcm, &out, channels, frame_size * 6) > 15.0);
+        }
+        let (sizes, out) = vbr_trip(&vec![0.0; 960 * channels * 5], channels, 960, 64_000);
+        assert_eq!(sizes, [2; 5]);
+        assert!(out.iter().all(|&v| v == 0.0));
+    }
+}
+
+#[test]
+fn a_variable_bitrate_gives_an_attack_more_bytes_than_the_steady_frames_around_it() {
+    let mut pcm = tones(960 * 30, 1);
+    let mut s = 7u32;
+    for v in &mut pcm[960 * 20 + 500..960 * 20 + 900] {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        *v += ((s >> 9) as f32 / (1u32 << 23) as f32 - 0.5) * 1.2;
+    }
+    let (sizes, _) = vbr_trip(&pcm, 1, 960, 48_000);
+    let mut steady = sizes[8..18].to_vec();
+    steady.sort_unstable();
+    let median = steady[5];
+    let attack = sizes[20].max(sizes[21]);
+    assert!(
+        attack * 10 > median * 13,
+        "attack {attack} bytes, steady {median}: {sizes:?}"
+    );
+}
+
+#[test]
+fn at_the_same_mean_rate_a_variable_bitrate_is_no_worse_on_a_changing_signal() {
+    // Tones, then noise bursts, then tones: constant bitrate starves the bursts.
+    let mut pcm = tones(960 * 40, 1);
+    let mut s = 3u32;
+    for (i, v) in pcm.iter_mut().enumerate() {
+        if (i / 4800) % 3 == 1 {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *v += ((s >> 9) as f32 / (1u32 << 23) as f32 - 0.5) * 0.4;
+        }
+    }
+    let (sizes, vbr) = vbr_trip(&pcm, 1, 960, 48_000);
+    let mean = sizes.iter().sum::<usize>() / sizes.len();
+    let cbr = round_trip(&pcm, 1, 960, mean);
+    let (v, c) = (
+        snr_db(&pcm, &vbr, 1, 960 * 4),
+        snr_db(&pcm, &cbr, 1, 960 * 4),
+    );
+    assert!(
+        v > c - 1.0,
+        "vbr {v:.1} dB against cbr {c:.1} dB at {mean} bytes a frame"
+    );
+}

@@ -126,3 +126,30 @@ fn the_identification_header_says_what_the_encoder_does() {
     let mono = Encoder::new(1).unwrap().head(48_000);
     assert_eq!(OpusHead::parse(&mono.to_bytes()).unwrap(), mono);
 }
+
+#[test]
+fn a_variable_bitrate_stream_decodes_and_averages_near_its_target() {
+    let mut enc = Encoder::new(2).unwrap();
+    enc.set_bitrate(96_000).unwrap();
+    assert!(!enc.vbr(), "constant until asked");
+    enc.set_vbr(true);
+    let mut dec = Decoder::new(2).unwrap();
+    let pcm = tones(960 * 50, 2);
+    let (mut bytes, mut sizes) = (0usize, std::collections::BTreeSet::new());
+    let mut out = Vec::new();
+    for chunk in pcm.chunks(960 * 2) {
+        let mut packet = Vec::new();
+        enc.encode(chunk, &mut packet).unwrap();
+        assert_eq!(dec.decode(Some(&packet), &mut out).unwrap(), 960);
+        assert_eq!(dec.final_range(), enc.final_range());
+        bytes += packet.len();
+        sizes.insert(packet.len());
+    }
+    let rate = bytes as f64 * 8.0 / 1.0;
+    assert!(
+        (40_000.0..125_000.0).contains(&rate),
+        "{rate} b/s for 96000"
+    );
+    assert!(sizes.len() > 3, "the sizes vary: {sizes:?}");
+    assert!(snr_db(&pcm, &out, 2, enc.lookahead(), 960 * 4) > 18.0);
+}
