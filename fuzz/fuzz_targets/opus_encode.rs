@@ -1,6 +1,6 @@
 #![no_main]
 //! Any samples at any setting through the Opus encoder: the input chooses channels, frame
-//! size and bitrate, then gives the raw bits of every sample (NaNs and infinities included).
+//! size, bitrate and whether it varies, then gives the raw bits of every sample (NaNs and infinities included).
 //! Never a panic or a hang; every frame becomes a packet of its duration that the decoder
 //! reads to the encoder's final range, as finite samples.
 
@@ -16,6 +16,7 @@ fn run(data: &[u8]) -> Result<()> {
     let mut enc = Encoder::new(channels).expect("1 or 2 channels");
     enc.set_bitrate(bitrate).expect("in range");
     enc.set_frame_size(frame_size).expect("a CELT frame size");
+    enc.set_vbr(u.arbitrary::<bool>()?);
     let mut dec = Decoder::new(channels).expect("1 or 2 channels");
     let mut frames = 0;
     while !u.is_empty() && frames < 8 {

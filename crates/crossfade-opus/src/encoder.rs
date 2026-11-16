@@ -1,4 +1,4 @@
-//! The Opus encoder: for now CELT-only at full band and constant bitrate, one frame of 2.5 to
+//! The Opus encoder: for now CELT-only at full band, constant or variable bitrate, one frame of 2.5 to
 //! 20 ms per packet (TOC configurations 28 to 31, code 0). The frame is
 //! [`CeltEncoder`]'s, a port of libopus's `celt_encode_with_ec`.
 
@@ -19,6 +19,7 @@ pub struct Encoder {
     channels: usize,
     bitrate: u32,
     frame_size: usize,
+    vbr: bool,
 }
 
 impl Encoder {
@@ -32,6 +33,7 @@ impl Encoder {
             channels,
             bitrate: 64_000 * channels as u32,
             frame_size: 960,
+            vbr: false,
         })
     }
 
@@ -51,6 +53,18 @@ impl Encoder {
         }
         self.bitrate = bits_per_second;
         Ok(())
+    }
+
+    /// Whether the bitrate is variable.
+    pub fn vbr(&self) -> bool {
+        self.vbr
+    }
+
+    /// A variable bitrate spends around [`bitrate`](Self::bitrate) on average: more on what
+    /// is hard to code, two bytes on silence. Off (the default), every packet has the same
+    /// size.
+    pub fn set_vbr(&mut self, vbr: bool) {
+        self.vbr = vbr;
     }
 
     /// Samples per channel that [`encode`](Self::encode) takes.
@@ -124,7 +138,14 @@ impl Encoder {
             stream_channels: self.channels,
             accumulate: false,
         };
-        let mut renc = RangeEncoder::new(self.packet_bytes() - 1);
+        // A variable bitrate may take up to the format's largest frame.
+        let bytes = if self.vbr {
+            1275
+        } else {
+            self.packet_bytes() - 1
+        };
+        self.celt.set_vbr(self.vbr.then_some(self.bitrate as i32));
+        let mut renc = RangeEncoder::new(bytes);
         self.celt.encode(pcm, &frame, &mut renc)?;
         let data = renc
             .done()

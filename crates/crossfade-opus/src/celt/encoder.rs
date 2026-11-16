@@ -53,6 +53,8 @@ pub(crate) struct CeltEncoder {
     /// Bits of the input that carry signal: where silence and the noise floor are.
     lsb_depth: i32,
     disable_inv: bool,
+    /// The target in bits per second when the bitrate is variable.
+    vbr: Option<i32>,
     rng: u32,
     spread_decision: i32,
     delayed_intra: f32,
@@ -640,13 +642,17 @@ fn median_of_3(x: &[f32]) -> f32 {
 
 /// What `dynalloc_analysis` decides beyond the boosts it leaves in `offsets`.
 struct Dynalloc {
+    /// The most any band stands above the noise floor.
+    max_depth: f32,
+    /// Bits the boosts take, in 1/8 bit.
+    tot_boost: i32,
     /// Per band, how much the time-frequency choice matters there.
     importance: [i32; NB_EBANDS],
     /// Per band, its weight in the spreading decision (masked bands count less).
     spread_weight: [i32; NB_EBANDS],
 }
 
-/// `dynalloc_analysis` for constant bitrate: bands that stand out above a smoothed spectral
+/// `dynalloc_analysis`: bands that stand out above a smoothed spectral
 /// envelope get extra bits (`offsets`, in steps the bitstream's boost flags express).
 #[allow(clippy::too_many_arguments)]
 fn dynalloc_analysis(
@@ -658,10 +664,13 @@ fn dynalloc_analysis(
     offsets: &mut [i32; NB_EBANDS],
     lsb_depth: i32,
     transient: bool,
+    vbr: bool,
     lm: usize,
     effective_bytes: i32,
 ) -> Dynalloc {
     let mut out = Dynalloc {
+        max_depth: -31.9,
+        tot_boost: 0,
         importance: [13; NB_EBANDS],
         spread_weight: [32; NB_EBANDS],
     };
@@ -679,6 +688,7 @@ fn dynalloc_analysis(
             max_depth = max_depth.max(band_log_e[ch * NB_EBANDS + i] - noise_floor[i]);
         }
     }
+    out.max_depth = max_depth;
     {
         // A simple masking model, so that masked bands weigh less in the spreading decision.
         let mut mask = [0.0f32; NB_EBANDS];
@@ -754,7 +764,7 @@ fn dynalloc_analysis(
         out.importance[i] = (0.5 + 13.0 * exp2(follower[i].min(4.0))).floor() as i32;
     }
     // Constant bitrate cannot afford as much, except on transients.
-    if !transient {
+    if !vbr && !transient {
         for i in start..end {
             follower[i] *= 0.5;
         }
@@ -783,14 +793,16 @@ fn dynalloc_analysis(
             boost_bits = (boost * 6) << BITRES;
         }
         // At constant bitrate dynalloc takes at most two thirds of the frame.
-        if (tot_boost + boost_bits) >> BITRES >> 3 > 2 * effective_bytes / 3 {
+        if !vbr && (tot_boost + boost_bits) >> BITRES >> 3 > 2 * effective_bytes / 3 {
             let cap = (2 * effective_bytes / 3) << BITRES << 3;
             offsets[i] = cap - tot_boost;
+            tot_boost = cap;
             break;
         }
         offsets[i] = boost;
         tot_boost += boost_bits;
     }
+    out.tot_boost = tot_boost;
     out
 }
 
@@ -832,6 +844,65 @@ fn comb_filter(
             src[x] + new
         };
     }
+}
+
+/// What `compute_vbr` weighs beyond the base target.
+struct VbrInputs {
+    lm: usize,
+    equiv_rate: i32,
+    last_coded_bands: i32,
+    c: usize,
+    intensity: usize,
+    stereo_saving: f32,
+    tot_boost: i32,
+    tf_estimate: f32,
+    max_depth: f32,
+    temporal_vbr: f32,
+}
+
+/// `compute_vbr`: the frame's target in 1/8 bit, from `base_target`: less for correlated
+/// stereo, more for dynalloc's boosts and for transients, no more than the signal's depth
+/// above the noise floor can use, and following the spectrum's level over time.
+fn compute_vbr(base_target: i32, v: &VbrInputs) -> i32 {
+    let lm = v.lm;
+    let coded_bands = if v.last_coded_bands != 0 {
+        v.last_coded_bands as usize
+    } else {
+        NB_EBANDS
+    };
+    let mut coded_bins = (eb(coded_bands) << lm) as i32;
+    if v.c == 2 {
+        coded_bins += (eb(v.intensity.min(coded_bands)) << lm) as i32;
+    }
+    let mut target = base_target;
+    if v.c == 2 {
+        let coded_stereo_bands = v.intensity.min(coded_bands);
+        let coded_stereo_dof = (eb(coded_stereo_bands) << lm) as i32 - coded_stereo_bands as i32;
+        // Leave at least 20% of the bits to the mid.
+        let max_frac = 0.8 * coded_stereo_dof as f32 / coded_bins as f32;
+        let stereo_saving = v.stereo_saving.min(1.0);
+        let saved = (max_frac * target as f32)
+            .min((stereo_saving - 0.1) * (coded_stereo_dof << BITRES) as f32);
+        target -= saved as i32;
+    }
+    // Dynalloc's boosts, less their average over a calibration set.
+    target += v.tot_boost - (19 << lm);
+    // Transients, less their average likewise.
+    target += ((v.tf_estimate - 0.044) * target as f32) as i32;
+    {
+        // No more bits than the signal's depth above the floor can use.
+        let bins = (eb(NB_EBANDS - 2) << lm) as i32;
+        let floor_depth = (((v.c as i32 * bins) << BITRES) as f32 * v.max_depth) as i32;
+        let floor_depth = floor_depth.max(target >> 2);
+        target = target.min(floor_depth);
+    }
+    if v.tf_estimate < 0.2 {
+        let amount = 0.000_003_1 * (96_000 - v.equiv_rate).clamp(0, 32_000) as f32;
+        let tvbr_factor = v.temporal_vbr * amount;
+        target += (tvbr_factor * target as f32) as i32;
+    }
+    // Never more than twice the base rate.
+    target.min(2 * base_target)
 }
 
 /// What `run_prefilter` chose for the frame.
@@ -956,6 +1027,7 @@ impl CeltEncoder {
             complexity: 10,
             lsb_depth: 24,
             disable_inv: false,
+            vbr: None,
             rng: 0,
             spread_decision: SPREAD_NORMAL,
             delayed_intra: 1.0,
@@ -988,8 +1060,16 @@ impl CeltEncoder {
             complexity: self.complexity,
             lsb_depth: self.lsb_depth,
             disable_inv: self.disable_inv,
+            vbr: self.vbr,
             ..fresh
         };
+    }
+
+    /// `Some(bits per second)`: a variable bitrate around that target (`OPUS_SET_VBR` without
+    /// the constraint), each frame shrinking the range encoder it is given (whose size is
+    /// then the most it may use) to what it needs. `None`: every byte given is used.
+    pub(crate) fn set_vbr(&mut self, bitrate: Option<i32>) {
+        self.vbr = bitrate;
     }
 
     /// The range after the last frame encoded (`OPUS_GET_FINAL_RANGE`): what a decoder must
@@ -1037,15 +1117,28 @@ impl CeltEncoder {
         let hybrid = start != 0;
         let lmi = lm as i32;
         let ci = c as i32;
-        let nb_compressed_bytes = renc.storage() as i32;
+        let mut nb_compressed_bytes = renc.storage() as i32;
         let mut enc = Enc::new(renc);
 
         let mut tell = enc.tell();
         let nb_filled_bytes = (tell + 4) >> 3;
-        let nb_available_bytes = nb_compressed_bytes - nb_filled_bytes;
-        let effective_bytes = nb_available_bytes;
-        let equiv_rate =
-            ((nb_compressed_bytes * 8 * 50) << (3 - lm)) - (40 * ci + 20) * ((400 >> lm) - 50);
+        let mut nb_available_bytes = nb_compressed_bytes - nb_filled_bytes;
+        // The target of a variable bitrate, in 1/8 bit a frame.
+        let vbr_rate = self.vbr.map_or(0, |bitrate| {
+            let den = 48_000 >> BITRES;
+            ((i64::from(bitrate) * n as i64 + i64::from(den >> 1)) / i64::from(den)) as i32
+        });
+        let vbr = vbr_rate > 0;
+        let mut effective_bytes = if vbr {
+            vbr_rate >> (3 + BITRES)
+        } else {
+            nb_available_bytes
+        };
+        let overhead = (40 * ci + 20) * ((400 >> lm) - 50);
+        let mut equiv_rate = ((nb_compressed_bytes * 8 * 50) << (3 - lm)) - overhead;
+        if let Some(bitrate) = self.vbr {
+            equiv_rate = equiv_rate.min(bitrate - overhead);
+        }
         let mut total_bits = nb_compressed_bytes * 8;
         let eff_end = end;
 
@@ -1069,6 +1162,14 @@ impl CeltEncoder {
             silence = false;
         }
         if silence {
+            // A variable bitrate sends no more than the least there is.
+            if vbr {
+                nb_compressed_bytes = nb_compressed_bytes.min(nb_filled_bytes + 2);
+                effective_bytes = nb_compressed_bytes;
+                total_bits = nb_compressed_bytes * 8;
+                nb_available_bytes = 2;
+                enc.shrink(nb_compressed_bytes as usize);
+            }
             // The rest of the frame counts as written: zeros, as the buffer starts.
             tell = nb_compressed_bytes * 8;
             enc.mark_written_to(tell);
@@ -1146,7 +1247,7 @@ impl CeltEncoder {
         amp2_log2(&band_e, &mut band_log_e, eff_end, end, c);
 
         // How far the frame stands above the running average of the spectrum (for VBR).
-        {
+        let temporal_vbr = {
             let mut follow = -10.0f32;
             let mut frame_avg = 0.0f32;
             let offset = if short_blocks { 0.5 * lmi as f32 } else { 0.0 };
@@ -1160,7 +1261,8 @@ impl CeltEncoder {
             frame_avg /= (end - start) as f32;
             let temporal_vbr = (frame_avg - self.spec_avg).clamp(-1.5, 3.0);
             self.spec_avg += 0.02 * temporal_vbr;
-        }
+            temporal_vbr
+        };
 
         if !second_mdct {
             band_log_e2 = band_log_e;
@@ -1204,6 +1306,7 @@ impl CeltEncoder {
             &mut offsets,
             self.lsb_depth,
             transient,
+            vbr,
             lm,
             effective_bytes,
         );
@@ -1369,6 +1472,40 @@ impl CeltEncoder {
                 );
             }
             enc.icdf(alloc_trim as usize, &TRIM_ICDF, 7);
+            tell_frac = enc.tell_frac();
+        }
+
+        if vbr {
+            // No more than 510 kb/s even for short frames: the allocator could not use it.
+            nb_compressed_bytes = nb_compressed_bytes.min(1275 >> (3 - lm));
+            let base_target = vbr_rate - ((40 * ci + 20) << BITRES);
+            let target = compute_vbr(
+                base_target,
+                &VbrInputs {
+                    lm,
+                    equiv_rate,
+                    last_coded_bands: self.last_coded_bands,
+                    c,
+                    intensity: self.intensity,
+                    stereo_saving: self.stereo_saving,
+                    tot_boost: dynalloc.tot_boost,
+                    tf_estimate,
+                    max_depth: dynalloc.max_depth,
+                    temporal_vbr,
+                },
+            ) + tell_frac;
+            // Never so small that the bits already promised do not fit; the two bytes of
+            // margin keep the decoder's own safeguards from having triggered so far.
+            let min_allowed =
+                ((tell_frac + total_boost + (1 << (BITRES + 3)) - 1) >> (BITRES + 3)) + 2;
+            let mut wanted = (target + (1 << (BITRES + 2))) >> (BITRES + 3);
+            wanted = wanted.max(min_allowed).min(nb_compressed_bytes);
+            if silence {
+                wanted = 2;
+            }
+            nb_compressed_bytes = nb_compressed_bytes.min(wanted);
+            // The raw bits written so far move to the frame's new end.
+            enc.shrink(nb_compressed_bytes as usize);
         }
 
         // The packet, less where we are, less one for safety.

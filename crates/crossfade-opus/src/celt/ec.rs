@@ -119,6 +119,10 @@ impl<'a> Enc<'a> {
         self.enc.encode_bin(fl, fh, bits);
     }
 
+    pub(super) fn shrink(&mut self, bytes: usize) {
+        self.enc.shrink(bytes);
+    }
+
     pub(super) fn mark_written_to(&mut self, bits: i32) {
         self.enc.mark_written_to(bits);
     }
