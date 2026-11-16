@@ -5,6 +5,9 @@
 //! is libogg's own threshold: pages stay small enough to seek by and big enough that the 27
 //! byte header plus lacing costs well under 1%. The decision to close is taken when the next
 //! packet arrives, so the last page is always the one that carries end-of-stream.
+//!
+//! A mapping with a page policy of its own (Ogg Opus closes pages by duration) takes
+//! [`PageWriter::paced_by_caller`]: only the 255 lacing values close a page for it.
 
 use super::crc::crc32;
 
@@ -50,6 +53,8 @@ pub(super) fn page_bytes(
 pub(super) struct PageWriter {
     serial: u32,
     sequence: u32,
+    /// Body bytes after which the next packet starts a new page.
+    target: usize,
     lacing: Vec<u8>,
     body: Vec<u8>,
     /// Granule of the last packet that ended on the open page, -1 when none has.
@@ -66,6 +71,7 @@ impl PageWriter {
         Self {
             serial,
             sequence: 0,
+            target: PAGE_TARGET,
             lacing: Vec::new(),
             body: Vec::new(),
             granule: -1,
@@ -75,10 +81,18 @@ impl PageWriter {
         }
     }
 
+    /// A writer whose pages close when the caller ends them, or at 255 lacing values.
+    pub(super) fn paced_by_caller(serial: u32) -> Self {
+        Self {
+            target: usize::MAX,
+            ..Self::new(serial)
+        }
+    }
+
     /// Adds one packet; `granule` is the sample count completed once it has ended.
     pub(super) fn packet(&mut self, data: &[u8], granule: u64) {
         let needed = data.len() / 255 + 1;
-        let full = self.body.len() >= PAGE_TARGET || self.lacing.len() + needed > MAX_SEGMENTS;
+        let full = self.body.len() >= self.target || self.lacing.len() + needed > MAX_SEGMENTS;
         if full && !self.lacing.is_empty() {
             self.emit(0);
         }
@@ -95,6 +109,15 @@ impl PageWriter {
             }
         }
         self.granule = granule;
+    }
+
+    /// Replaces the granule of the open page, when a packet ends on it: a stream that ends
+    /// inside its last packet says so there. Never below the page before.
+    pub(super) fn set_granule(&mut self, granule: u64) {
+        if self.granule != -1 {
+            let granule = i64::try_from(granule).unwrap_or(i64::MAX);
+            self.granule = granule.max(self.last_granule);
+        }
     }
 
     /// Closes the open page, if any: a header packet ends on a page boundary.
