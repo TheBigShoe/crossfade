@@ -7,6 +7,11 @@
 //!
 //! Granule positions count 48 kHz samples from 0, pre-skip included; a packet's duration is
 //! read from its TOC, and a packet whose TOC is not valid counts for nothing, as in the reader.
+//!
+//! The end (section 4.4). When the stream's length is known (`StreamInfo::frames`, as stream
+//! copy has it from the source's last granule), the last page's granule is pre-skip plus that
+//! length, so the file ends where the stream does, inside its last packet as a rule. With no
+//! length the stream ends with its last packet.
 
 use super::mux::SERIAL;
 use super::writer::PageWriter;
@@ -27,6 +32,8 @@ struct OggOpusMuxer {
     pages: PageWriter,
     /// The granule position after the packets written so far.
     pos: u64,
+    /// The granule position at which the stream ends, when its length is known.
+    end: Option<u64>,
 }
 
 pub(super) fn create(
@@ -34,7 +41,7 @@ pub(super) fn create(
     stream: &StreamInfo,
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
-    OpusHead::parse(&stream.extradata).map_err(malformed)?;
+    let head = OpusHead::parse(&stream.extradata).map_err(malformed)?;
     let rate = stream.audio.sample_rate();
     if rate != 48_000 {
         return Err(Error::Unsupported {
@@ -57,6 +64,9 @@ pub(super) fn create(
         sink,
         pages,
         pos: 0,
+        end: stream
+            .frames
+            .map(|n| n.saturating_add(u64::from(head.pre_skip))),
     }))
 }
 
@@ -73,6 +83,9 @@ impl Muxer for OggOpusMuxer {
     }
 
     fn finish(&mut self) -> Result<(), Error> {
+        if let Some(end) = self.end {
+            self.pages.set_granule(end.min(self.pos));
+        }
         self.pages.finish();
         self.sink.write_all(&self.pages.take())?;
         self.sink.finish()?;
