@@ -150,6 +150,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "alac_encode"
+path = "fuzz_targets/alac_encode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "alac_decode"
 path = "fuzz_targets/alac_decode.rs"
 test = false
