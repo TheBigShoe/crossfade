@@ -200,3 +200,42 @@ fn opus_from_opus_and_what_opus_cannot_take_are_said_by_name() {
     );
     assert_eq!(io.get("out.opus"), None);
 }
+
+#[test]
+fn the_bitrate_setting_sizes_the_file_and_belongs_to_opus_alone() {
+    let s = spec(48_000, SampleFormat::S16, ChannelLayout::stereo());
+    let mut io = MemoryIo::new();
+    io.insert("in.wav", sine_wav(&s, 96_000).1);
+    let size = |io: &mut MemoryIo, bitrate: Option<u32>| {
+        let mut j = job("in.wav", "out.opus", None);
+        j.outputs[0].audio.bitrate = bitrate;
+        run(&j, io, &Limits::default(), &CancelToken::new(), &mut |_| {}).unwrap();
+        io.get("out.opus").unwrap().len()
+    };
+    // Two seconds: 16 kB a second by default (64 kb/s a channel), plus pages and headers.
+    let default = size(&mut io, None);
+    assert!((32_000..34_500).contains(&default), "{default}");
+    let small = size(&mut io, Some(32_000));
+    assert!((8_000..9_500).contains(&small), "{small}");
+
+    let mut j = job("in.wav", "out.opus", None);
+    j.outputs[0].audio.bitrate = Some(1_000);
+    assert_eq!(
+        refusal(&mut io, &j),
+        "bitrate 1000 (opus takes 6000 to 510000 bits per second)"
+    );
+    j = job("in.wav", "out.flac", None);
+    j.outputs[0].audio.bitrate = Some(96_000);
+    assert_eq!(refusal(&mut io, &j), "--bitrate applies to opus only");
+    j = job("out.opus", "copy.opus", None);
+    j.outputs[0].audio.codec = Some("copy".into());
+    j.outputs[0].audio.bitrate = Some(96_000);
+    assert_eq!(refusal(&mut io, &j), "--codec copy cannot take a bitrate");
+    // A job file keeps it, and one without it reads as before.
+    let text = serde_json::to_string(&job("a.wav", "b.opus", None)).unwrap();
+    assert!(!text.contains("bitrate"), "{text}");
+    j = job("a.wav", "b.opus", None);
+    j.outputs[0].audio.bitrate = Some(48_000);
+    let text = serde_json::to_string(&j).unwrap();
+    assert_eq!(serde_json::from_str::<Job>(&text).unwrap(), j);
+}

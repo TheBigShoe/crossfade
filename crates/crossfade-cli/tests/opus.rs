@@ -250,3 +250,56 @@ fn pcm_is_encoded_to_opus_by_extension_or_by_name() {
         "{err}"
     );
 }
+
+#[test]
+fn bitrate_takes_bits_or_kilobits_and_only_for_opus() {
+    let d = Dir::new("bitrate");
+    let (bytes, _, _) = ogg();
+    std::fs::write(d.path("in.opus"), &bytes).unwrap();
+    let out = run(&["convert", &d.path("in.opus"), "-o", &d.path("pcm.wav")]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let size = |name: &str, bitrate: &str| {
+        let out = run(&[
+            "convert",
+            &d.path("pcm.wav"),
+            "-o",
+            &d.path(name),
+            "--bitrate",
+            bitrate,
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{bitrate}: {}",
+            text(&out.stderr)
+        );
+        std::fs::metadata(d.path(name)).unwrap().len()
+    };
+    let (a, b, c) = (
+        size("a.opus", "32k"),
+        size("b.opus", "32000"),
+        size("c.opus", "128kbps"),
+    );
+    assert_eq!(a, b);
+    assert!(c > 3 * a, "{c} against {a}");
+    for (output, bitrate, why) in [
+        ("d.opus", "3k", "opus takes 6000 to 510000 bits per second"),
+        ("d.opus", "fast", "a bitrate such as 96k or 128000"),
+        ("d.flac", "96k", "--bitrate applies to opus only"),
+    ] {
+        let out = run(&[
+            "convert",
+            &d.path("pcm.wav"),
+            "-o",
+            &d.path(output),
+            "--bitrate",
+            bitrate,
+        ]);
+        assert_ne!(out.status.code(), Some(0), "{bitrate}");
+        assert!(
+            text(&out.stderr).contains(why),
+            "{bitrate}: {}",
+            text(&out.stderr)
+        );
+    }
+}

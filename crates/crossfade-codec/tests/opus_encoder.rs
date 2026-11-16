@@ -135,3 +135,46 @@ fn only_48_khz_float_mono_or_stereo_is_taken() {
         "opus encoding takes mono or stereo, not 6 channels; choose --channels stereo"
     );
 }
+
+#[test]
+fn the_bitrate_option_sets_the_packet_size() {
+    let s = spec(48_000, SampleFormat::F32, ChannelLayout::stereo());
+    let sizes = |bitrate: Option<u32>| -> Vec<usize> {
+        let options = EncodeOptions {
+            bitrate,
+            ..EncodeOptions::default()
+        };
+        let mut enc = encoder_for(CodecId::Opus, &s, &options).unwrap();
+        let mut frame = AudioFrame::new(&s);
+        frame.samples = Samples::F32(tone(4800, 2));
+        enc.send_frame(&frame).unwrap();
+        let mut p = Packet::default();
+        let mut sizes = vec![];
+        while enc.receive_packet(&mut p).unwrap() {
+            sizes.push(p.data.len());
+        }
+        sizes
+    };
+    // 20 ms at 64 kb/s a channel by default, then as asked.
+    assert_eq!(sizes(None), [320; 5]);
+    assert_eq!(sizes(Some(96_000)), [240; 5]);
+    assert_eq!(sizes(Some(24_000)), [60; 5]);
+    let refused = |bitrate| {
+        let options = EncodeOptions {
+            bitrate: Some(bitrate),
+            ..EncodeOptions::default()
+        };
+        match encoder_for(CodecId::Opus, &s, &options) {
+            Err(Error::Unsupported { what }) => what,
+            _ => panic!("accepted {bitrate}"),
+        }
+    };
+    assert_eq!(
+        refused(5_000),
+        "bitrate 5000 (opus takes 6000 to 510000 bits per second)"
+    );
+    assert_eq!(
+        refused(600_000),
+        "bitrate 600000 (opus takes 6000 to 510000 bits per second)"
+    );
+}
