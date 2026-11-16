@@ -16,8 +16,8 @@ only been run on macOS so far.
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags; true depth below the container (valid bits) and speaker layout (channel mask) |
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
-| Ogg | FLAC, Vorbis and Opus | FLAC only | `.oga`, `.ogg` and `.opus`: gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link |
-| Opus | yes (in Ogg) | no | Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |
+| Ogg | FLAC, Vorbis and Opus | FLAC; Opus by stream copy | `.oga`, `.ogg` and `.opus`: gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link. Ogg Opus is written with `--codec copy` from an Opus input (RFC 7845: the identification header as it was, tags, pages of at most a second, the length kept by end trimming); there is no Opus encoder yet, so anything else into `.opus` is refused |
+| Opus | yes (in Ogg) | copy only (in Ogg) | Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |
 | Vorbis | yes (in Ogg) | no | Our own decoder, the same bits on every platform: Xiph's 29 test files decode, within 9e-6 of lewton. Output is 32-bit float (16-bit by default when written to an integer container), 1 to 8 channels in WAVE speaker order |
 | MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
 | ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
@@ -59,12 +59,13 @@ crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
 crossfade convert song.mp3 -o song.flac
 crossfade convert song.opus -o song.flac
+crossfade convert song.opus -o same.opus --codec copy   # the packets as they are, in new pages
 crossfade probe song.m4a
 ```
 
 Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC, Vorbis and Opus), MP3, MP4/M4A (ALAC;
 AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
-FLAC, AIFF, Ogg FLAC. `crossfade convert --help` lists every option. FLAC decoding and encoding use
+FLAC, AIFF, Ogg FLAC, and Ogg Opus by stream copy. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
