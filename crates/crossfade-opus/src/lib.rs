@@ -11,6 +11,7 @@ pub mod head;
 mod multistream;
 pub mod packet;
 pub mod range;
+pub mod range_encoder;
 mod silk;
 #[doc(hidden)]
 pub mod testing;
@@ -21,3 +22,4 @@ pub use head::{ChannelMapping, OpusHead, OpusTags};
 pub use multistream::MultistreamDecoder;
 pub use packet::{Bandwidth, Mode, Packet, Toc, packet_duration};
 pub use range::RangeDecoder;
+pub use range_encoder::RangeEncoder;

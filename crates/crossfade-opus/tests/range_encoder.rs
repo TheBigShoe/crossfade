@@ -63,9 +63,14 @@ fn patching_before_anything_was_coded_is_an_error() {
 fn the_bytes_written_so_far_can_be_counted() {
     let mut enc = RangeEncoder::new(64);
     assert_eq!(enc.range_bytes(), 0);
-    for _ in 0..64 {
-        enc.enc_icdf(3, &ICDF, 8);
+    // Mixed symbols: a run of the last one would be all 0xFF bytes, held back for a carry.
+    for i in 0..64 {
+        enc.enc_icdf(i % 4, &ICDF, 8);
     }
-    // 64 symbols of about 3 bits each: more than 16 bytes are out, fewer than 32.
-    assert!((16..32).contains(&enc.range_bytes()), "{}", enc.range_bytes());
+    // 64 symbols of about 2 bits each: about 17 bytes are out.
+    assert!(
+        (8..24).contains(&enc.range_bytes()),
+        "{}",
+        enc.range_bytes()
+    );
 }
