@@ -54,7 +54,7 @@ fn tones(len: usize, channels: usize) -> Vec<f32> {
     for i in 0..len {
         let t = i as f64 / 48000.0;
         s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        let noise = ((s >> 9) as f64 / f64::from(1u32 << 23)) - 0.5;
+        let noise = (f64::from(s >> 9) / f64::from(1u32 << 23)) - 0.5;
         let tau = std::f64::consts::TAU;
         let a = 0.3 * libm::sin(tau * 440.0 * t)
             + 0.15 * libm::sin(tau * 1320.0 * t + 0.4)
@@ -144,7 +144,8 @@ fn a_click_after_silence_is_coded_as_a_transient_without_pre_echo() {
     // spread over the 20 ms before it; short blocks keep it near the click.
     let mut pcm = vec![0.0f32; 960 * 6];
     for (i, v) in pcm[960 * 3 + 700..960 * 3 + 760].iter_mut().enumerate() {
-        *v = if i % 2 == 0 { 0.8 } else { -0.8 };
+        // A 3 kHz burst (alternating samples would be 24 kHz, above every band).
+        *v = if (i / 8) % 2 == 0 { 0.8 } else { -0.8 };
     }
     let got = round_trip(&pcm, 1, 960, 80);
     let at = 960 * 3 + 700 + DELAY;
@@ -184,13 +185,13 @@ fn bad_arguments_are_refused_and_hostile_samples_do_not_panic() {
 fn reset_makes_the_encoder_as_new() {
     let pcm = tones(480 * 6, 1);
     let mut a = CeltEncoder::new(1);
-    let mut bytes = |enc: &mut CeltEncoder, chunk: &[f32]| {
+    let bytes = |enc: &mut CeltEncoder, chunk: &[f32]| {
         let mut renc = RangeEncoder::new(60);
         enc.encode(chunk, &frame(480, 1), &mut renc).unwrap();
         renc.done().unwrap()
     };
-    let first: Vec<Vec<u8>> = pcm.chunks_exact(480).map(|c| bytes(&mut a, c)).collect();
+    let first: Vec<Vec<u8>> = pcm.chunks(480).map(|c| bytes(&mut a, c)).collect();
     a.reset();
-    let again: Vec<Vec<u8>> = pcm.chunks_exact(480).map(|c| bytes(&mut a, c)).collect();
+    let again: Vec<Vec<u8>> = pcm.chunks(480).map(|c| bytes(&mut a, c)).collect();
     assert_eq!(first, again);
 }

@@ -207,6 +207,15 @@ impl RangeEncoder {
         self.error
     }
 
+    /// Counts every bit up to `bits` as written, so that [`tell`](Self::tell) gives `bits`
+    /// from now on: what CELT does after a silence flag (the rest of the frame is the zeros
+    /// the buffer starts as). The decoder's `mark_read_to`.
+    pub fn mark_written_to(&mut self, bits: i32) {
+        self.nbits_total = self
+            .nbits_total
+            .wrapping_add(bits.wrapping_sub(self.tell()));
+    }
+
     /// The frame's size in bytes.
     pub fn storage(&self) -> usize {
         self.storage
