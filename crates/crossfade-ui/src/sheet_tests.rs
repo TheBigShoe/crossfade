@@ -589,7 +589,7 @@ fn an_unsaveable_extension_is_explained_in_plain_words(cx: &mut TestAppContext) 
     let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
     assert_eq!(
         problems,
-        ["Crossfade can save .wav, .flac, .oga, .ogg and .aiff files."]
+        ["Crossfade can save .wav, .flac, .oga, .ogg, .opus and .aiff files."]
     );
 }
 

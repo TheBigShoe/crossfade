@@ -277,6 +277,22 @@ const ROWS: &[Row] = &[
         steps: &[Do::Container(Container::Aiff), Do::Format("s24")],
         cli: &["-o", "in-s24.aiff", "--sample-format", "s24"],
     },
+    // Opus output.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::OggOpus)],
+        cli: &["-o", "in.opus"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("opus")],
+        cli: &["-o", "in.opus"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.opus")],
+        cli: &["-o", "typed.opus"],
+    },
     // Ogg FLAC output.
     Row {
         input: "in.wav",

@@ -318,6 +318,7 @@ fn typing_a_writable_extension_switches_the_container() {
         ("a.wav", Container::Wav),
         ("a.oga", Container::OggFlac),
         ("a.OGG", Container::OggFlac),
+        ("a.opus", Container::OggOpus),
     ] {
         s.set_output(typed.into());
         assert_eq!(s.container(), container, "{typed}");
@@ -329,7 +330,7 @@ fn typing_a_writable_extension_switches_the_container() {
     assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files."
+        "Crossfade can save .wav, .flac, .oga, .ogg, .opus and .aiff files."
     );
 }
 
@@ -360,6 +361,35 @@ fn ogg_flac_is_a_container_with_flac_levels_and_flac_rules() {
     );
     s.set_container(Container::Wav);
     assert_eq!(s.level(), None);
+}
+
+#[test]
+fn opus_is_a_container_with_nothing_to_choose_about_the_samples() {
+    let mut s = sheet(&p(&["music", "song.wav"]));
+    s.set_format(FormatChoice::Format(SampleFormat::S24));
+    s.set_container(Container::OggOpus);
+    assert_eq!(s.output(), p(&["music", "song.opus"]));
+    assert_eq!(Container::OggOpus.label(), "Opus");
+    assert!(Container::ALL.contains(&Container::OggOpus));
+    // Opus has no sample format and no level: the one choice is the source's.
+    assert_eq!(s.format_options(), [FormatChoice::SameAsSource]);
+    assert_eq!(s.format(), FormatChoice::SameAsSource);
+    assert_eq!(
+        s.hint().as_deref(),
+        Some("Opus has no bit depth to choose.")
+    );
+    assert!(!s.level_visible() && !s.copy_available());
+    assert_eq!(s.problems(&nothing_exists), []);
+    let request = s.build(&nothing_exists).unwrap();
+    let line = crossfade_app::command::command_line(&request).unwrap();
+    assert!(line.ends_with("song.opus"), "{line}");
+    // The preset gets there in one step, and leaving restores the choice.
+    let mut s = sheet("in.wav");
+    s.apply_preset("opus");
+    assert_eq!((s.container(), s.output()), (Container::OggOpus, "in.opus"));
+    s.set_format(FormatChoice::Format(SampleFormat::S24));
+    s.set_container(Container::Wav);
+    assert_eq!(s.format(), FormatChoice::Format(SampleFormat::S24));
 }
 
 #[test]
