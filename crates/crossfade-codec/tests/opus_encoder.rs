@@ -137,16 +137,16 @@ fn only_48_khz_float_mono_or_stereo_is_taken() {
 }
 
 #[test]
-fn the_bitrate_option_sets_the_packet_size() {
+fn the_bitrate_is_a_target_the_packets_vary_around() {
     let s = spec(48_000, SampleFormat::F32, ChannelLayout::stereo());
-    let sizes = |bitrate: Option<u32>| -> Vec<usize> {
+    let sizes = |bitrate: Option<u32>, pcm: Vec<f32>| -> Vec<usize> {
         let options = EncodeOptions {
             bitrate,
             ..EncodeOptions::default()
         };
         let mut enc = encoder_for(CodecId::Opus, &s, &options).unwrap();
         let mut frame = AudioFrame::new(&s);
-        frame.samples = Samples::F32(tone(4800, 2));
+        frame.samples = Samples::F32(pcm);
         enc.send_frame(&frame).unwrap();
         let mut p = Packet::default();
         let mut sizes = vec![];
@@ -155,10 +155,28 @@ fn the_bitrate_option_sets_the_packet_size() {
         }
         sizes
     };
-    // 20 ms at 64 kb/s a channel by default, then as asked.
-    assert_eq!(sizes(None), [320; 5]);
-    assert_eq!(sizes(Some(96_000)), [240; 5]);
-    assert_eq!(sizes(Some(24_000)), [60; 5]);
+    // A second of tone: 50 packets around 20 ms of the bitrate (64 kb/s a channel unless
+    // asked), not all alike.
+    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len() as f64;
+    let default = sizes(None, tone(48_000, 2));
+    assert_eq!(default.len(), 50);
+    assert!(
+        (130.0..520.0).contains(&mean(&default[5..])),
+        "{}",
+        mean(&default[5..])
+    );
+    assert!(
+        default[5..].iter().any(|&n| n != default[5]),
+        "the sizes vary"
+    );
+    let low = sizes(Some(24_000), tone(48_000, 2));
+    assert!(
+        (25.0..100.0).contains(&mean(&low[5..])),
+        "{}",
+        mean(&low[5..])
+    );
+    // Silence costs a TOC and two bytes, whatever the bitrate.
+    assert_eq!(sizes(Some(256_000), vec![0.0; 9600]), [3; 5]);
     let refused = |bitrate| {
         let options = EncodeOptions {
             bitrate: Some(bitrate),

@@ -281,7 +281,7 @@ fn bitrate_takes_bits_or_kilobits_and_only_for_opus() {
         size("c.opus", "128kbps"),
     );
     assert_eq!(a, b);
-    assert!(c > 3 * a, "{c} against {a}");
+    assert!(c > 2 * a, "{c} against {a}");
     for (output, bitrate, why) in [
         ("d.opus", "3k", "opus takes 6000 to 510000 bits per second"),
         ("d.opus", "fast", "a bitrate such as 96k or 128000"),

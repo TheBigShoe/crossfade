@@ -212,11 +212,15 @@ fn the_bitrate_setting_sizes_the_file_and_belongs_to_opus_alone() {
         run(&j, io, &Limits::default(), &CancelToken::new(), &mut |_| {}).unwrap();
         io.get("out.opus").unwrap().len()
     };
-    // Two seconds: 16 kB a second by default (64 kb/s a channel), plus pages and headers.
+    // Two seconds around 16 kB a second by default (64 kb/s a channel): the bitrate is a
+    // target, and a lone sine is cheap.
     let default = size(&mut io, None);
-    assert!((32_000..34_500).contains(&default), "{default}");
+    assert!((6_000..45_000).contains(&default), "{default}");
     let small = size(&mut io, Some(32_000));
-    assert!((8_000..9_500).contains(&small), "{small}");
+    assert!(
+        small * 3 < default * 2 && small > 2_000,
+        "{small} against {default}"
+    );
 
     let mut j = job("in.wav", "out.opus", None);
     j.outputs[0].audio.bitrate = Some(1_000);
