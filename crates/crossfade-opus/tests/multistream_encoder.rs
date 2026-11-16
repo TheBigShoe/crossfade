@@ -113,3 +113,74 @@ fn bad_arguments_are_refused_and_append_nothing() {
     assert!(enc.encode(&[0.0; 960 * 2], &mut packet).is_err());
     assert_eq!(packet, [9]);
 }
+
+/// The stream packets of a multistream packet of `streams` streams: their sizes.
+fn stream_sizes(packet: &[u8], streams: usize) -> Vec<usize> {
+    let mut sizes = vec![];
+    let mut rest = packet;
+    for s in 0..streams {
+        let p = if s + 1 < streams {
+            crossfade_opus::Packet::parse_self_delimited(rest).unwrap()
+        } else {
+            crossfade_opus::Packet::parse(rest).unwrap()
+        };
+        sizes.push(p.byte_len());
+        rest = &rest[p.byte_len()..];
+    }
+    sizes
+}
+
+#[test]
+fn the_lfe_stream_gets_a_small_share_and_a_stereo_pair_more_than_a_mono_stream() {
+    // 5.1 at 256 kb/s, constant: front pair, rear pair, centre, LFE.
+    let mut enc = MultistreamEncoder::new(6).unwrap();
+    enc.set_bitrate(256_000).unwrap();
+    let pcm = tones(960 * 4, 6);
+    let mut packet = vec![];
+    for chunk in pcm.chunks(960 * 6) {
+        packet.clear();
+        enc.encode(chunk, &mut packet).unwrap();
+    }
+    let sizes = stream_sizes(&packet, 4);
+    let total: usize = sizes.iter().sum();
+    // The whole is still the bitrate: 640 bytes a frame.
+    assert!((630..=650).contains(&total), "{sizes:?}");
+    assert_eq!(
+        sizes[0],
+        sizes[1] + 0,
+        "the two pairs alike but for a length byte: {sizes:?}"
+    );
+    assert!(
+        sizes[0] > sizes[2] * 3 / 2,
+        "a pair has more than the centre: {sizes:?}"
+    );
+    assert!(
+        sizes[3] * 4 < sizes[2],
+        "the LFE has a fraction of a channel: {sizes:?}"
+    );
+    assert!(sizes[3] >= 15, "but enough for its one band: {sizes:?}");
+}
+
+#[test]
+fn a_low_tone_survives_in_the_lfe_channel() {
+    let frames = 960 * 40;
+    let mut pcm = vec![0.0f32; frames * 6];
+    for i in 0..frames {
+        let t = i as f64 / 48_000.0;
+        // Vorbis order: the LFE is the sixth channel.
+        pcm[i * 6 + 5] = (0.5 * libm::sin(std::f64::consts::TAU * 55.0 * t)) as f32;
+        pcm[i * 6] = (0.2 * libm::sin(std::f64::consts::TAU * 440.0 * t)) as f32;
+    }
+    let mut enc = MultistreamEncoder::new(6).unwrap();
+    let head = enc.head(48_000);
+    let mut dec = MultistreamDecoder::new(&head.mapping, 6).unwrap();
+    let mut out = vec![];
+    for chunk in pcm.chunks(960 * 6) {
+        let mut packet = vec![];
+        enc.encode(chunk, &mut packet).unwrap();
+        dec.decode(Some(&packet), &mut out).unwrap();
+        assert_eq!(dec.final_ranges(), enc.final_ranges());
+    }
+    let snr = snr_db(&pcm, &out, 6, 5, usize::from(head.pre_skip));
+    assert!(snr > 20.0, "LFE: {snr:.1} dB");
+}
