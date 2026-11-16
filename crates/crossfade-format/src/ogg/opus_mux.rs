@@ -7,6 +7,10 @@
 //!
 //! Granule positions count 48 kHz samples from 0, pre-skip included; a packet's duration is
 //! read from its TOC, and a packet whose TOC is not valid counts for nothing, as in the reader.
+//! A packet whose pts (counted from the first packet's) lies past the end of the packet before
+//! it marks a hole, packets lost upstream: the open page closes and the position jumps, so the
+//! next page's granule places its packets after the hole and a reader sees the same timeline.
+//! A pts that goes back is not followed.
 //!
 //! Pages. A page closes before the packet that would take it past one second
 //! ([`PAGE_FRAMES`]): RFC 7845 section 5 recommends no more than that for a file, and it is
@@ -42,10 +46,14 @@ struct OggOpusMuxer {
     pages: PageWriter,
     /// The granule position after the packets written so far.
     pos: u64,
+    /// The first packet's pts: packets are placed by their pts from it.
+    origin: Option<i64>,
     /// The granule position at which the open page starts.
     page_start: u64,
     /// The granule position at which the stream ends, when its length is known.
     end: Option<u64>,
+    /// The identification header as written.
+    head: Vec<u8>,
 }
 
 pub(super) fn create(
@@ -76,10 +84,12 @@ pub(super) fn create(
         sink,
         pages,
         pos: 0,
+        origin: None,
         page_start: 0,
         end: stream
             .frames
             .map(|n| n.saturating_add(u64::from(head.pre_skip))),
+        head: stream.extradata.clone(),
     }))
 }
 
@@ -87,6 +97,12 @@ impl Muxer for OggOpusMuxer {
     fn write_packet(&mut self, packet: &Packet) -> Result<(), Error> {
         let frames = packet_duration(&packet.data).map_or(0, |n| n as u64);
         let before = self.pages.sequence();
+        let origin = *self.origin.get_or_insert(packet.pts);
+        let at = u64::try_from(packet.pts.saturating_sub(origin)).unwrap_or(0);
+        if at > self.pos {
+            self.pages.end_page();
+            self.pos = at;
+        }
         let ended = self.end.is_some_and(|end| self.pos >= end);
         if self.pos - self.page_start + frames > PAGE_FRAMES && !ended {
             self.pages.end_page();
@@ -103,6 +119,16 @@ impl Muxer for OggOpusMuxer {
             self.sink.write_all(&ready)?;
         }
         Ok(())
+    }
+
+    /// The header is on the first page already; an encoder may only confirm it.
+    fn set_extradata(&mut self, extradata: &[u8]) -> Result<(), Error> {
+        if extradata == self.head {
+            return Ok(());
+        }
+        Err(Error::Unsupported {
+            what: "ogg opus: the identification header is already written and cannot change".into(),
+        })
     }
 
     fn finish(&mut self) -> Result<(), Error> {
