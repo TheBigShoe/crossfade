@@ -12,7 +12,7 @@ use super::mdct;
 use super::quant_bands::{
     log2_amp, unquant_coarse_energy, unquant_energy_finalise, unquant_fine_energy,
 };
-use super::rate::{BITRES, compute_allocation, init_caps};
+use super::rate::{AllocHint, BITRES, compute_allocation, init_caps};
 use super::tables::{
     COMB_GAINS, EBANDS, MAX_LM, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT_SIZE, SPREAD_ICDF,
     TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF, WINDOW,
@@ -380,8 +380,18 @@ impl CeltDecoder {
             0
         };
         bits -= anti_collapse_rsv;
-        let alloc =
-            compute_allocation(start, end, &offsets, &cap, alloc_trim, bits, c, lm, &mut ec);
+        let alloc = compute_allocation(
+            start,
+            end,
+            &offsets,
+            &cap,
+            alloc_trim,
+            bits,
+            c,
+            lm,
+            &mut ec,
+            &AllocHint::default(),
+        );
 
         unquant_fine_energy(
             &mut self.old_band_e,
@@ -410,6 +420,8 @@ impl CeltDecoder {
                 balance: alloc.balance,
                 lm,
                 coded_bands: alloc.coded_bands,
+                band_e: &[0.0; 2 * NB_EBANDS],
+                disable_inv: false,
             };
             let y = if c == 2 { Some(ya) } else { None };
             quant_all_bands(&all, xa, y, &mut collapse_masks, &mut ec, &mut self.rng);

@@ -63,6 +63,29 @@ pub(super) fn bitexact_log2tan(isin: i32, icos: i32) -> i32 {
         - frac_mul16(icos, frac_mul16(icos, -2597) + 7932)
 }
 
+/// `fast_atan2f`: `atan2(y, x)` to about 1e-3, by a rational approximation: plain float
+/// arithmetic, the same bits everywhere.
+pub(super) fn fast_atan2f(y: f32, x: f32) -> f32 {
+    const CA: f32 = 0.431_579_74;
+    const CB: f32 = 0.678_484;
+    const CC: f32 = 0.085_955_42;
+    const CE: f32 = PI / 2.0;
+    let x2 = x * x;
+    let y2 = y * y;
+    // Too small to matter.
+    if x2 + y2 < 1e-18 {
+        return 0.0;
+    }
+    if x2 < y2 {
+        let den = (y2 + CB * x2) * (y2 + CC * x2);
+        -x * y * (y2 + CA * x2) / den + if y < 0.0 { -CE } else { CE }
+    } else {
+        let den = (x2 + CB * y2) * (x2 + CC * y2);
+        x * y * (x2 + CA * y2) / den + if y < 0.0 { -CE } else { CE }
+            - if x * y < 0.0 { -CE } else { CE }
+    }
+}
+
 #[cfg(test)]
 #[path = "maths_tests.rs"]
 mod tests;

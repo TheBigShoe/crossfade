@@ -1,4 +1,5 @@
 use super::*;
+use crate::celt::ec::Ec;
 use crate::range::RangeDecoder;
 
 fn close(a: &[f32], b: &[f32]) -> bool {
@@ -188,6 +189,8 @@ fn shapes(c: usize, lm: usize, seed: u32) -> Vec<f32> {
             let g = 1.0 / band.iter().map(|v| v * v).sum::<f32>().sqrt();
             band.iter_mut().for_each(|v| *v *= g);
         }
+        // Above the last band (20 kHz) nothing is coded.
+        x[ch * n + (eb(NB_EBANDS) << lm)..(ch + 1) * n].fill(0.0);
     }
     x
 }

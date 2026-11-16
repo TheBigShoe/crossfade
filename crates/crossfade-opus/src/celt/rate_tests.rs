@@ -1,4 +1,5 @@
 use super::*;
+use crate::celt::ec::Ec;
 use crate::range::RangeDecoder;
 
 #[test]

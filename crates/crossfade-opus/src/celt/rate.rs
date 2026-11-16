@@ -2,7 +2,7 @@
 //! arithmetic, because it decides what is read next.
 #![allow(clippy::needless_range_loop)] // index loops as the reference writes them
 
-use super::ec::Ec;
+use super::ec::Coder;
 use super::tables::{
     BAND_ALLOCATION, CACHE_BITS, CACHE_CAPS, CACHE_INDEX, EBANDS, LOG_N, LOG2_FRAC_TABLE,
     NB_ALLOC_VECTORS, NB_EBANDS,
@@ -103,10 +103,25 @@ pub(super) struct Allocation {
     pub(super) fine_priority: [i32; NB_EBANDS],
 }
 
-/// `compute_allocation` (decoding): splits `total` (1/8 bit) over the bands `start..end`,
-/// reading the skip, intensity and dual-stereo decisions.
+/// What the encoder wants of the allocation's three free decisions (`clt_compute_allocation`'s
+/// `intensity`, `dual_stereo`, `prev` and `signalBandwidth`); the decoder reads them instead
+/// and passes the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct AllocHint {
+    /// The first band coded as intensity stereo, `start..=end`.
+    pub(super) intensity: usize,
+    pub(super) dual_stereo: bool,
+    /// The last frame's coded bands (`lastCodedBands`), 0 for none: hysteresis for the skips.
+    pub(super) prev: i32,
+    /// The highest band the signal reaches: none above it is kept.
+    pub(super) signal_bandwidth: i32,
+}
+
+/// `compute_allocation`: splits `total` (1/8 bit) over the bands `start..end`, coding the
+/// skip, intensity and dual-stereo decisions: read by the decoder, chosen from `hint` and
+/// written by the encoder.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn compute_allocation(
+pub(super) fn compute_allocation<C: Coder>(
     start: usize,
     end: usize,
     offsets: &[i32; NB_EBANDS],
@@ -115,7 +130,8 @@ pub(super) fn compute_allocation(
     total: i32,
     c: usize,
     lm: usize,
-    ec: &mut Ec<'_, '_>,
+    ec: &mut C,
+    hint: &AllocHint,
 ) -> Allocation {
     let cc = c as i32;
     let lmi = lm as i32;
@@ -219,10 +235,11 @@ pub(super) fn compute_allocation(
         c,
         lm,
         ec,
+        hint,
     })
 }
 
-struct Interp<'a, 'e, 'b, 'c> {
+struct Interp<'a, 'e, C: Coder> {
     start: usize,
     end: usize,
     skip_start: usize,
@@ -236,10 +253,11 @@ struct Interp<'a, 'e, 'b, 'c> {
     dual_stereo_rsv: i32,
     c: usize,
     lm: usize,
-    ec: &'e mut Ec<'b, 'c>,
+    ec: &'e mut C,
+    hint: &'a AllocHint,
 }
 
-fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
+fn interp_bits2pulses<C: Coder>(a: Interp<'_, '_, C>) -> Allocation {
     let Interp {
         start,
         end,
@@ -255,6 +273,7 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
         c,
         lm,
         ec,
+        hint,
     } = a;
     let cc = c as i32;
     let alloc_floor = cc << BITRES;
@@ -312,7 +331,21 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
         let band_width = eb(coded_bands) - eb(j);
         let mut band_bits = bits[j] + percoeff * band_width + rem;
         if band_bits >= thresh[j].max(alloc_floor + (1 << BITRES)) {
-            if ec.bit_logp(1) {
+            // The one free choice of the allocation: the encoder keeps a band it has depth
+            // for (with hysteresis against the last frame) and the signal reaches.
+            let keep = C::ENCODE && {
+                let depth_threshold = if coded_bands <= 17 {
+                    0
+                } else if (j as i32) < hint.prev {
+                    7
+                } else {
+                    9
+                };
+                coded_bands <= start + 2
+                    || (band_bits > ((depth_threshold * band_width) << lm << BITRES) >> 4
+                        && j as i32 <= hint.signal_bandwidth)
+            };
+            if ec.code_bit_logp(keep, 1) {
                 break;
             }
             psum += 1 << BITRES;
@@ -334,13 +367,15 @@ fn interp_bits2pulses(a: Interp<'_, '_, '_, '_>) -> Allocation {
 
     let mut intensity = 0;
     if intensity_rsv > 0 {
-        intensity = start + ec.uint((coded_bands + 1 - start) as u32) as usize;
+        let wanted = hint.intensity.clamp(start, coded_bands);
+        intensity = start
+            + ec.code_uint((wanted - start) as u32, (coded_bands + 1 - start) as u32) as usize;
     }
     if intensity <= start {
         total += dual_stereo_rsv;
         dual_stereo_rsv = 0;
     }
-    let dual_stereo = dual_stereo_rsv > 0 && ec.bit_logp(1);
+    let dual_stereo = dual_stereo_rsv > 0 && ec.code_bit_logp(hint.dual_stereo, 1);
 
     let mut left = total - psum;
     let percoeff = left / (eb(coded_bands) - eb(start));

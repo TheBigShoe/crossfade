@@ -1,13 +1,15 @@
-//! Band shapes (`celt/bands.c`, the decoding half): `quant_all_bands` and its recursive
-//! `quant_band` (splitting, stereo angles, folding, the time-frequency transforms), the
-//! anti-collapse noise and denormalisation. RFC 8251 section 9's hybrid folding is applied.
+//! Band shapes (`celt/bands.c`): `quant_all_bands` and its recursive `quant_band` (splitting,
+//! stereo angles, folding, the time-frequency transforms) for either range coder, the
+//! anti-collapse noise, and the conversions between spectrum and unit-norm bands. RFC 8251
+//! section 9's hybrid folding is applied. The encoder always resynthesises: its shapes come
+//! back as the decoder will have them.
 #![allow(clippy::needless_range_loop)] // index loops as the reference writes them
 
-use super::ec::Ec;
-use super::maths::{bitexact_cos, bitexact_log2tan, exp2, frac_mul16, isqrt32, lcg_rand};
+use super::ec::Coder;
+use super::maths::{bitexact_cos, bitexact_log2tan, exp2, fast_atan2f, frac_mul16, lcg_rand};
 use super::rate::{BITRES, bits2pulses, get_pulses, pulses2bits, split_threshold};
 use super::tables::{EBANDS, LOG_N, NB_EBANDS, ORDERY_TABLE};
-use super::vq::{SPREAD_AGGRESSIVE, alg_unquant, renormalise_vector};
+use super::vq::{SPREAD_AGGRESSIVE, renormalise_vector};
 
 const QTHETA_OFFSET: i32 = 4;
 const QTHETA_OFFSET_TWOPHASE: i32 = 16;
@@ -143,23 +145,81 @@ type SplitHalves<'a> = (
     Option<&'a mut [f32]>,
 );
 
-/// What a band's recursion shares: the range decoder, the band, the spread, the budget, the
-/// noise seed.
-struct Ctx<'e, 'a, 'b> {
-    ec: &'e mut Ec<'a, 'b>,
+/// `stereo_itheta`: the angle between two shapes in units of 1/16384 of a right angle, from
+/// their energies (mid and side of left and right in stereo, the two halves otherwise).
+fn stereo_itheta(x: &[f32], y: &[f32], stereo: bool) -> i32 {
+    let mut emid = 1e-15f32;
+    let mut eside = 1e-15f32;
+    if stereo {
+        for (&a, &b) in x.iter().zip(y.iter()) {
+            let m = a + b;
+            let s = a - b;
+            emid += m * m;
+            eside += s * s;
+        }
+    } else {
+        for &a in x.iter() {
+            emid += a * a;
+        }
+        for &b in y.iter() {
+            eside += b * b;
+        }
+    }
+    let mid = emid.sqrt();
+    let side = eside.sqrt();
+    // The reference's 0.63662f for 2 / pi, kept to the digit.
+    #[allow(clippy::approx_constant)]
+    let two_over_pi = 0.63662f32;
+    (0.5 + 16384.0 * two_over_pi * fast_atan2f(side, mid)).floor() as i32
+}
+
+/// `intensity_stereo`: the two channels of a band as one shape, weighted by their energies.
+fn intensity_stereo(x: &mut [f32], y: &[f32], left: f32, right: f32) {
+    let norm = 1e-15 + (1e-15 + left * left + right * right).sqrt();
+    let a1 = left / norm;
+    let a2 = right / norm;
+    for (l, &r) in x.iter_mut().zip(y.iter()) {
+        *l = a1 * *l + a2 * r;
+    }
+}
+
+/// `stereo_split`: left and right to mid and side.
+fn stereo_split(x: &mut [f32], y: &mut [f32]) {
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    for (a, b) in x.iter_mut().zip(y.iter_mut()) {
+        let l = s * *a;
+        let r = s * *b;
+        *a = l + r;
+        *b = r - l;
+    }
+}
+
+/// What a band's recursion shares: the range coder, the band, the spread, the budget, the
+/// noise seed, and what only the encoder uses to choose its angles.
+struct Ctx<'e, C: Coder> {
+    ec: &'e mut C,
     band: usize,
     spread: i32,
     intensity: usize,
     remaining_bits: i32,
     seed: u32,
+    /// The band amplitudes, a row per channel: intensity stereo weighs the channels by them.
+    band_e: &'e [f32; 2 * NB_EBANDS],
+    /// Round a stereo angle down (-1) or up (1) instead of to nearest (0).
+    theta_round: i32,
+    disable_inv: bool,
+    /// Keep a split of the first band of a transient from leaving one side to noise.
+    avoid_split_noise: bool,
 }
 
-/// `quant_band` (decoding). `x` (and `y` in stereo) is the band's `n` coefficients,
-/// `lowband` a scratch copy of what to fold from, `lowband_out` where to leave this band's
-/// result for later folding. Returns the collapse mask.
+/// `quant_band`, with `quant_partition` and `quant_band_stereo` in it. `x` (and `y` in
+/// stereo) is the band's `n` coefficients: the shape to code for the encoder, and for both
+/// the decoded shape on return. `lowband` is a scratch copy of what to fold from,
+/// `lowband_out` where to leave this band's result for later folding. Returns the collapse
+/// mask.
 #[allow(clippy::too_many_arguments)]
-fn quant_band(
-    ctx: &mut Ctx<'_, '_, '_>,
+fn quant_band<C: Coder>(
+    ctx: &mut Ctx<'_, C>,
     x: &mut [f32],
     mut y: Option<&mut [f32]>,
     mut n: usize,
@@ -194,7 +254,7 @@ fn quant_band(
             for ch in chans.iter_mut().flatten() {
                 let mut sign = 0;
                 if ctx.remaining_bits >= 1 << BITRES {
-                    sign = ctx.ec.bits(1);
+                    sign = ctx.ec.code_bits(u32::from(ch[0] < 0.0), 1);
                     ctx.remaining_bits -= 1 << BITRES;
                 }
                 ch[0] = if sign != 0 { -1.0 } else { 1.0 };
@@ -212,6 +272,9 @@ fn quant_band(
         }
         for k in 0..recombine {
             const BIT_INTERLEAVE: [u32; 16] = [0, 1, 1, 1, 2, 3, 3, 3, 2, 3, 3, 3, 2, 3, 3, 3];
+            if C::ENCODE {
+                haar1(x, n >> k, 1 << k);
+            }
             if let Some(lb) = lowband.as_deref_mut() {
                 haar1(lb, n >> k, 1 << k);
             }
@@ -221,6 +284,9 @@ fn quant_band(
         blocks >>= recombine;
         n_b <<= recombine;
         while n_b & 1 == 0 && tf_change < 0 {
+            if C::ENCODE {
+                haar1(x, n_b, blocks);
+            }
             if let Some(lb) = lowband.as_deref_mut() {
                 haar1(lb, n_b, blocks);
             }
@@ -232,10 +298,13 @@ fn quant_band(
         }
         b0 = blocks;
         n_b0 = n_b;
-        if b0 > 1
-            && let Some(lb) = lowband.as_deref_mut()
-        {
-            deinterleave_hadamard(lb, n_b >> recombine, b0 << recombine, long_blocks);
+        if b0 > 1 {
+            if C::ENCODE {
+                deinterleave_hadamard(x, n_b >> recombine, b0 << recombine, long_blocks);
+            }
+            if let Some(lb) = lowband.as_deref_mut() {
+                deinterleave_hadamard(lb, n_b >> recombine, b0 << recombine, long_blocks);
+            }
         }
     }
 
@@ -262,49 +331,83 @@ fn quant_band(
         if stereo && i >= ctx.intensity {
             qn = 1;
         }
+        if C::ENCODE {
+            // The angle between mid and side (or the two halves): with it both can be
+            // rescaled, since they have unit norm and are orthogonal.
+            itheta = match y.as_deref() {
+                Some(y) => stereo_itheta(&x[..n], &y[..n], true),
+                None => stereo_itheta(&x[..n], &x[n..2 * n], false),
+            };
+        }
         let tell = ctx.ec.tell_frac();
         if qn != 1 {
-            if stereo && n > 2 {
-                let p0 = 3;
-                let x0 = qn / 2;
-                let ft = p0 * (x0 + 1) + x0;
-                let fs = ctx.ec.decode(ft as u32) as i32;
-                let xv = if fs < (x0 + 1) * p0 {
-                    fs / p0
+            if C::ENCODE {
+                if !stereo || ctx.theta_round == 0 {
+                    itheta = (itheta * qn + 8192) >> 14;
+                    if !stereo && ctx.avoid_split_noise && itheta > 0 && itheta < qn {
+                        // Would this angle make the allocation leave one side to noise?
+                        // Then that side gets no energy at all.
+                        let unquantized = itheta * 16384 / qn;
+                        let imid = bitexact_cos(unquantized);
+                        let iside = bitexact_cos(16384 - unquantized);
+                        let delta =
+                            frac_mul16(((n - 1) << 7) as i32, bitexact_log2tan(iside, imid));
+                        if delta > b {
+                            itheta = qn;
+                        } else if delta < -b {
+                            itheta = 0;
+                        }
+                    }
                 } else {
-                    x0 + 1 + (fs - (x0 + 1) * p0)
-                };
-                let (fl, fh) = if xv <= x0 {
-                    (p0 * xv, p0 * (xv + 1))
-                } else {
-                    ((xv - 1 - x0) + (x0 + 1) * p0, (xv - x0) + (x0 + 1) * p0)
-                };
-                ctx.ec.update(fl as u32, fh as u32, ft as u32);
-                itheta = xv;
-            } else if b0 > 1 || stereo {
-                itheta = ctx.ec.uint((qn + 1) as u32) as i32;
-            } else {
-                let ft = ((qn >> 1) + 1) * ((qn >> 1) + 1);
-                let fm = ctx.ec.decode(ft as u32) as i32;
-                let (fs, fl);
-                if fm < (((qn >> 1) * ((qn >> 1) + 1)) >> 1) {
-                    itheta = (isqrt32(8 * fm as u32 + 1) as i32 - 1) >> 1;
-                    fs = itheta + 1;
-                    fl = (itheta * (itheta + 1)) >> 1;
-                } else {
-                    itheta = (2 * (qn + 1) - isqrt32(8 * (ft - fm - 1) as u32 + 1) as i32) >> 1;
-                    fs = qn + 1 - itheta;
-                    fl = ft - (((qn + 1 - itheta) * (qn + 2 - itheta)) >> 1);
+                    // Biased towards 0 and 16384.
+                    let bias = if itheta > 8192 {
+                        32767 / qn
+                    } else {
+                        -32767 / qn
+                    };
+                    let down = ((itheta * qn + bias) >> 14).clamp(0, qn - 1);
+                    itheta = if ctx.theta_round < 0 { down } else { down + 1 };
                 }
-                ctx.ec.update(fl as u32, (fl + fs) as u32, ft as u32);
             }
+            itheta = if stereo && n > 2 {
+                ctx.ec.code_theta_step(itheta, qn)
+            } else if b0 > 1 || stereo {
+                ctx.ec.code_uint(itheta as u32, (qn + 1) as u32) as i32
+            } else {
+                ctx.ec.code_theta_triangle(itheta, qn)
+            };
             itheta = itheta * 16384 / qn;
+            if C::ENCODE
+                && let Some(y) = y.as_deref_mut()
+            {
+                if itheta == 0 {
+                    let (l, r) = (ctx.band_e[i], ctx.band_e[NB_EBANDS + i]);
+                    intensity_stereo(&mut x[..n], &y[..n], l, r);
+                } else {
+                    stereo_split(&mut x[..n], &mut y[..n]);
+                }
+            }
         } else if stereo {
+            if C::ENCODE {
+                let y = y.as_deref_mut().expect("stereo has y");
+                inv = itheta > 8192 && !ctx.disable_inv;
+                if inv {
+                    for v in y[..n].iter_mut() {
+                        *v = -*v;
+                    }
+                }
+                let (l, r) = (ctx.band_e[i], ctx.band_e[NB_EBANDS + i]);
+                intensity_stereo(&mut x[..n], &y[..n], l, r);
+            }
             inv = if b > 2 << BITRES && ctx.remaining_bits > 2 << BITRES {
-                ctx.ec.bit_logp(2)
+                ctx.ec.code_bit_logp(inv, 2)
             } else {
                 false
             };
+            // The flag is overridden so that a mono downmix is safe.
+            if ctx.disable_inv {
+                inv = false;
+            }
             itheta = 0;
         }
         let qalloc = ctx.ec.tell_frac() - tell;
@@ -340,17 +443,20 @@ fn quant_band(
             mbits -= sbits;
             let c = itheta > 8192;
             ctx.remaining_bits -= qalloc + sbits;
-            let mut sign = 0;
-            if sbits != 0 {
-                sign = ctx.ec.bits(1) as i32;
-            }
-            let sign = (1 - 2 * sign) as f32;
             {
                 let (x2, y2): (&mut [f32], &mut [f32]) = if c {
                     (&mut *y, &mut *x)
                 } else {
                     (&mut *x, &mut *y)
                 };
+                let mut sign = 0;
+                if sbits != 0 {
+                    // Mid and side are orthogonal: the side is the mid turned, one way or
+                    // the other.
+                    let turned = x2[0] * y2[1] - x2[1] * y2[0] < 0.0;
+                    sign = ctx.ec.code_bits(u32::from(turned), 1) as i32;
+                }
+                let sign = (1 - 2 * sign) as f32;
                 cm = quant_band(
                     ctx,
                     x2,
@@ -489,7 +595,7 @@ fn quant_band(
         let x = &mut x[..n];
         if q != 0 {
             let k = get_pulses(q) as usize;
-            cm = alg_unquant(x, k, ctx.spread, blocks, ctx.ec, gain);
+            cm = ctx.ec.code_pvq(x, k, ctx.spread, blocks, gain);
         } else {
             let cm_mask = ((1u64 << blocks) - 1) as u32;
             fill &= cm_mask;
@@ -569,17 +675,22 @@ pub(super) struct AllBands<'a> {
     pub(super) balance: i32,
     pub(super) lm: usize,
     pub(super) coded_bands: usize,
+    /// The band amplitudes, a row per channel (the encoder's; the decoder's are not read).
+    pub(super) band_e: &'a [f32; 2 * NB_EBANDS],
+    /// Never code the intensity stereo phase inversion (the encoder's choice).
+    pub(super) disable_inv: bool,
 }
 
-/// `quant_all_bands` (decoding): every band's shape into `x` (and `y`), `n` coefficients per
-/// channel; the collapse masks into `collapse_masks` (`band * c + channel`); `seed` is the
-/// folding noise's LCG state.
-pub(super) fn quant_all_bands(
+/// `quant_all_bands`: every band's shape, `n` coefficients per channel in `x` (and `y`):
+/// read into them by the decoder; coded from them by the encoder, which leaves there what the
+/// decoder will read. The collapse masks go to `collapse_masks` (`band * c + channel`);
+/// `seed` is the folding noise's LCG state.
+pub(super) fn quant_all_bands<C: Coder>(
     a: &AllBands<'_>,
     x: &mut [f32],
     mut y: Option<&mut [f32]>,
     collapse_masks: &mut [u8; 2 * NB_EBANDS],
-    ec: &mut Ec<'_, '_>,
+    ec: &mut C,
     seed: &mut u32,
 ) {
     let c = if y.is_some() { 2 } else { 1 };
@@ -601,6 +712,11 @@ pub(super) fn quant_all_bands(
         intensity: a.intensity,
         remaining_bits: 0,
         seed: *seed,
+        band_e: a.band_e,
+        theta_round: 0,
+        disable_inv: a.disable_inv,
+        // No noise in the first band of a transient; after it there is folding.
+        avoid_split_noise: blocks > 1,
     };
     for i in a.start..a.end {
         let lo = m * eb(i);
@@ -745,6 +861,7 @@ pub(super) fn quant_all_bands(
         collapse_masks[i * c + c - 1] = y_cm as u8;
         balance += a.pulses[i] + tell;
         update_lowband = b > (n as i32) << BITRES;
+        ctx.avoid_split_noise = false;
     }
     *seed = ctx.seed;
 }
