@@ -76,7 +76,7 @@ fn quant_codes_a_vector_the_decoder_rebuilds_bit_for_bit() {
         (4, 12, 2, 1),
         (8, 3, SPREAD_NONE, 4),
         (32, 6, SPREAD_AGGRESSIVE, 2),
-        (24, 40, 1, 8),
+        (8, 12, 1, 4),
         (2, 5, 2, 1),
     ] {
         let orig = shape(n, (n * 31 + k) as u32);

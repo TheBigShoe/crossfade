@@ -1,9 +1,9 @@
 //! The PVQ codebook index (`celt/cwrs.c`): the `i`-th vector of `n` integers whose absolute
-//! values sum to `k`. Decoding uses libopus's table of U(N, K) (built here at compile time);
+//! values sum to `k`, both ways. Decoding uses libopus's table of U(N, K) (built here at compile time);
 //! the reference's small-footprint recurrence is kept for sizes past the table and as the
 //! tests' oracle. Exact for every size the pulse cache allows: V(N, K) fits in 32 bits there.
 
-use super::ec::Ec;
+use super::ec::{Ec, Enc};
 
 /// The largest pulse count a band codes (`MAX_PULSES` of `rate.h`, `get_pulses(40)`).
 pub(super) const MAX_PULSES: usize = 128;
@@ -190,6 +190,36 @@ pub(super) fn decode_pulses(y: &mut [i32], k: usize, ec: &mut Ec<'_, '_>) {
     let v = u(n, k).wrapping_add(u(n, k + 1));
     let i = ec.uint(v);
     cwrsi_table(n, k, i, y);
+}
+
+/// `icwrs` with the table: the index of `y` among the vectors of its size and pulse count.
+fn icwrs_table(y: &[i32]) -> u32 {
+    let n = y.len();
+    let mut j = n - 1;
+    let mut i = u32::from(y[j] < 0);
+    let mut k = y[j].unsigned_abs() as usize;
+    while j > 0 {
+        j -= 1;
+        i = i.wrapping_add(u(n - j, k));
+        k += y[j].unsigned_abs() as usize;
+        if y[j] < 0 {
+            i = i.wrapping_add(u(n - j, k + 1));
+        }
+    }
+    i
+}
+
+/// `encode_pulses`: writes the index of `y`, 2 to [`MAX_N`] integers whose absolute values
+/// sum to `k` (1 to [`MAX_PULSES`]). Anything else is the caller's bug and codes nothing.
+#[allow(dead_code)] // ENCODER-WIP
+pub(super) fn encode_pulses(y: &[i32], k: usize, enc: &mut Enc<'_>) {
+    let n = y.len();
+    debug_assert!((2..=MAX_N).contains(&n) && (1..=MAX_PULSES).contains(&k));
+    if !(2..=MAX_N).contains(&n) || k == 0 || k > MAX_PULSES {
+        return;
+    }
+    let v = u(n, k).wrapping_add(u(n, k + 1));
+    enc.uint(icwrs_table(y), v);
 }
 
 #[cfg(test)]

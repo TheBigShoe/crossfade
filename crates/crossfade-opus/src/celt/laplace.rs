@@ -1,7 +1,7 @@
 //! The Laplace-like distribution of the coarse energy deltas (`celt/laplace.c`): unsigned
 //! arithmetic as the reference's, wrapping where C's would.
 
-use super::ec::Ec;
+use super::ec::{Ec, Enc};
 
 /// The minimum probability of a delta, out of 32768 (`LAPLACE_MINP`).
 const MINP: u32 = 1;
@@ -44,6 +44,42 @@ pub(super) fn decode(ec: &mut Ec<'_, '_>, mut fs: u32, decay: u32) -> i32 {
     }
     ec.update(fl, fl.wrapping_add(fs).min(32768), 32768);
     val
+}
+
+/// `ec_laplace_encode`: writes the delta `val` and returns what the decoder will read, which
+/// is nearer zero where the distribution's tail runs out.
+#[allow(dead_code)] // ENCODER-WIP
+pub(super) fn encode(enc: &mut Enc<'_>, val: i32, mut fs: u32, decay: u32) -> i32 {
+    let mut fl = 0u32;
+    let mut value = val;
+    if val != 0 {
+        let s: i32 = -i32::from(val < 0);
+        let v = (val.wrapping_add(s)) ^ s;
+        fl = fs;
+        fs = freq1(fs, decay);
+        // The decaying part of the distribution.
+        let mut i = 1;
+        while fs > 0 && i < v {
+            fs *= 2;
+            fl += fs + 2 * MINP;
+            fs = (fs * decay) >> 15;
+            i += 1;
+        }
+        if fs == 0 {
+            // Past it every delta has probability MINP.
+            let ndi_max = (32768 - fl + MINP - 1) as i32;
+            let ndi_max = (ndi_max - s) >> 1;
+            let di = (v - i).min(ndi_max - 1);
+            fl = (fl as i32 + (2 * di + 1 + s) * MINP as i32) as u32;
+            fs = MINP.min(32768 - fl);
+            value = (i + di + s) ^ s;
+        } else {
+            fs += MINP;
+            fl += fs & !(s as u32);
+        }
+    }
+    enc.encode_bin(fl, fl + fs, 15);
+    value
 }
 
 #[cfg(test)]
