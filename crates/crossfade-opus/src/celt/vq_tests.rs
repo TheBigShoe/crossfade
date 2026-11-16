@@ -49,3 +49,77 @@ fn renormalise_scales_to_the_gain_and_leaves_zero_finite() {
     renormalise_vector(&mut z, 1.0);
     assert_eq!(z, [0.0; 4]);
 }
+
+/// A deterministic unit vector with a few strong bins.
+fn shape(n: usize, seed: u32) -> Vec<f32> {
+    let mut s = seed;
+    let mut x: Vec<f32> = (0..n)
+        .map(|i| {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let v = ((s >> 9) as f32 / (1u32 << 23) as f32) - 0.5;
+            if i % 5 == 0 { 4.0 * v } else { v }
+        })
+        .collect();
+    let g = 1.0 / norm(&x);
+    x.iter_mut().for_each(|v| *v *= g);
+    x
+}
+
+#[test]
+fn quant_codes_a_vector_the_decoder_rebuilds_bit_for_bit() {
+    use crate::celt::ec::Enc;
+    use crate::range_encoder::RangeEncoder;
+    // (n, k, spread, blocks): few pulses, more pulses than half the bins (the projection
+    // pre-search), short blocks, every spread.
+    for (n, k, spread, b) in [
+        (16, 10, 2, 1),
+        (4, 12, 2, 1),
+        (8, 3, SPREAD_NONE, 4),
+        (32, 6, SPREAD_AGGRESSIVE, 2),
+        (24, 40, 1, 8),
+        (2, 5, 2, 1),
+    ] {
+        let orig = shape(n, (n * 31 + k) as u32);
+        let mut x = orig.clone();
+        let mut renc = RangeEncoder::new(128);
+        let mut enc = Enc::new(&mut renc);
+        let mask = alg_quant(&mut x, k, spread, b, &mut enc, 0.75);
+        let rng = renc.rng();
+        let frame = renc.done().expect("fits");
+
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        let mut y = vec![0.0; n];
+        let dec_mask = alg_unquant(&mut y, k, spread, b, &mut ec, 0.75);
+        assert_eq!(dec.rng(), rng, "n {n} k {k}");
+        assert_eq!(mask, dec_mask, "n {n} k {k}");
+        assert_eq!(
+            x, y,
+            "the encoder's resynthesis is the decoder's output, n {n} k {k}"
+        );
+        assert!((norm(&x) - 0.75).abs() < 1e-5);
+        let cos: f32 = x.iter().zip(&orig).map(|(a, b)| a * b).sum::<f32>() / 0.75;
+        // With more pulses than bins the shape is close; with few it is at least alike.
+        let floor = if k >= n { 0.95 } else { 0.5 };
+        assert!(cos > floor, "n {n} k {k}: cosine {cos}");
+    }
+}
+
+#[test]
+fn quant_of_silence_or_garbage_still_codes_k_pulses() {
+    use crate::celt::ec::Enc;
+    use crate::range_encoder::RangeEncoder;
+    for fill in [0.0f32, f32::NAN, f32::INFINITY, 1e-30] {
+        let mut x = vec![fill; 8];
+        let mut renc = RangeEncoder::new(64);
+        let mut enc = Enc::new(&mut renc);
+        alg_quant(&mut x, 12, 2, 1, &mut enc, 1.0);
+        let frame = renc.done().expect("fits");
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        let mut y = vec![0.0; 8];
+        alg_unquant(&mut y, 12, 2, 1, &mut ec, 1.0);
+        assert!(!dec.error());
+        assert!((norm(&y) - 1.0).abs() < 1e-5, "fill {fill}");
+    }
+}

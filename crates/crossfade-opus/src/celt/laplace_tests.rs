@@ -68,3 +68,39 @@ fn any_bytes_decode_without_panic() {
         let _ = decode(&mut ec, 0, 0);
     }
 }
+
+#[test]
+fn encode_writes_what_decode_reads_and_reports_the_clamped_value() {
+    use crate::celt::ec::Enc;
+    use crate::celt::tables::E_PROB_MODEL;
+    use crate::range_encoder::RangeEncoder;
+    for (lm, intra, band) in [(0, 0, 0), (3, 1, 20), (2, 0, 7)] {
+        let model = &E_PROB_MODEL[lm][intra];
+        let fs = u32::from(model[2 * band]) << 7;
+        let decay = u32::from(model[2 * band + 1]) << 6;
+        let vals: Vec<i32> = (-60..=60).collect();
+        let mut renc = RangeEncoder::new(1024);
+        let mut enc = Enc::new(&mut renc);
+        let coded: Vec<i32> = vals
+            .iter()
+            .map(|&v| super::encode(&mut enc, v, fs, decay))
+            .collect();
+        for (&v, &c) in vals.iter().zip(&coded) {
+            // The tail clamps towards zero, never past the value or across its sign.
+            assert!(
+                c == v || (c.abs() < v.abs() && c.signum() == v.signum()),
+                "{v} -> {c}"
+            );
+        }
+        assert_eq!(
+            &coded[50..=70],
+            &vals[50..=70],
+            "small deltas are never clamped"
+        );
+        let frame = renc.done().expect("fits");
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        let got: Vec<i32> = vals.iter().map(|_| decode(&mut ec, fs, decay)).collect();
+        assert_eq!(got, coded, "lm {lm} intra {intra} band {band}");
+    }
+}

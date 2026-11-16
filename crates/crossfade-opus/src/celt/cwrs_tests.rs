@@ -167,3 +167,49 @@ fn the_table_form_agrees_with_the_recurrence() {
         }
     }
 }
+
+#[test]
+fn encode_pulses_writes_what_decode_pulses_reads() {
+    use crate::celt::ec::Enc;
+    use crate::range_encoder::RangeEncoder;
+    // Sizes the pulse cache allows (V fits in 32 bits), signs and zeros mixed.
+    for (n, k) in [
+        (2, 1),
+        (2, 128),
+        (3, 40),
+        (8, 20),
+        (16, 10),
+        (32, 5),
+        (176, 2),
+        (176, 1),
+    ] {
+        for seed in 0..6u32 {
+            let mut y = vec![0i32; n];
+            let mut s = seed.wrapping_mul(2_654_435_761).wrapping_add(n as u32);
+            for _ in 0..k {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let at = (s >> 8) as usize % n;
+                // A bin keeps the sign of its first pulse.
+                let sign = if y[at] != 0 {
+                    y[at].signum()
+                } else if s & 1 == 0 {
+                    1
+                } else {
+                    -1
+                };
+                y[at] += sign;
+            }
+            let mut renc = RangeEncoder::new(64);
+            let mut enc = Enc::new(&mut renc);
+            encode_pulses(&y, k, &mut enc);
+            let (tell, rng) = (renc.tell_frac(), renc.rng());
+            let frame = renc.done().expect("fits");
+            let mut dec = RangeDecoder::new(&frame);
+            let mut ec = Ec::new(&mut dec);
+            let mut got = vec![0; n];
+            decode_pulses(&mut got, k, &mut ec);
+            assert_eq!(got, y, "n {n} k {k} seed {seed}");
+            assert_eq!((dec.tell_frac(), dec.rng()), (tell, rng), "n {n} k {k}");
+        }
+    }
+}
