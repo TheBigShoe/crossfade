@@ -8,6 +8,7 @@ use crossfade_core::{
 };
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
 use crossfade_opus::testing::ogg::{self as w, OggLayout};
+use crossfade_testkit::io::FaultySource;
 use std::io::{Cursor, SeekFrom};
 use std::sync::{Arc, Mutex};
 
@@ -76,6 +77,46 @@ fn open(bytes: &[u8]) -> Box<dyn Demuxer> {
         .1
 }
 
+/// What a reader shows of a file: the stream, the tags, every packet.
+#[derive(PartialEq)]
+struct Read {
+    stream: StreamInfo,
+    tags: Vec<(String, String)>,
+    packets: Vec<Packet>,
+}
+
+fn read_from(mut d: Box<dyn Demuxer>) -> Read {
+    let mut packets = vec![];
+    let mut p = Packet::default();
+    while d.read_packet(&mut p).unwrap() {
+        packets.push(p.clone());
+    }
+    Read {
+        stream: d.streams()[0].clone(),
+        tags: d
+            .tags()
+            .iter()
+            .map(|t| (t.key.to_string(), t.value.to_string()))
+            .collect(),
+        packets,
+    }
+}
+
+/// `assert_eq!` on two reads, part by part so that a failure names what differs.
+#[track_caller]
+fn assert_same(got: &Read, want: &Read) {
+    assert_eq!(got.stream, want.stream);
+    assert_eq!(got.tags, want.tags);
+    let times =
+        |r: &Read| -> Vec<(i64, u64)> { r.packets.iter().map(|p| (p.pts, p.duration)).collect() };
+    assert_eq!(times(got), times(want));
+    assert!(got.packets == want.packets, "packet data differs");
+}
+
+fn read(bytes: &[u8]) -> Read {
+    read_from(open(bytes))
+}
+
 fn muxer(stream: &StreamInfo, tags: &Tags) -> (Shared, Box<dyn Muxer>) {
     let sink = Shared::default();
     let m = create_muxer(FormatId::Ogg, Box::new(sink.clone()), stream, tags).unwrap();
@@ -84,7 +125,10 @@ fn muxer(stream: &StreamInfo, tags: &Tags) -> (Shared, Box<dyn Muxer>) {
 
 /// Stream copy: every packet of `bytes` through the writer.
 fn copy(bytes: &[u8]) -> Vec<u8> {
-    let mut d = open(bytes);
+    copy_from(open(bytes))
+}
+
+fn copy_from(mut d: Box<dyn Demuxer>) -> Vec<u8> {
     let (sink, mut m) = muxer(&d.streams()[0].clone(), &d.tags().clone());
     let mut p = Packet::default();
     while d.read_packet(&mut p).unwrap() {
@@ -191,4 +235,137 @@ fn a_stream_the_writer_cannot_describe_is_refused() {
             what: "ogg opus is timed in 48 kHz samples, not at 44100 Hz".into()
         }
     );
+}
+
+/// A mix of SILK, hybrid and CELT packets of 2.5 to 60 ms.
+fn mixed() -> Vec<Vec<u8>> {
+    let mut a = vec![];
+    for (i, &(config, n)) in [(9, 3), (3, 2), (15, 4), (16, 3), (29, 2), (31, 5), (1, 2)]
+        .iter()
+        .enumerate()
+    {
+        a.extend(w::packets(config, true, n, 40, i as u64));
+    }
+    a
+}
+
+fn total(audio: &[Vec<u8>]) -> i64 {
+    audio
+        .iter()
+        .map(|p| crossfade_opus::packet_duration(p).unwrap() as i64)
+        .sum()
+}
+
+#[test]
+fn a_copy_reads_back_with_the_same_packets_timeline_length_and_tags() {
+    let a = mixed();
+    let head = w::opus_head(2, 312, 0, None);
+    // 200 samples short of the last packet's end: the stream ends inside it.
+    let layout = OggLayout {
+        end_trim: 200,
+        packets_per_page: vec![4, 1, 7],
+        ..OggLayout::default()
+    };
+    let source = file(&head, &a, &layout);
+    let out = copy(&source);
+    let (want, got) = (read(&source), read(&out));
+    assert_eq!(want.packets[0].pts, -312);
+    assert_eq!(want.stream.frames, Some((total(&a) - 312 - 200) as u64));
+    assert_eq!(want.tags.len(), 3);
+    assert_same(&got, &want);
+
+    // The last granule is where the stream ends (pre-skip included), not where its last
+    // packet does.
+    let last = pages(&out).pop().unwrap();
+    assert_eq!((last.flags, last.granule), (EOS, total(&a) - 200));
+    // Writing is deterministic, and a copy of the copy is the copy.
+    assert_eq!(copy(&out), out);
+}
+
+#[test]
+fn a_stream_cut_at_the_front_or_shorter_than_its_pre_skip_reads_back_the_same() {
+    let a = mixed();
+    // RFC 7845 4.5: the first granule is past its packets; the copy starts at 0 again.
+    let cut = file(
+        &w::opus_head(2, 312, 0, None),
+        &a,
+        &OggLayout {
+            start: 100_000,
+            ..OggLayout::default()
+        },
+    );
+    assert_same(&read(&copy(&cut)), &read(&cut));
+
+    // Two 2.5 ms packets under a pre-skip of 3840: nothing is meant to be heard.
+    let short = w::packets(16, false, 2, 20, 3);
+    let source = file(
+        &w::opus_head(1, 3840, 0, None),
+        &short,
+        &OggLayout::default(),
+    );
+    let got = read(&copy(&source));
+    assert_eq!(got.stream.frames, Some(0));
+    assert_eq!(got.packets.len(), 2);
+    assert_same(&got, &read(&source));
+}
+
+#[test]
+fn a_stream_of_unknown_length_is_written_whole() {
+    let a = mixed();
+    let source = file(
+        &w::opus_head(2, 312, 0, None),
+        &a,
+        &OggLayout {
+            end_trim: 200,
+            ..OggLayout::default()
+        },
+    );
+    // On a pipe the reader cannot see the last granule: no length, so nothing to trim to.
+    let pipe = FaultySource::new(Cursor::new(source.clone())).not_seekable();
+    let d = open_demuxer(Box::new(pipe), &Limits::default()).unwrap().1;
+    assert_eq!(d.streams()[0].frames, None);
+    let got = read(&copy_from(d));
+    assert_eq!(got.stream.frames, Some((total(&a) - 312) as u64));
+    assert_eq!(got.packets, read(&source).packets);
+}
+
+#[test]
+fn a_stream_with_no_audio_is_two_headers_and_an_empty_last_page() {
+    let head = w::opus_head(2, 312, 0, None);
+    let source = file(&head, &[], &OggLayout::default());
+    let out = copy(&source);
+    let p = pages(&out);
+    assert_eq!(p.len(), 3);
+    assert_eq!((p[2].flags, p[2].granule), (EOS, 0));
+    assert!(p[2].lacing.is_empty() && p[2].crc_ok);
+    let got = read(&out);
+    assert_eq!(got.stream.frames, Some(0));
+    assert!(got.packets.is_empty());
+    assert_same(&got, &read(&source));
+}
+
+#[test]
+fn a_multistream_header_and_its_packets_pass_through_untouched() {
+    // Family 1, three channels: a coupled stream and a mono one per packet.
+    let head = w::opus_head(3, 312, 0, Some((1, 2, 1, &[0, 2, 1])));
+    let a: Vec<Vec<u8>> = (0..12)
+        .map(|i| {
+            w::multistream_packet(&[
+                w::packets(31, true, 1, 60, i).remove(0),
+                w::packets(31, false, 1, 30, 100 + i).remove(0),
+            ])
+        })
+        .collect();
+    let source = file(&head, &a, &OggLayout::default());
+    let out = copy(&source);
+    assert_eq!(pages(&out)[0].body, head);
+    let got = read(&out);
+    assert_eq!(got.stream.extradata, head);
+    assert_eq!(
+        got.stream.audio.layout(),
+        &ChannelLayout::vorbis_order(3).unwrap()
+    );
+    let data: Vec<Vec<u8>> = got.packets.iter().map(|p| p.data.clone()).collect();
+    assert_eq!(data, a);
+    assert_same(&got, &read(&source));
 }
