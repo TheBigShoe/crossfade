@@ -42,6 +42,7 @@ struct Page {
     crc_ok: bool,
 }
 
+const CONTINUED: u8 = 1;
 const BOS: u8 = 2;
 const EOS: u8 = 4;
 
@@ -441,4 +442,121 @@ fn packets_past_the_end_stay_on_the_page_the_stream_ends_on() {
         assert_eq!(got.stream.frames, Some(frames));
         assert_eq!(got.packets.len(), 52);
     }
+}
+
+/// A stereo stream with a pre-skip of 312 and no length, for packets written by hand.
+fn bare_stream() -> StreamInfo {
+    let mut s = StreamInfo::new(
+        0,
+        CodecId::Opus,
+        AudioSpec::new(48_000, SampleFormat::F32, ChannelLayout::stereo()).unwrap(),
+        TimeBase::new(1, 48_000).unwrap(),
+    );
+    s.extradata = w::opus_head(2, 312, 0, None);
+    s
+}
+
+/// Writes `packets` as `(pts, data)`.
+fn write(stream: &StreamInfo, packets: &[(i64, Vec<u8>)]) -> Vec<u8> {
+    let (sink, mut m) = muxer(stream, &Tags::new());
+    for (pts, data) in packets {
+        let p = Packet {
+            pts: *pts,
+            duration: crossfade_opus::packet_duration(data).map_or(0, |n| n as u64),
+            data: data.clone(),
+            ..Packet::default()
+        };
+        m.write_packet(&p).unwrap();
+    }
+    m.finish().unwrap();
+    sink.contents()
+}
+
+/// `(pts, data)` for packets that follow each other from `-312`.
+fn in_a_row(audio: &[Vec<u8>]) -> Vec<(i64, Vec<u8>)> {
+    let mut pts = -312;
+    audio
+        .iter()
+        .map(|p| {
+            let at = pts;
+            pts += crossfade_opus::packet_duration(p).unwrap_or(0) as i64;
+            (at, p.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_packet_over_255_lacing_values_continues_on_the_next_page() {
+    let mut a = w::packets(31, true, 6, 30, 1);
+    // 70,000 bytes = 274 * 255 + 130: more than the 65,025 a page can hold.
+    a[3] = [vec![31 << 3 | 4], w::seeded_bytes(9, 69_999)].concat();
+    // Nothing in a packet without a TOC to time it by.
+    a.push(Vec::new());
+    let out = write(&bare_stream(), &in_a_row(&a));
+    let p = pages(&out);
+    assert!(p.iter().all(|p| p.crc_ok));
+    assert_eq!(
+        audio_pages(&out),
+        [(3, 2880), (0, -1), (4, 5760)],
+        "the page that ends no packet has no granule"
+    );
+    assert_eq!(p[3].lacing, [255; 255]);
+    assert_eq!(
+        [p[2].flags, p[3].flags, p[4].flags],
+        [0, 0, CONTINUED | EOS]
+    );
+    assert_eq!(p[4].lacing[..20], [[255; 19].as_slice(), &[130]].concat());
+
+    let got = read(&out);
+    let data: Vec<Vec<u8>> = got.packets.iter().map(|p| p.data.clone()).collect();
+    assert!(data == a);
+    let times: Vec<(i64, u64)> = got.packets.iter().map(|p| (p.pts, p.duration)).collect();
+    let want: Vec<(i64, u64)> = (0..6).map(|i| (i * 960 - 312, 960)).collect();
+    assert_eq!(times[..6], want);
+    assert_eq!(times[6], (6 * 960 - 312, 0));
+}
+
+#[test]
+fn a_hole_in_the_timeline_is_kept_as_a_jump_of_the_granule() {
+    // Packets lost upstream: the fourth starts 4,800 samples late (RFC 7845 section 4).
+    let a = w::packets(31, true, 5, 30, 1);
+    let mut packets = in_a_row(&a);
+    for (pts, _) in &mut packets[3..] {
+        *pts += 4800;
+    }
+    let out = write(&bare_stream(), &packets);
+    // The page closes at the hole, so the next page's granule places its packets after it.
+    assert_eq!(audio_pages(&out), [(3, 2880), (2, 9600)]);
+    let got = read(&out);
+    let pts: Vec<i64> = got.packets.iter().map(|p| p.pts).collect();
+    assert_eq!(pts, [-312, 648, 1608, 7368, 8328]);
+    assert_eq!(got.stream.frames, Some(9600 - 312));
+    assert_eq!(copy(&out), out);
+
+    // Only a jump forward is one: the origin is the first packet's pts, and a pts that
+    // goes back is not followed.
+    let shifted: Vec<(i64, Vec<u8>)> = in_a_row(&a)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (pts, d))| (if i == 2 { 0 } else { pts + 1000 }, d))
+        .collect();
+    assert_eq!(
+        write(&bare_stream(), &shifted),
+        write(&bare_stream(), &in_a_row(&a))
+    );
+}
+
+#[test]
+fn the_identification_header_cannot_change_once_written() {
+    let stream = bare_stream();
+    let (sink, mut m) = muxer(&stream, &Tags::new());
+    m.set_extradata(&stream.extradata).unwrap();
+    assert_eq!(
+        m.set_extradata(&w::opus_head(2, 400, 0, None)),
+        Err(Error::Unsupported {
+            what: "ogg opus: the identification header is already written and cannot change".into()
+        })
+    );
+    m.finish().unwrap();
+    assert_eq!(pages(&sink.contents())[0].body, stream.extradata);
 }
