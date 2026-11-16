@@ -228,12 +228,13 @@ pub fn check_bitrate(bitrate: u32) -> Result<(), Error> {
     }
 }
 
-/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, constant bitrate,
-/// `bitrate` bits per second or 64 kb/s a channel.
+/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, at a variable bitrate
+/// around `bitrate` bits per second, or 64 kb/s a channel.
 pub fn encoder(spec: &AudioSpec, bitrate: Option<u32>) -> Result<Box<dyn Encoder>, Error> {
     let head = head(spec)?;
     let channels = usize::from(spec.layout().channels());
     let mut inner = crossfade_opus::Encoder::new(channels).map_err(engine_error)?;
+    inner.set_vbr(true);
     if let Some(b) = bitrate {
         check_bitrate(b)?;
         inner.set_bitrate(b).map_err(engine_error)?;

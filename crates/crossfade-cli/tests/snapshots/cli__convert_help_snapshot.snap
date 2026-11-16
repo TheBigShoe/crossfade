@@ -19,11 +19,11 @@ Options:
       --channels <LAYOUT>
           Output channels: a layout (mono, stereo, 5.1, ...) or a count; defaults to the input's. Converted after the filters
       --codec <CODEC>
-          How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, mono or stereo, 64 kb/s a channel). Defaults to the container's own [possible values: copy, pcm, flac, opus]
+          How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, mono or stereo, see --bitrate). Defaults to the container's own [possible values: copy, pcm, flac, opus]
       --compression-level <COMPRESSION_LEVEL>
           FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file
       --bitrate <BITS>
-          Opus bitrate for the whole stream, such as 96k or 128000; defaults to 64k a channel
+          Opus target bitrate for the whole stream, such as 96k or 128000; defaults to 64k a channel
       --threads <THREADS>
           Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything on one thread. The output is the same either way [default: auto]
       --force

@@ -116,13 +116,14 @@ struct OutputArgs {
     #[arg(long, value_name = "LAYOUT", value_parser = value(parse_channels))]
     channels: Option<Channels>,
     /// How audio is written: copy the packets unchanged, raw pcm, flac, or opus (48 kHz, mono
-    /// or stereo, 64 kb/s a channel). Defaults to the container's own.
+    /// or stereo, see --bitrate). Defaults to the container's own.
     #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac", "opus"]))]
     codec: Option<String>,
     /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
     compression_level: Option<u8>,
-    /// Opus bitrate for the whole stream, such as 96k or 128000; defaults to 64k a channel.
+    /// Opus target bitrate for the whole stream, such as 96k or 128000; defaults to 64k a
+    /// channel.
     #[arg(long, value_name = "BITS", value_parser = parse_bitrate)]
     bitrate: Option<u32>,
     /// A filter: a name, an optional value, then key=value words, such as "gain -3dB" or

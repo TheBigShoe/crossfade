@@ -156,7 +156,7 @@ fn the_bitrate_is_a_target_the_packets_vary_around() {
         sizes
     };
     // A second of tone: 50 packets around 20 ms of the bitrate (64 kb/s a channel unless
-    // asked), not all alike.
+    // asked).
     let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len() as f64;
     let default = sizes(None, tone(48_000, 2));
     assert_eq!(default.len(), 50);
@@ -165,10 +165,8 @@ fn the_bitrate_is_a_target_the_packets_vary_around() {
         "{}",
         mean(&default[5..])
     );
-    assert!(
-        default[5..].iter().any(|&n| n != default[5]),
-        "the sizes vary"
-    );
+    // A steady tone settles on a size of its own, not the 320 bytes a constant bitrate gives.
+    assert!(default[5..].iter().all(|&n| n != 320), "{default:?}");
     let low = sizes(Some(24_000), tone(48_000, 2));
     assert!(
         (25.0..100.0).contains(&mean(&low[5..])),

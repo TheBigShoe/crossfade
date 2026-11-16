@@ -21,8 +21,8 @@ pub struct EncodeOptions {
     /// FLAC: the true bit depth of samples carried left-justified in a wider container
     /// (`None`: the container's own width). Other codecs ignore it.
     pub bits_per_sample: Option<u8>,
-    /// Opus: bits per second for the whole stream, 6,000 to 510,000 (`None`: 64,000 a
-    /// channel). Other codecs ignore it.
+    /// Opus: the bits per second its variable bitrate aims at for the whole stream, 6,000 to
+    /// 510,000 (`None`: 64,000 a channel). Other codecs ignore it.
     pub bitrate: Option<u32>,
 }
 
