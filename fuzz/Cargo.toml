@@ -192,6 +192,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "opus_encode"
+path = "fuzz_targets/opus_encode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "opus_silk"
 path = "fuzz_targets/opus_silk.rs"
 test = false
