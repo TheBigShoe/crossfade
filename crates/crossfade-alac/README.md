@@ -1,6 +1,6 @@
 # crossfade-alac
 
-Apple Lossless (ALAC) decoding in pure Rust. No dependencies, no `unsafe`, integer arithmetic
+Apple Lossless (ALAC) decoding and encoding in pure Rust. No dependencies, no `unsafe`, integer arithmetic
 only, so it gives the same samples on every platform.
 
 ## Decoding
@@ -51,3 +51,33 @@ copied. The channel layouts are Apple's for each count (`ALACAudioTypes.h`), wit
 surround labels as WAVE's side pair (what `afconvert` does). Tests decode files `afconvert`
 encoded and compare them with the source PCM sample for sample (`crossfade-format`'s
 `tests/mp4_fixtures.rs`); this crate's own tests build bitstreams with a test-side coder.
+
+## Encoding
+
+`Encoder` is the decoder's inverse: up to `frame_length` sample frames in, one packet out.
+`Config::new` gives the usual stream (4096-frame packets, the reference encoder's Rice
+tuning); its `write()` is the cookie a container stores.
+
+```rust
+use crossfade_alac::{Config, Encoder};
+
+fn encode_all(pcm: &[i32], channels: u8, bit_depth: u8) -> crossfade_alac::Result<Vec<Vec<u8>>> {
+    let config = Config::new(44_100, channels, bit_depth)?;
+    let mut encoder = Encoder::new(config)?;
+    let per_packet = config.frame_length as usize * usize::from(channels);
+    // Interleaved, right-justified at the bit depth, in ALAC's channel order.
+    pcm.chunks(per_packet)
+        .map(|chunk| {
+            let mut packet = Vec::new();
+            encoder.encode(chunk, &mut packet)?;
+            Ok(packet)
+        })
+        .collect()
+}
+```
+
+Each element is coded with the adaptive predictor (a channel pair also as mid and side) and
+kept only if it beats the samples as they are, so a packet never grows past its input by more
+than a few header bytes. Packets do not depend on one another, and the same samples always
+give the same bytes. It does not search predictor orders or mixing weights as the reference
+encoder does, so its files are a little larger than `afconvert`'s.

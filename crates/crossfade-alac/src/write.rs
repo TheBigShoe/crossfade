@@ -1,7 +1,7 @@
-//! Test-only writers: a bit writer, and an encoder for the adaptive Rice coder and the packet
-//! syntax, written from the format description so the decoder can be checked on bitstreams no
-//! encoder at hand produces (the "prediction on prediction" mode, DSE and FIL elements, odd
-//! shifts).
+//! The writing halves: a bit writer, the adaptive Rice coder's encoding side and the
+//! predictor's, each the inverse of what the decoder reads. The encoder is built from them, and
+//! the decoder's tests use them for bitstreams no encoder produces (the "prediction on
+//! prediction" mode, DSE and FIL elements, odd shifts).
 
 use crate::rice::{BITOFF, MDENSHIFT, MMULSHIFT, MOFF, QB, QBSHIFT, lg3a};
 
@@ -19,10 +19,24 @@ impl BitWriter {
             if self.bits.is_multiple_of(8) {
                 self.bytes.push(0);
             }
-            if bit != 0 {
-                *self.bytes.last_mut().unwrap() |= 0x80 >> (self.bits % 8);
+            if bit != 0
+                && let Some(last) = self.bytes.last_mut()
+            {
+                *last |= 0x80 >> (self.bits % 8);
             }
             self.bits += 1;
+        }
+    }
+
+    /// Everything `other` holds, after what is here.
+    pub(crate) fn append(&mut self, other: &BitWriter) {
+        let whole = other.bits / 8;
+        for &b in &other.bytes[..whole] {
+            self.put(8, u64::from(b));
+        }
+        let rest = (other.bits % 8) as u32;
+        if rest != 0 {
+            self.put(rest, u64::from(other.bytes[whole] >> (8 - rest)));
         }
     }
 

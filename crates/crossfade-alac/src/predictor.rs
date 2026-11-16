@@ -179,7 +179,7 @@ fn filter(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::predict;
+    use crate::write::predict;
     use proptest::prelude::*;
 
     #[test]

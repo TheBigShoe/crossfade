@@ -117,7 +117,7 @@ pub(crate) fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{BitWriter, put_residuals};
+    use crate::write::{BitWriter, put_residuals};
     use proptest::prelude::*;
 
     const AFCONVERT: Params = Params {

@@ -32,6 +32,26 @@ impl Config {
     /// Bytes in the bare config.
     pub const LEN: usize = 24;
 
+    /// The config of a stream this crate's encoder writes: 4096-frame packets and the
+    /// reference encoder's Rice tuning.
+    pub fn new(sample_rate: u32, channels: u8, bit_depth: u8) -> Result<Self> {
+        let config = Self {
+            frame_length: 4096,
+            compatible_version: 0,
+            bit_depth,
+            pb: 40,
+            mb: 10,
+            kb: 14,
+            channels,
+            max_run: 255,
+            max_frame_bytes: 0,
+            avg_bit_rate: 0,
+            sample_rate,
+        };
+        config.check()?;
+        Ok(config)
+    }
+
     /// Reads and checks a config. Takes the 24 bytes alone or with the wrappings containers
     /// put around them: an `alac` atom header with its version and flags (MP4 and QuickTime
     /// sample descriptions), and before it a `frma` atom (QuickTime's `wave` box). Bytes after

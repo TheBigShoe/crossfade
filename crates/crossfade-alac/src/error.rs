@@ -12,6 +12,8 @@ pub enum Error {
     Unsupported(&'static str),
     /// A packet ended in the middle of something.
     UnexpectedEnd,
+    /// What the encoder was given is not something it can encode.
+    BadInput(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -23,6 +25,7 @@ impl fmt::Display for Error {
             Self::Malformed(what) => write!(f, "alac: {what}"),
             Self::Unsupported(what) => write!(f, "alac: {what} is not supported"),
             Self::UnexpectedEnd => f.write_str("alac: packet ends too soon"),
+            Self::BadInput(what) => write!(f, "alac: cannot encode {what}"),
         }
     }
 }

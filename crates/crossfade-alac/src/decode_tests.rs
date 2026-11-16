@@ -1,5 +1,5 @@
 use super::*;
-use crate::testing::{BitWriter, put_residuals};
+use crate::write::{BitWriter, put_residuals};
 use proptest::prelude::*;
 
 fn config(bit_depth: u8, channels: u8, frame_length: u32) -> Config {
