@@ -73,7 +73,6 @@ pub(super) struct Enc<'a> {
     enc: &'a mut RangeEncoder,
 }
 
-#[allow(dead_code)] // ENCODER-WIP: until celt::encoder calls all of it
 impl<'a> Enc<'a> {
     pub(super) fn new(enc: &'a mut RangeEncoder) -> Self {
         Self { enc }
@@ -118,10 +117,6 @@ impl<'a> Enc<'a> {
 
     pub(super) fn encode_bin(&mut self, fl: u32, fh: u32, bits: u32) {
         self.enc.encode_bin(fl, fh, bits);
-    }
-
-    pub(super) fn shrink(&mut self, bytes: usize) {
-        self.enc.shrink(bytes);
     }
 
     pub(super) fn mark_written_to(&mut self, bits: i32) {

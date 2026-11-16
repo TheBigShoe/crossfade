@@ -116,7 +116,6 @@ pub(super) fn backward(
 /// samples (the block's first and last `(n / 2 - overlap) / 2` samples are zero and not
 /// passed), windowed here; the `n / 2` coefficients go to every `stride`-th place of `out`,
 /// scaled by `4 / n`.
-#[allow(dead_code)] // ENCODER-WIP: until celt::encoder calls it
 pub(super) fn forward(input: &[f32], out: &mut [f32], stride: usize, shift: usize) {
     let n = MDCT_N >> shift;
     let n2 = n >> 1;

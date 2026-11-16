@@ -203,7 +203,6 @@ fn op_pvq_search(x: &mut [f32], iy: &mut [i32], k: usize) {
 
 /// `alg_quant`: codes the shape `x` (2 to 176 bins) with `k` pulses and leaves in `x` what
 /// the decoder will rebuild, scaled by `gain`; returns the collapse mask of its `b` blocks.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn alg_quant(
     x: &mut [f32],
     k: usize,

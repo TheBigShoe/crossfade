@@ -48,7 +48,6 @@ pub(super) fn decode(ec: &mut Ec<'_, '_>, mut fs: u32, decay: u32) -> i32 {
 
 /// `ec_laplace_encode`: writes the delta `val` and returns what the decoder will read, which
 /// is nearer zero where the distribution's tail runs out.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn encode(enc: &mut Enc<'_>, val: i32, mut fs: u32, decay: u32) -> i32 {
     let mut fl = 0u32;
     let mut value = val;

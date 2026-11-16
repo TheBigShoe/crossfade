@@ -88,7 +88,6 @@ mod test_util;
 mod vq;
 
 pub(crate) use decoder::CeltDecoder;
-#[allow(unused_imports)] // ENCODER-WIP: until the top-level encoder uses it
 pub(crate) use encoder::CeltEncoder;
 /// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
 pub(crate) use tables::{OVERLAP, WINDOW};

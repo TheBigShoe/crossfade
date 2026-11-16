@@ -211,7 +211,6 @@ fn icwrs_table(y: &[i32]) -> u32 {
 
 /// `encode_pulses`: writes the index of `y`, 2 to [`MAX_N`] integers whose absolute values
 /// sum to `k` (1 to [`MAX_PULSES`]). Anything else is the caller's bug and codes nothing.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn encode_pulses(y: &[i32], k: usize, enc: &mut Enc<'_>) {
     let n = y.len();
     debug_assert!((2..=MAX_N).contains(&n) && (1..=MAX_PULSES).contains(&k));

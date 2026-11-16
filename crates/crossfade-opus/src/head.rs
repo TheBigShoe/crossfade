@@ -127,6 +127,24 @@ impl OpusHead {
         })
     }
 
+    /// The header as its packet's bytes (RFC 7845 5.1): what [`parse`](Self::parse) reads.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(21 + self.mapping.table.len());
+        out.extend_from_slice(b"OpusHead");
+        out.push(self.version);
+        out.push(self.channels);
+        out.extend_from_slice(&self.pre_skip.to_le_bytes());
+        out.extend_from_slice(&self.input_sample_rate.to_le_bytes());
+        out.extend_from_slice(&self.output_gain.to_le_bytes());
+        out.push(self.mapping.family);
+        if self.mapping.family != 0 {
+            out.push(self.mapping.streams);
+            out.push(self.mapping.coupled);
+            out.extend_from_slice(&self.mapping.table);
+        }
+        out
+    }
+
     /// The output gain in dB.
     pub fn output_gain_db(&self) -> f64 {
         f64::from(self.output_gain) / 256.0

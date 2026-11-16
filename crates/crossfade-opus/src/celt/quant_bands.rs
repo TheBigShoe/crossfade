@@ -143,7 +143,6 @@ fn log2(x: f32) -> f32 {
 
 /// `amp2Log2`: band amplitudes to log energies less the mean; bands from `eff_end` to `end`
 /// (none at 48 kHz) are far below anything.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn amp2_log2(
     band_e: &[f32; 2 * NB_EBANDS],
     band_log_e: &mut [f32; 2 * NB_EBANDS],
@@ -163,7 +162,6 @@ pub(super) fn amp2_log2(
 }
 
 /// What `quant_coarse_energy` is told about the frame.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) struct CoarseEnergy {
     pub(super) start: usize,
     pub(super) end: usize,
@@ -287,7 +285,6 @@ fn quant_coarse_energy_impl(
 /// `old`, which becomes what the decoder will hold; `error` gets what is left for the fine
 /// bits. `budget` is the frame in bits. With two passes, intra and inter are both coded and
 /// the better kept.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn quant_coarse_energy(
     p: &CoarseEnergy,
     e_bands: &[f32; 2 * NB_EBANDS],
@@ -364,7 +361,6 @@ pub(super) fn quant_coarse_energy(
 }
 
 /// `quant_fine_energy`: `fine_quant` more bits of each band's energy.
-#[allow(dead_code)] // ENCODER-WIP
 pub(super) fn quant_fine_energy(
     old: &mut [f32; 2 * NB_EBANDS],
     error: &mut [f32; 2 * NB_EBANDS],
@@ -394,7 +390,7 @@ pub(super) fn quant_fine_energy(
 
 /// `quant_energy_finalise`: one more bit per band and channel while `bits_left` lasts, bands
 /// of priority 0 first.
-#[allow(clippy::too_many_arguments, dead_code)] // ENCODER-WIP (dead_code)
+#[allow(clippy::too_many_arguments)]
 pub(super) fn quant_energy_finalise(
     old: &mut [f32; 2 * NB_EBANDS],
     error: &mut [f32; 2 * NB_EBANDS],

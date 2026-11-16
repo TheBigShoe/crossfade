@@ -8,7 +8,6 @@
 //!
 //! [`CeltDecoder`]: super::CeltDecoder
 #![allow(clippy::needless_range_loop)] // index loops as the reference writes them
-#![allow(dead_code)] // ENCODER-WIP: until the top-level encoder calls it
 
 use super::CeltFrame;
 use super::bands::{AllBands, haar1, quant_all_bands};
