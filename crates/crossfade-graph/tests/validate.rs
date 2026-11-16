@@ -129,7 +129,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 20, "the table keeps its refusals");
+    assert_eq!(refused, 18, "the table keeps its refusals");
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn validate_names_the_cause() {
     );
     assert_eq!(
         text(&settings(None, Some("pcm"), None), "o.oga"),
-        "unsupported: codec pcm cannot be written into ogg (ogg holds flac, or opus with --codec copy)"
+        "unsupported: codec pcm cannot be written into ogg (ogg holds flac or opus)"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),
@@ -191,7 +191,7 @@ fn codec_limits_surface_without_a_file() {
 fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
-        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
+        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus"]
     );
     let mut io = io();
     let limits = Limits::default();

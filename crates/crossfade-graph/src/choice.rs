@@ -8,11 +8,6 @@ fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
 }
 
-/// Ogg holds Opus, but nothing here encodes it yet: only a copy can put it there.
-pub(crate) fn no_opus_encoder() -> Error {
-    unsupported("opus encoding is not available yet; --codec copy keeps an opus input as it is")
-}
-
 /// The codec to encode with for `format`. `requested` is the job's codec name; `None` is the
 /// container's default. `"copy"` never reaches here: the pipeline handles it first.
 pub fn output_codec(
@@ -21,7 +16,7 @@ pub fn output_codec(
     requested: Option<&str>,
 ) -> Result<CodecId, Error> {
     let why = if format == FormatId::Ogg {
-        " (ogg holds flac, or opus with --codec copy)"
+        " (ogg holds flac or opus)"
     } else {
         ""
     };
@@ -40,7 +35,12 @@ pub fn output_codec(
         FormatId::Aiff => accept("pcm").map(|()| CodecId::pcm_be_for(sample_format)),
         FormatId::Flac | FormatId::Ogg => {
             if format == FormatId::Ogg && requested == Some("opus") {
-                return Err(no_opus_encoder());
+                // The encoder takes float: the plan asks for it (`output_format_for`).
+                return if sample_format == SampleFormat::F32 {
+                    Ok(CodecId::Opus)
+                } else {
+                    Err(unsupported("opus is encoded from f32 samples"))
+                };
             }
             accept("flac")?;
             if sample_format.is_float() {
@@ -68,7 +68,7 @@ pub fn can_write(format: FormatId) -> bool {
 
 /// File extensions a front end can offer for an output, canonical spelling first.
 pub fn writable_extensions() -> &'static [&'static str] {
-    &["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
+    &["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus"]
 }
 
 /// Whether `format` can carry `codec`'s packets unchanged (stream copy).
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn ogg_encodes_flac_only() {
+    fn ogg_encodes_flac_by_default_and_opus_by_name() {
         assert_eq!(output_codec(FormatId::Ogg, S24, None), Ok(CodecId::Flac));
         assert_eq!(
             output_codec(FormatId::Ogg, S16, Some("flac")),
@@ -205,15 +205,16 @@ mod tests {
         );
         assert_eq!(
             what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
-            "codec pcm cannot be written into ogg (ogg holds flac, or opus with --codec copy)"
+            "codec pcm cannot be written into ogg (ogg holds flac or opus)"
         );
-        // Ogg holds Opus, but only a copy can put it there until there is an encoder.
-        for f in ALL {
-            assert_eq!(
-                what(output_codec(FormatId::Ogg, f, Some("opus"))),
-                "opus encoding is not available yet; --codec copy keeps an opus input as it is"
-            );
-        }
+        assert_eq!(
+            output_codec(FormatId::Ogg, F32, Some("opus")),
+            Ok(CodecId::Opus)
+        );
+        assert_eq!(
+            what(output_codec(FormatId::Ogg, S16, Some("opus"))),
+            "opus is encoded from f32 samples"
+        );
         assert_eq!(
             what(output_codec(FormatId::Wav, S16, Some("opus"))),
             "codec opus cannot be written into wav"

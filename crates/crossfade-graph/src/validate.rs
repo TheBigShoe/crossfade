@@ -1,9 +1,7 @@
 //! Every decision a job needs once its input is known, with no file touched. `Pipeline::open`
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
-use crate::choice::{
-    can_hold, can_write, encode_options, no_opus_encoder, output_codec, share_threads,
-};
+use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
 use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
@@ -144,22 +142,42 @@ pub fn processing(
     }))
 }
 
-/// The container named by `path`'s extension, if we can write it. `.opus` also stands for its
-/// codec: with none named in `settings` the job would encode Opus, which is refused.
-pub(crate) fn output_format_for(path: &str, settings: &AudioSettings) -> Result<FormatId, Error> {
+/// The container named by `path`'s extension, if we can write it, and the settings the job
+/// then means. `.opus` also stands for its codec; and encoding Opus (by extension or by name)
+/// means 48 kHz float, the one thing its encoder takes, so the plan converts to it like any
+/// other rate or format the job asks for.
+pub(crate) fn output_format_for(
+    path: &str,
+    settings: &AudioSettings,
+) -> Result<(FormatId, AudioSettings), Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
-    match FormatId::from_extension(ext) {
-        Some(f) if can_write(f) => {
-            if ext.eq_ignore_ascii_case("opus") && settings.codec.is_none() {
-                return Err(no_opus_encoder());
-            }
-            Ok(f)
+    let format = match FormatId::from_extension(ext) {
+        Some(f) if can_write(f) => f,
+        _ => {
+            return Err(unsupported(format!(
+                "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg, .opus)"
+            )));
         }
-        _ => Err(unsupported(format!(
-            "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
-                 .oga/.ogg, and .opus with --codec copy)"
-        ))),
+    };
+    let mut settings = settings.clone();
+    if ext.eq_ignore_ascii_case("opus") && settings.codec.is_none() {
+        settings.codec = Some("opus".into());
     }
+    if format == FormatId::Ogg && settings.codec.as_deref() == Some("opus") {
+        if settings.sample_format.is_some() {
+            return Err(unsupported(
+                "opus has no sample format; leave out --sample-format",
+            ));
+        }
+        if settings.sample_rate.is_some_and(|r| r != 48_000) {
+            return Err(unsupported(
+                "opus is written at 48000 Hz; leave out --sample-rate",
+            ));
+        }
+        settings.sample_format = Some(SampleFormat::F32);
+        settings.sample_rate = Some(48_000);
+    }
+    Ok((format, settings))
 }
 
 /// What the output will be: copy or transcode, the output stream, and the chain when one
@@ -238,9 +256,16 @@ fn output_plan(
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
     encode_options(codec, settings.compression_level)?;
+    // Opus's header is known before any audio, and its muxer writes it first.
+    let (extradata, depth) = if codec == CodecId::Opus {
+        (crossfade_codec::opus::head(&out_spec)?, None)
+    } else {
+        (Vec::new(), depth)
+    };
     let output = StreamInfo {
         frames,
         bits_per_raw_sample: depth,
+        extradata,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
     let mut all = Vec::from_iter(sample_format_note(input, settings));
@@ -347,8 +372,8 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
-    plan_output(input, format, settings).map(|(plan, _)| plan)
+    let (format, settings) = output_format_for(output_path, settings)?;
+    plan_output(input, format, &settings).map(|(plan, _)| plan)
 }
 
 /// Checks a job's output against its input stream without touching any file: the container from
@@ -360,7 +385,8 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
+    let (format, settings) = &output_format_for(output_path, settings)?;
+    let format = *format;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
     let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
@@ -563,8 +589,8 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
-    plan_join(inputs, format, settings).map(|j| j.plan)
+    let (format, settings) = output_format_for(output_path, settings)?;
+    plan_join(inputs, format, &settings).map(|j| j.plan)
 }
 
 /// [`validate`] for a job that joins `inputs` in order: everything `Pipeline::open` decides,
@@ -574,7 +600,8 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
+    let (format, settings) = &output_format_for(output_path, settings)?;
+    let format = *format;
     let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,

@@ -1,15 +1,13 @@
 //! Ogg Opus stream copy through the engine: the copy reads back with the source's packets,
-//! timeline, length and tags and decodes to the same samples; anything that would need an
-//! Opus encoder is refused by name.
+//! timeline, length and tags and decodes to the same samples; a
+//! copy that cannot be one is refused by name.
 
 mod common;
 
 use common::{job, sine_wav, spec};
 use crossfade_core::{ChannelLayout, Error, Limits, Packet, SampleFormat, Samples, StreamInfo};
 use crossfade_format::open_demuxer;
-use crossfade_graph::{
-    AudioSettings, CancelToken, Event, Job, Pipeline, decode_frames, run, validate,
-};
+use crossfade_graph::{CancelToken, Event, Job, Pipeline, decode_frames, run, validate};
 use crossfade_opus::testing::ogg::{self as w, OggLayout};
 use crossfade_testkit::memory::MemoryIo;
 use std::io::Cursor;
@@ -135,28 +133,11 @@ fn validate_accepts_the_copy_and_open_agrees() {
 }
 
 #[test]
-fn what_needs_an_opus_encoder_is_refused_by_name() {
-    const NO_ENCODER: &str =
-        "opus encoding is not available yet; --codec copy keeps an opus input as it is";
+fn a_copy_that_cannot_be_one_is_refused_by_name() {
     let mut io = MemoryIo::new();
     io.insert("in.opus", ogg());
     let s = spec(48_000, SampleFormat::S16, ChannelLayout::stereo());
     io.insert("in.wav", sine_wav(&s, 4800).1);
-
-    // `.opus` stands for Opus, from PCM and from Opus alike.
-    for input in ["in.wav", "in.opus"] {
-        let j = job(input, "out.opus", None);
-        assert_eq!(refusal(&mut io, &j), NO_ENCODER, "{input}");
-        assert!(!io.has_pending());
-        assert_eq!(io.get("out.opus"), None);
-    }
-    // Asked for by name into `.ogg`, where the default would be FLAC.
-    let mut j = job("in.wav", "out.ogg", None);
-    j.outputs[0].audio.codec = Some("opus".into());
-    assert_eq!(refusal(&mut io, &j), NO_ENCODER);
-    let stream = read(&ogg()).0;
-    let e = validate(&stream, "out.opus", &AudioSettings::default()).unwrap_err();
-    assert_eq!(e.to_string(), format!("unsupported: {NO_ENCODER}"));
 
     // PCM is not Opus: a copy into `.opus` has nothing to copy.
     assert_eq!(
