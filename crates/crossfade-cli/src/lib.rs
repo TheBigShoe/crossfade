@@ -122,6 +122,9 @@ struct OutputArgs {
     /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
     compression_level: Option<u8>,
+    /// Opus bitrate for the whole stream, such as 96k or 128000; defaults to 64k a channel.
+    #[arg(long, value_name = "BITS", value_parser = parse_bitrate)]
+    bitrate: Option<u32>,
     /// A filter: a name, an optional value, then key=value words, such as "gain -3dB" or
     /// "fade out=3s curve=equal-power". Repeat for more; they run in the order given.
     #[arg(long = "filter", value_name = "FILTER", value_parser = value(str::parse::<FilterSpec>), help_heading = "Processing")]
@@ -173,6 +176,21 @@ fn value<T, E: ToString>(
     f: impl Fn(&str) -> Result<T, E> + Clone + Send + Sync + 'static,
 ) -> impl Fn(&str) -> Result<T, String> + Clone + Send + Sync + 'static {
     move |s| f(s).map_err(|e| e.to_string())
+}
+
+/// Bits per second: a number, or kilobits with `k` or `kbps` (`96k`). The range is the
+/// codec's to check.
+fn parse_bitrate(s: &str) -> Result<u32, String> {
+    let lower = s.to_ascii_lowercase();
+    let (digits, scale) = match lower.strip_suffix("kbps").or(lower.strip_suffix('k')) {
+        Some(d) => (d, 1000),
+        None => (lower.as_str(), 1),
+    };
+    digits
+        .parse::<u32>()
+        .ok()
+        .and_then(|n| n.checked_mul(scale))
+        .ok_or_else(|| format!("{s:?} is not a bitrate such as 96k or 128000"))
 }
 
 /// Most threads `--threads` takes; the encoder uses no more than this anyway.
@@ -247,6 +265,7 @@ impl OutputArgs {
                 .and_then(SampleFormat::from_name),
             codec: self.codec.clone(),
             compression_level: self.compression_level,
+            bitrate: self.bitrate,
             sample_rate: self.sample_rate,
             channels: self.channels.clone(),
             dither: self

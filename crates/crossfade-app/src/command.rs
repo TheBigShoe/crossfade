@@ -73,6 +73,9 @@ fn subcommand_args(
     if let Some(level) = audio.compression_level {
         args.extend(["--compression-level".to_owned(), level.to_string()]);
     }
+    if let Some(bitrate) = audio.bitrate {
+        args.extend(["--bitrate".to_owned(), bitrate.to_string()]);
+    }
     if let Some(rate) = audio.sample_rate {
         args.extend(["--sample-rate".to_owned(), rate.to_string()]);
     }
@@ -256,6 +259,12 @@ mod tests {
         assert_eq!(
             command_line(&only_level).unwrap(),
             "crossfade convert a.wav -o b.flac --compression-level 0"
+        );
+        let mut opus = request("a.wav", "b.opus", None, false);
+        opus.job.outputs[0].audio.bitrate = Some(96_000);
+        assert_eq!(
+            command_line(&opus).unwrap(),
+            "crossfade convert a.wav -o b.opus --bitrate 96000"
         );
     }
 

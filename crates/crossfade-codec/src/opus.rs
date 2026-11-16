@@ -217,13 +217,29 @@ struct OpusEncoder {
     draining: bool,
 }
 
-/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, constant bitrate, 64 kb/s
-/// a channel.
-pub fn encoder(spec: &AudioSpec) -> Result<Box<dyn Encoder>, Error> {
+/// Why `bitrate` (bits per second) is not one Opus takes, if it is not.
+pub fn check_bitrate(bitrate: u32) -> Result<(), Error> {
+    if (6_000..=510_000).contains(&bitrate) {
+        Ok(())
+    } else {
+        Err(Error::Unsupported {
+            what: format!("bitrate {bitrate} (opus takes 6000 to 510000 bits per second)"),
+        })
+    }
+}
+
+/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, constant bitrate,
+/// `bitrate` bits per second or 64 kb/s a channel.
+pub fn encoder(spec: &AudioSpec, bitrate: Option<u32>) -> Result<Box<dyn Encoder>, Error> {
     let head = head(spec)?;
     let channels = usize::from(spec.layout().channels());
+    let mut inner = crossfade_opus::Encoder::new(channels).map_err(engine_error)?;
+    if let Some(b) = bitrate {
+        check_bitrate(b)?;
+        inner.set_bitrate(b).map_err(engine_error)?;
+    }
     Ok(Box::new(OpusEncoder {
-        inner: crossfade_opus::Encoder::new(channels).map_err(engine_error)?,
+        inner,
         channels,
         head,
         pending: Vec::new(),

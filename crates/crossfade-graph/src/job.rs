@@ -28,12 +28,15 @@ pub struct JobOutput {
 pub struct AudioSettings {
     #[serde(default, skip_serializing_if = "Option::is_none", with = "format_name")]
     pub sample_format: Option<SampleFormat>,
-    /// `"copy"`, `"pcm"`, `"flac"`; `None` is the container's default.
+    /// `"copy"`, `"pcm"`, `"flac"`, `"opus"`; `None` is the container's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
     /// FLAC only, 0 to 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compression_level: Option<u8>,
+    /// Opus only: bits per second for the whole stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitrate: Option<u32>,
     /// Output rate in Hz; `None` keeps the rate the filters leave.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,

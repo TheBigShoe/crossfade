@@ -114,6 +114,15 @@ pub(crate) fn share_threads(
     }
 }
 
+/// The bitrate option for `codec`: it only means something to Opus.
+pub(crate) fn bitrate_option(codec: CodecId, bitrate: Option<u32>) -> Result<Option<u32>, Error> {
+    match bitrate {
+        Some(_) if codec != CodecId::Opus => Err(unsupported("--bitrate applies to opus only")),
+        Some(b) => crossfade_codec::opus::check_bitrate(b).map(|()| Some(b)),
+        None => Ok(None),
+    }
+}
+
 /// The encoder options for `codec`; a level only means something to FLAC.
 pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions, Error> {
     match level {

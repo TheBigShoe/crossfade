@@ -21,6 +21,9 @@ pub struct EncodeOptions {
     /// FLAC: the true bit depth of samples carried left-justified in a wider container
     /// (`None`: the container's own width). Other codecs ignore it.
     pub bits_per_sample: Option<u8>,
+    /// Opus: bits per second for the whole stream, 6,000 to 510,000 (`None`: 64,000 a
+    /// channel). Other codecs ignore it.
+    pub bitrate: Option<u32>,
 }
 
 /// What a thread count of 0 ("the machine's parallelism") stands for here.
@@ -100,7 +103,7 @@ pub fn encoder_for_threads(
         return flac::encode::encoder_threads(spec, options, threads);
     }
     if codec == CodecId::Opus {
-        return opus::encoder(spec);
+        return opus::encoder(spec, options.bitrate);
     }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),

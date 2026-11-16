@@ -1,7 +1,9 @@
 //! Every decision a job needs once its input is known, with no file touched. `Pipeline::open`
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
-use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
+use crate::choice::{
+    bitrate_option, can_hold, can_write, encode_options, output_codec, share_threads,
+};
 use crate::filter::{self, ChainPlan};
 use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
@@ -196,6 +198,9 @@ fn plan_output(
         if settings.compression_level.is_some() {
             return Err(unsupported("--codec copy cannot take a compression level"));
         }
+        if settings.bitrate.is_some() {
+            return Err(unsupported("--codec copy cannot take a bitrate"));
+        }
         if !can_hold(output_format, input.codec) {
             let why = if output_format == FormatId::Ogg {
                 " (ogg holds flac or opus)"
@@ -256,6 +261,7 @@ fn output_plan(
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
     encode_options(codec, settings.compression_level)?;
+    bitrate_option(codec, settings.bitrate)?;
     // Opus's header is known before any audio, and its muxer writes it first.
     let (extradata, depth) = if codec == CodecId::Opus {
         (crossfade_codec::opus::head(&out_spec)?, None)
@@ -325,6 +331,7 @@ pub(crate) fn resolve(
     let out = &plan.output;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
+        bitrate: bitrate_option(out.codec, settings.bitrate)?,
         ..encode_options(out.codec, settings.compression_level)?
     };
     let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
@@ -549,6 +556,7 @@ pub(crate) fn resolve_join(
     let encoder_threads = codec_threads(threads, inputs[0].codec, out.codec).1;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
+        bitrate: bitrate_option(out.codec, settings.bitrate)?,
         ..encode_options(out.codec, settings.compression_level)?
     };
     let chain_format = if measuring.is_some() {
