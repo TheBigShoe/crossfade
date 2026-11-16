@@ -99,6 +99,9 @@ pub fn encoder_for_threads(
     if codec == CodecId::Flac {
         return flac::encode::encoder_threads(spec, options, threads);
     }
+    if codec == CodecId::Opus {
+        return opus::encoder(spec);
+    }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),
     })

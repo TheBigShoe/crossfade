@@ -1,4 +1,4 @@
-//! Opus: the engine-facing adapter over `crossfade-opus`. The stream's `extradata` is its
+//! Opus: the engine-facing adapters over `crossfade-opus`. Decoding: the stream's `extradata` is its
 //! `OpusHead` (RFC 7845 5.1); every stream, mono and stereo included, decodes through a
 //! `MultistreamDecoder` (one stream for mapping family 0), with the header's output gain
 //! applied, as RFC 7845 requires. One packet in, one frame out, decoded at once and stamped
@@ -11,7 +11,9 @@
 //! has no duration and yields nothing.
 
 use crate::vorbis::speakers;
-use crossfade_core::{AudioFrame, Decoder, Error, Packet, SampleFormat, Samples, StreamInfo};
+use crossfade_core::{
+    AudioFrame, AudioSpec, Decoder, Encoder, Error, Packet, SampleFormat, Samples, StreamInfo,
+};
 use crossfade_opus::{MultistreamDecoder, OpusHead};
 
 fn engine_error(e: crossfade_opus::Error) -> Error {
@@ -158,3 +160,130 @@ impl Decoder for OpusDecoder {
 #[cfg(test)]
 #[path = "opus_tests.rs"]
 mod tests;
+
+/// Samples per packet: 20 ms.
+const FRAME: usize = 960;
+
+/// Why `spec` cannot be encoded as Opus, if it cannot: the encoder takes 48 kHz `F32`, mono
+/// or stereo.
+pub fn check_encodable(spec: &AudioSpec) -> Result<(), Error> {
+    let refuse = |what: String| Err(Error::Unsupported { what });
+    let channels = spec.layout().channels();
+    if channels > 2 {
+        return refuse(format!(
+            "opus encoding takes mono or stereo, not {channels} channels; choose --channels stereo"
+        ));
+    }
+    if spec.sample_rate() != 48_000 {
+        return refuse(format!(
+            "opus is encoded at 48000 Hz, not {} Hz",
+            spec.sample_rate()
+        ));
+    }
+    if spec.format() != SampleFormat::F32 {
+        return refuse(format!(
+            "opus is encoded from f32 samples, not {}",
+            spec.format().name()
+        ));
+    }
+    Ok(())
+}
+
+/// The `OpusHead` of the stream [`encoder`] writes for `spec`: known before any audio, since a
+/// muxer writes it first.
+pub fn head(spec: &AudioSpec) -> Result<Vec<u8>, Error> {
+    check_encodable(spec)?;
+    let enc = crossfade_opus::Encoder::new(usize::from(spec.layout().channels()))
+        .map_err(engine_error)?;
+    Ok(enc.head(spec.sample_rate()).to_bytes())
+}
+
+/// Frames of any size in, 20 ms packets out. The first packet's pts is the first frame's less
+/// the encoder's look-ahead (the header's pre-skip): the priming the timeline rule asks for.
+/// After `drain` the input is padded with silence until every sample has come out of a
+/// decoder.
+struct OpusEncoder {
+    inner: crossfade_opus::Encoder,
+    channels: usize,
+    head: Vec<u8>,
+    /// Samples not yet encoded, from `at` on.
+    pending: Vec<f32>,
+    at: usize,
+    /// The pts of the next packet, once the first frame has set it.
+    next_pts: Option<i64>,
+    /// Frames taken in and frames the packets so far carry.
+    fed: u64,
+    coded: u64,
+    draining: bool,
+}
+
+/// An Opus encoder for `spec` (see [`check_encodable`]): CELT-only, constant bitrate, 64 kb/s
+/// a channel.
+pub fn encoder(spec: &AudioSpec) -> Result<Box<dyn Encoder>, Error> {
+    let head = head(spec)?;
+    let channels = usize::from(spec.layout().channels());
+    Ok(Box::new(OpusEncoder {
+        inner: crossfade_opus::Encoder::new(channels).map_err(engine_error)?,
+        channels,
+        head,
+        pending: Vec::new(),
+        at: 0,
+        next_pts: None,
+        fed: 0,
+        coded: 0,
+        draining: false,
+    }))
+}
+
+impl Encoder for OpusEncoder {
+    fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
+        let Samples::F32(samples) = &frame.samples else {
+            return Err(Error::Unsupported {
+                what: "opus is encoded from f32 samples".into(),
+            });
+        };
+        if self.next_pts.is_none() {
+            self.next_pts = Some(frame.pts - self.inner.lookahead() as i64);
+        }
+        // What was encoded is dropped before more is added, so the buffer stays small.
+        self.pending.drain(..self.at);
+        self.at = 0;
+        self.pending.extend_from_slice(samples);
+        self.fed += (samples.len() / self.channels) as u64;
+        Ok(())
+    }
+
+    fn receive_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
+        let need = FRAME * self.channels;
+        let Some(pts) = self.next_pts else {
+            return Ok(false);
+        };
+        if self.pending.len() - self.at < need {
+            // The look-ahead still holds the input's end until that much more went in.
+            let owed = self.fed + self.inner.lookahead() as u64;
+            if !self.draining || self.coded >= owed {
+                return Ok(false);
+            }
+            self.pending.resize(self.at + need, 0.0);
+        }
+        out.data.clear();
+        self.inner
+            .encode(&self.pending[self.at..self.at + need], &mut out.data)
+            .map_err(engine_error)?;
+        self.at += need;
+        self.coded += FRAME as u64;
+        out.stream = 0;
+        out.pts = pts;
+        out.duration = FRAME as u64;
+        self.next_pts = Some(pts + FRAME as i64);
+        Ok(true)
+    }
+
+    fn drain(&mut self) {
+        self.draining = true;
+    }
+
+    fn extradata(&self) -> &[u8] {
+        &self.head
+    }
+}
