@@ -80,3 +80,55 @@ proptest! {
         prop_assert_eq!(encode_all(&c), first, "the same input, the same bytes");
     }
 }
+
+#[derive(Debug, Clone)]
+struct SurroundCase {
+    channels: usize,
+    per_channel: u32,
+    vbr: bool,
+    samples: Vec<u32>,
+}
+
+fn surround_case() -> impl Strategy<Value = SurroundCase> {
+    (
+        1usize..=8,
+        6_000u32..=510_000,
+        any::<bool>(),
+        prop::collection::vec(any::<u32>(), 0..64),
+    )
+        .prop_map(|(channels, per_channel, vbr, samples)| SurroundCase {
+            channels,
+            per_channel,
+            vbr,
+            samples,
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    #[test]
+    fn any_samples_in_any_layout_encode_to_packets_the_multistream_decoder_reads(
+        c in surround_case()
+    ) {
+        use crossfade_opus::{MultistreamDecoder, MultistreamEncoder};
+        let mut enc = MultistreamEncoder::new(c.channels).unwrap();
+        enc.set_bitrate(c.per_channel * c.channels as u32).unwrap();
+        enc.set_vbr(c.vbr);
+        let head = enc.head(48_000);
+        let mut dec = MultistreamDecoder::new(&head.mapping, c.channels).unwrap();
+        let n = 960 * c.channels;
+        for frame in 0..4 {
+            let mut pcm: Vec<f32> = (0..n).map(|i| ((i + frame * n) as f32 * 0.01).sin()).collect();
+            for (k, &bits) in c.samples.iter().enumerate() {
+                pcm[(k * 7919 + bits as usize + frame) % n] = f32::from_bits(bits);
+            }
+            let mut packet = vec![];
+            enc.encode(&pcm, &mut packet).expect("any samples encode");
+            let mut out = vec![];
+            prop_assert_eq!(dec.decode(Some(&packet), &mut out), Ok(960));
+            prop_assert_eq!(dec.final_ranges(), enc.final_ranges());
+            prop_assert!(out.iter().all(|v| v.is_finite()));
+        }
+    }
+}
