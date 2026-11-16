@@ -175,13 +175,13 @@ fn a_stream_the_writer_cannot_describe_is_refused() {
     assert_eq!(
         refused(&opus(48_000, &[])),
         Error::Malformed {
-            what: "ogg opus: an identification header starts with OpusHead".into()
+            what: "ogg opus: invalid header: an identification header starts with OpusHead".into()
         }
     );
     assert_eq!(
         refused(&opus(48_000, &head[..12])),
         Error::Malformed {
-            what: "ogg opus: an identification header is cut short".into()
+            what: "ogg opus: invalid header: an identification header is cut short".into()
         }
     );
     // Granule positions and pts count 48 kHz samples, whatever the encoder's input rate.

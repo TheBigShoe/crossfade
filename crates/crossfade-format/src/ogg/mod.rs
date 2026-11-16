@@ -6,6 +6,7 @@ mod crc;
 mod flac;
 mod mux;
 mod opus;
+mod opus_mux;
 mod packets;
 mod page;
 #[cfg(test)]

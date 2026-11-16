@@ -1,3 +1,5 @@
+//! The Ogg writers: `create` picks the codec's (Opus is `opus_mux`), and Ogg FLAC lives here.
+//!
 //! Ogg FLAC writer (RFC 9639 section 10.1): an identification page, a Vorbis comment page,
 //! then the FLAC frames as packets.
 //!
@@ -17,7 +19,7 @@ use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::SeekFrom;
 
 /// "CXFD" read as a big-endian number.
-const SERIAL: u32 = 0x4358_4644;
+pub(super) const SERIAL: u32 = 0x4358_4644;
 const TYPE_VORBIS_COMMENT: u8 = 4;
 const LAST_BLOCK: u8 = 0x80;
 /// The comment is the only header packet after the identification one.
@@ -47,10 +49,14 @@ pub fn create(
     stream: &StreamInfo,
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
-    if stream.codec != CodecId::Flac {
-        return Err(Error::Unsupported {
-            what: format!("ogg files can only hold flac, not {}", stream.codec.name()),
-        });
+    match stream.codec {
+        CodecId::Flac => {}
+        CodecId::Opus => return super::opus_mux::create(sink, stream, tags),
+        other => {
+            return Err(Error::Unsupported {
+                what: format!("ogg files hold flac or opus, not {}", other.name()),
+            });
+        }
     }
     let (info, comment) = header_blocks(stream, tags)?;
     let mut pages = PageWriter::new(SERIAL);
