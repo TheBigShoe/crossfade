@@ -3,7 +3,7 @@
 An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
-Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC) and Opus,
+Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC, Apple Lossless) and Opus,
 and reads those and other lossy audio too (MP3, AAC, Vorbis), with
 processing: sample rate and channel conversion, gain, loudness normalising,
 trim, fades and joining files. More lossy encoders and video are planned. It is
@@ -19,8 +19,8 @@ developed on macOS; the whole gate also passes on Linux.
 | Ogg | FLAC, Vorbis and Opus | FLAC and Opus | `.oga`, `.ogg` and `.opus`: gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link. Ogg Opus is written by our encoder, or with `--codec copy` from an Opus input unchanged (RFC 7845: tags, pages of at most a second, the length kept by end trimming) |
 | Opus | yes (in Ogg) | yes (in Ogg) | Our own encoder, a first stage: CELT-only at full band, a variable bitrate around 64 kb/s a channel (or `--bitrate`), 20 ms frames, mono to 7.1 (surround as one stream per channel pair or channel, in the layouts Vorbis orders; side surrounds and unlabelled channels are taken as those, with a note; the LFE channel keeps only its lows and takes a small share of the bitrate), from any input (brought to 48 kHz); no SILK or hybrid yet, so music fares better than speech at this rate, and `--codec copy` keeps an Opus input as it is. Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |
 | Vorbis | yes (in Ogg) | no | Our own decoder, the same bits on every platform: Xiph's 29 test files decode, within 9e-6 of lewton. Output is 32-bit float (16-bit by default when written to an integer container), 1 to 8 channels in WAVE speaker order |
-| MP4 / M4A | yes | no | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
-| ALAC | yes (in MP4) | no | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order |
+| MP4 / M4A | yes | ALAC, as `.m4a` | Written with the audio first and the index after it (one seek at the end), iTunes tags, `--codec copy` from another ALAC file. Read: `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused |
+| ALAC | yes (in MP4) | yes (in M4A) | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order. Our own encoder: lossless (what it writes, our decoder gives back sample for sample), each packet coded as left/right, mid/side or raw, whichever is smallest; it does not search predictor settings as Apple's does, so files are a little larger. ALAC has one layout per channel count (5.1 with side surrounds); unlabelled channels are taken as it, other layouts refused by name. Not yet checked against Apple's decoder: this work was done on Linux |
 | MP3 | yes | no | MPEG-1, 2 and 2.5 Layer III with our own decoder, full accuracy on the ISO conformance streams; gapless from LAME's info frame, exact seeking, ID3v2 and ID3v1 tags. Layers I and II are named and refused |
 | ADTS (`.aac`) | AAC-LC, with `--features aac` | no | Our own AAC-LC decoder, checked against the ISO conformance streams and Apple's decoder; mono to 7.1 and program configurations, 8 to 96 kHz, seeking. HE-AAC plays as its AAC-LC core; Main, LTP, SSR, coupling channels and 960-sample frames are refused by name. A default build refuses AAC and says why |
 
@@ -61,13 +61,14 @@ crossfade convert song.mp3 -o song.flac
 crossfade convert song.opus -o song.flac
 crossfade convert song.flac -o song.opus                # encoded: 48 kHz, about 64 kb/s a channel
 crossfade convert song.flac -o song.opus --bitrate 96k  # for the whole stream, 6k to 510k
+crossfade convert song.flac -o song.m4a                 # Apple Lossless
 crossfade convert song.opus -o same.opus --codec copy   # the packets as they are, in new pages
 crossfade probe song.m4a
 ```
 
 Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC, Vorbis and Opus), MP3, MP4/M4A (ALAC;
 AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
-FLAC, AIFF, Ogg FLAC and Ogg Opus. `crossfade convert --help` lists every option. FLAC decoding and encoding use
+FLAC, AIFF, Ogg FLAC, Ogg Opus and Apple Lossless in M4A. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
