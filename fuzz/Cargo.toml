@@ -211,3 +211,10 @@ path = "fuzz_targets/ogg_opus_demux.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ogg_opus_mux"
+path = "fuzz_targets/ogg_opus_mux.rs"
+test = false
+doc = false
+bench = false

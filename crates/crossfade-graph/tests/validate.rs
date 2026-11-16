@@ -90,6 +90,9 @@ fn table() -> Vec<Case> {
         ("s16.wav", "o.ogg", settings(None, None, None)),
         ("s16.wav", "o.oga", settings(None, Some("copy"), None)),
         ("s16.wav", "o.oga", settings(None, Some("pcm"), None)),
+        ("s16.wav", "o.oga", settings(None, Some("opus"), None)),
+        ("s16.wav", "o.opus", settings(None, None, None)),
+        ("s16.wav", "o.opus", settings(None, Some("copy"), None)),
         ("f32.wav", "o.oga", settings(None, None, None)),
         ("s16.wav", "o.mp3", settings(None, None, None)),
         ("s16.wav", "o", settings(None, None, None)),
@@ -126,7 +129,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 17, "the table keeps its refusals");
+    assert_eq!(refused, 20, "the table keeps its refusals");
 }
 
 #[test]
@@ -141,11 +144,11 @@ fn validate_names_the_cause() {
     );
     assert_eq!(
         text(&settings(None, Some("copy"), None), "o.oga"),
-        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac only)"
+        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac or opus)"
     );
     assert_eq!(
         text(&settings(None, Some("pcm"), None), "o.oga"),
-        "unsupported: codec pcm cannot be written into ogg (ogg holds flac only)"
+        "unsupported: codec pcm cannot be written into ogg (ogg holds flac, or opus with --codec copy)"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),

@@ -98,7 +98,7 @@ enum Command {
 /// What `convert` and `concat` share: where to write, how, and the processing.
 #[derive(Args)]
 struct OutputArgs {
-    /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC).
+    /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC), .opus (Ogg Opus, with --codec copy).
     #[arg(short, long)]
     output: String,
     /// Output sample format; defaults to the input's.

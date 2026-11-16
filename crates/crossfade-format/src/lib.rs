@@ -247,7 +247,10 @@ mod tests {
         assert!(mk(FormatId::Wav).is_ok());
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
-        assert!(unsupported(mk(FormatId::Ogg)).contains("ogg files can only hold flac"));
+        assert_eq!(
+            unsupported(mk(FormatId::Ogg)),
+            "ogg files hold flac or opus, not pcm_s16le"
+        );
         for f in [FormatId::Mp3, FormatId::Mp4, FormatId::Adts] {
             assert_eq!(
                 unsupported(mk(f)),

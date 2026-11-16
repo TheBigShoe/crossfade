@@ -329,3 +329,97 @@ fn the_vectors_wrapped_in_ogg_decode_and_seek_through_the_engine() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// A sink the test reads back.
+#[derive(Clone, Default)]
+struct Shared(std::sync::Arc<Mutex<std::io::Cursor<Vec<u8>>>>);
+
+impl crossfade_core::MediaSink for Shared {
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut *self.0.lock().unwrap(), buf)
+    }
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        std::io::Seek::seek(&mut *self.0.lock().unwrap(), pos)
+    }
+    fn finish(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// One vector wrapped into Ogg Opus, its end trimmed inside the last packet, stream-copied
+/// through the Ogg Opus writer: the copy has the vector's packets in order, on the source's
+/// timeline and with its length. Returns the packets copied.
+fn copied_through_ogg(bit: &[u8]) -> Result<usize, String> {
+    use crossfade_core::{Demuxer, Limits, Packet, StreamInfo, Tags};
+    use crossfade_opus::testing::ogg::{OggLayout, ogg_file, opus_head, opus_tags};
+    let packets: Vec<Vec<u8>> = read_bit_file(bit)?
+        .iter()
+        .map(|p| p.data.to_vec())
+        .collect();
+    let source = ogg_file(
+        &opus_head(2, PRE_SKIP as u16, 0, None),
+        &opus_tags("crossfade conformance", &["TITLE=vector"]),
+        &packets,
+        &OggLayout {
+            packets_per_page: vec![3, 1, 4],
+            end_trim: 100,
+            ..OggLayout::default()
+        },
+    );
+    let open = |bytes: Vec<u8>| {
+        crossfade_format::open_demuxer(Box::new(std::io::Cursor::new(bytes)), &Limits::default())
+            .map(|(_, d)| d)
+            .map_err(|e| e.to_string())
+    };
+    let read = |d: &mut dyn Demuxer| -> Result<(StreamInfo, Tags, Vec<Packet>), String> {
+        let mut all = vec![];
+        let mut p = Packet::default();
+        while d.read_packet(&mut p).map_err(|e| e.to_string())? {
+            all.push(p.clone());
+        }
+        Ok((d.streams()[0].clone(), d.tags().clone(), all))
+    };
+    let want = read(&mut *open(source)?)?;
+    let sink = Shared::default();
+    let mut m = crossfade_format::create_muxer(
+        crossfade_format::FormatId::Ogg,
+        Box::new(sink.clone()),
+        &want.0,
+        &want.1,
+    )
+    .map_err(|e| e.to_string())?;
+    for p in &want.2 {
+        m.write_packet(p).map_err(|e| e.to_string())?;
+    }
+    m.finish().map_err(|e| e.to_string())?;
+    let copy = sink.0.lock().unwrap().get_ref().clone();
+    let got = read(&mut *open(copy)?)?;
+    if got.0 != want.0 {
+        return Err(format!("stream {:?}, want {:?}", got.0, want.0));
+    }
+    if got.1 != want.1 {
+        return Err("the tags differ".into());
+    }
+    if got.2 != want.2 {
+        return Err("the packets or their timeline differ".into());
+    }
+    if got.2.iter().map(|p| &p.data).ne(packets.iter()) {
+        return Err("the packets are not the vector's".into());
+    }
+    Ok(packets.len())
+}
+
+#[test]
+#[ignore = "tier 3: needs the corpus (`just corpus`)"]
+fn the_vectors_wrapped_in_ogg_stream_copy_to_the_same_stream() {
+    let vectors = selected();
+    let results = each(&vectors, |(_, bit)| copied_through_ogg(bit));
+    let mut failures = vec![];
+    for ((n, _), r) in vectors.iter().zip(results) {
+        match r {
+            Ok(count) => println!("testvector{n}: {count} packets copied through Ogg"),
+            Err(e) => failures.push(format!("testvector{n}: {e}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

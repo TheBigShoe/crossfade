@@ -233,3 +233,46 @@ fn a_finish_right_after_a_full_page_does_not_add_an_empty_page() {
     assert!(pages.iter().all(|p| !p.lacing.is_empty()));
     assert_eq!(pages.last().unwrap().flags & EOS, EOS);
 }
+
+#[test]
+fn a_caller_paced_writer_closes_pages_only_when_told_or_at_255_segments() {
+    let mut w = PageWriter::paced_by_caller(SERIAL);
+    // 20 KiB on one page: the 4 KiB target does not apply.
+    for i in 1..=10u64 {
+        w.packet(&bytes_of(2000, 0), i);
+    }
+    w.end_page();
+    for i in 11..=300u64 {
+        w.packet(&[9; 3], i);
+    }
+    w.finish();
+    let pages = parse(&w.take());
+    let granules: Vec<i64> = pages.iter().map(|p| p.granule).collect();
+    assert_eq!(granules, [10, 265, 300]);
+    assert_eq!(pages[1].lacing.len(), 255);
+}
+
+#[test]
+fn the_open_page_can_be_given_a_granule_short_of_its_last_packet() {
+    let mut w = PageWriter::paced_by_caller(SERIAL);
+    w.packet(&[1; 10], 960);
+    w.end_page();
+    w.packet(&[2; 10], 1920);
+    w.packet(&[3; 10], 2880);
+    w.set_granule(2000);
+    w.finish();
+    let pages = parse(&w.take());
+    assert_eq!([pages[0].granule, pages[1].granule], [960, 2000]);
+    assert_eq!(pages[1].flags, EOS);
+
+    // Never below the page before, and nothing to set on a page that ends no packet.
+    let mut w = PageWriter::paced_by_caller(SERIAL);
+    w.packet(&[1; 10], 960);
+    w.end_page();
+    w.set_granule(7);
+    w.packet(&[2; 10], 1920);
+    w.set_granule(100);
+    w.finish();
+    let pages = parse(&w.take());
+    assert_eq!([pages[0].granule, pages[1].granule], [960, 960]);
+}
