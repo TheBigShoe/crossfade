@@ -78,7 +78,7 @@ fn a_pitched_voice_turns_the_pitch_filter_on_and_noise_does_not() {
     // A 150 Hz pulse train with a falling spectrum, as a voiced sound has.
     let voice: Vec<f32> = (0..960 * 20)
         .map(|i| {
-            let t = i as f64 / 48000.0;
+            let t = f64::from(i) / 48000.0;
             (1..=30)
                 .map(|h| {
                     0.25 / f64::from(h)
@@ -117,7 +117,7 @@ fn a_pitched_voice_turns_the_pitch_filter_on_and_noise_does_not() {
 fn the_pitch_filter_makes_a_voice_cleaner_at_the_same_rate() {
     let voice: Vec<f32> = (0..960 * 30)
         .map(|i| {
-            let t = i as f64 / 48000.0;
+            let t = f64::from(i) / 48000.0;
             (1..=30)
                 .map(|h| {
                     0.25 / f64::from(h)

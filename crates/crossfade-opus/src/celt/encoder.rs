@@ -12,6 +12,7 @@
 use super::CeltFrame;
 use super::bands::{AllBands, haar1, quant_all_bands};
 use super::ec::Enc;
+use super::lpc::{pitch_downsample, pitch_search, remove_doubling};
 use super::maths::exp2;
 use super::mdct;
 use super::quant_bands::{
@@ -19,12 +20,15 @@ use super::quant_bands::{
 };
 use super::rate::{AllocHint, BITRES, compute_allocation, init_caps};
 use super::tables::{
-    E_MEANS, EBANDS, LOG_N, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT_SIZE, SPREAD_ICDF,
-    TF_SELECT_TABLE, TRIM_ICDF,
+    COMB_GAINS, E_MEANS, EBANDS, LOG_N, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT_SIZE, SPREAD_ICDF,
+    TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF, WINDOW,
 };
 use crate::error::{Error, Result};
 use crate::range_encoder::RangeEncoder;
 
+/// The pitch filter's periods (`COMBFILTER_MINPERIOD`, `COMBFILTER_MAXPERIOD`).
+const MIN_PERIOD: usize = 15;
+const MAX_PERIOD: usize = 1024;
 const SPREAD_NONE: i32 = 0;
 const SPREAD_LIGHT: i32 = 1;
 const SPREAD_NORMAL: i32 = 2;
@@ -62,8 +66,13 @@ pub(crate) struct CeltEncoder {
     stereo_saving: f32,
     intensity: usize,
     spec_avg: f32,
-    /// The last `OVERLAP` pre-emphasised samples of each channel (`in_mem`).
+    /// The last `OVERLAP` pre-filtered samples of each channel (`in_mem`).
     in_mem: [[f32; OVERLAP]; 2],
+    /// The last `MAX_PERIOD` pre-emphasised samples of each channel, before the pitch filter.
+    prefilter_mem: [Vec<f32>; 2],
+    prefilter_period: usize,
+    prefilter_gain: f32,
+    prefilter_tapset: usize,
     old_band_e: [f32; 2 * NB_EBANDS],
     old_log_e: [f32; 2 * NB_EBANDS],
     old_log_e2: [f32; 2 * NB_EBANDS],
@@ -785,7 +794,161 @@ fn dynalloc_analysis(
     out
 }
 
+/// `comb_filter` out of place: `dst[i] = src[at + i]` plus the pitch filter's taps on `src`,
+/// cross-faded from (`t0`, `g0`, `tapset0`) to (`t1`, `g1`, `tapset1`) over the overlap with
+/// the squared window. `src` holds `t + 2` samples before `at`.
+#[allow(clippy::too_many_arguments)]
+fn comb_filter(
+    dst: &mut [f32],
+    src: &[f32],
+    at: usize,
+    t0: usize,
+    t1: usize,
+    g0: f32,
+    g1: f32,
+    tapset0: usize,
+    tapset1: usize,
+) {
+    let n = dst.len();
+    if g0 == 0.0 && g1 == 0.0 {
+        dst.copy_from_slice(&src[at..at + n]);
+        return;
+    }
+    let [g00, g01, g02] = COMB_GAINS[tapset0].map(|g| g0 * g);
+    let [g10, g11, g12] = COMB_GAINS[tapset1].map(|g| g1 * g);
+    let overlap = OVERLAP.min(n);
+    for i in 0..n {
+        let x = at + i;
+        let new = g10 * src[x - t1]
+            + g11 * (src[x - t1 - 1] + src[x - t1 + 1])
+            + g12 * (src[x - t1 - 2] + src[x - t1 + 2]);
+        dst[i] = if i < overlap {
+            let f = WINDOW[i] * WINDOW[i];
+            let old = g00 * src[x - t0]
+                + g01 * (src[x - t0 - 1] + src[x - t0 + 1])
+                + g02 * (src[x - t0 - 2] + src[x - t0 + 2]);
+            src[x] + (1.0 - f) * old + f * new
+        } else {
+            src[x] + new
+        };
+    }
+}
+
+/// What `run_prefilter` chose for the frame.
+struct Prefilter {
+    on: bool,
+    pitch: usize,
+    gain: f32,
+    /// The gain's 3-bit code.
+    qg: u32,
+}
+
 impl CeltEncoder {
+    /// `run_prefilter`: finds the frame's pitch and, when it is strong enough, removes that
+    /// much of it (the decoder's post-filter puts it back, shaping the coding noise around
+    /// the harmonics). `input` holds each channel's pre-emphasised frame after `OVERLAP`
+    /// samples that this fills from the last frame's filtered tail.
+    fn run_prefilter(
+        &mut self,
+        input: &mut [[f32; MAX_N + OVERLAP]; 2],
+        n: usize,
+        tapset: usize,
+        enabled: bool,
+        nb_available_bytes: i32,
+    ) -> Prefilter {
+        let cc = self.channels;
+        let mut pre = [vec![0.0f32; MAX_PERIOD + n], vec![0.0f32; MAX_PERIOD + n]];
+        for ch in 0..cc {
+            pre[ch][..MAX_PERIOD].copy_from_slice(&self.prefilter_mem[ch]);
+            pre[ch][MAX_PERIOD..].copy_from_slice(&input[ch][OVERLAP..OVERLAP + n]);
+        }
+        let mut pitch = MIN_PERIOD;
+        let mut gain1 = 0.0f32;
+        if enabled {
+            let mut pitch_buf = vec![0.0f32; (MAX_PERIOD + n) >> 1];
+            pitch_downsample([&pre[0], &pre[1]], cc, &mut pitch_buf);
+            // Not the last 1.5 octaves of the range: short-term correlation gives too many
+            // false positives there.
+            let found = pitch_search(
+                &pitch_buf[MAX_PERIOD >> 1..],
+                &pitch_buf,
+                n,
+                MAX_PERIOD - 3 * MIN_PERIOD,
+            );
+            pitch = MAX_PERIOD - found.min(MAX_PERIOD - MIN_PERIOD);
+            gain1 = remove_doubling(
+                &pitch_buf,
+                MAX_PERIOD,
+                MIN_PERIOD,
+                n,
+                &mut pitch,
+                self.prefilter_period,
+                self.prefilter_gain,
+            );
+            pitch = pitch.min(MAX_PERIOD - 2);
+            gain1 *= 0.7;
+            if !gain1.is_finite() {
+                gain1 = 0.0;
+            }
+        }
+        // A changing pitch and a small frame both ask for a surer one.
+        let mut threshold = 0.2f32;
+        if (pitch as i32 - self.prefilter_period as i32).abs() * 10 > pitch as i32 {
+            threshold += 0.2;
+        }
+        if nb_available_bytes < 25 {
+            threshold += 0.1;
+        }
+        if nb_available_bytes < 35 {
+            threshold += 0.1;
+        }
+        if self.prefilter_gain > 0.4 {
+            threshold -= 0.1;
+        }
+        if self.prefilter_gain > 0.55 {
+            threshold -= 0.1;
+        }
+        let threshold = threshold.max(0.2);
+        let (on, qg);
+        if gain1 < threshold {
+            gain1 = 0.0;
+            on = false;
+            qg = 0;
+        } else {
+            if (gain1 - self.prefilter_gain).abs() < 0.1 {
+                gain1 = self.prefilter_gain;
+            }
+            let q = ((0.5 + gain1 * 32.0 / 3.0).floor() as i32 - 1).clamp(0, 7);
+            qg = q as u32;
+            gain1 = 0.09375 * (q + 1) as f32;
+            on = true;
+        }
+        self.prefilter_period = self.prefilter_period.max(MIN_PERIOD);
+        for ch in 0..cc {
+            let buf = &mut input[ch];
+            buf[..OVERLAP].copy_from_slice(&self.in_mem[ch]);
+            comb_filter(
+                &mut buf[OVERLAP..OVERLAP + n],
+                &pre[ch],
+                MAX_PERIOD,
+                self.prefilter_period,
+                pitch,
+                -self.prefilter_gain,
+                -gain1,
+                self.prefilter_tapset,
+                tapset,
+            );
+            self.in_mem[ch].copy_from_slice(&buf[n..n + OVERLAP]);
+            self.prefilter_mem[ch].copy_from_slice(&pre[ch][n..n + MAX_PERIOD]);
+        }
+        Prefilter {
+            on,
+            pitch,
+            gain: gain1,
+            qg,
+        }
+    }
+
     /// An encoder for `channels` (1 or 2) input channels at 48 kHz (`celt_encoder_init`).
     pub(crate) fn new(channels: usize) -> Self {
         Self {
@@ -807,6 +970,10 @@ impl CeltEncoder {
             intensity: 0,
             spec_avg: 0.0,
             in_mem: [[0.0; OVERLAP]; 2],
+            prefilter_mem: [vec![0.0; MAX_PERIOD], vec![0.0; MAX_PERIOD]],
+            prefilter_period: 0,
+            prefilter_gain: 0.0,
+            prefilter_tapset: 0,
             old_band_e: [0.0; 2 * NB_EBANDS],
             old_log_e: [-28.0; 2 * NB_EBANDS],
             old_log_e2: [-28.0; 2 * NB_EBANDS],
@@ -911,20 +1078,32 @@ impl CeltEncoder {
         for ch in 0..cc {
             let mut mem = self.preemph_mem[ch];
             let buf = &mut input[ch];
-            buf[..OVERLAP].copy_from_slice(&self.in_mem[ch]);
             for i in 0..n {
                 let x = clean(pcm[cc * i + ch]) * 32768.0;
                 buf[OVERLAP + i] = x - mem;
                 mem = PREEMPH * x;
             }
             self.preemph_mem[ch] = mem;
-            self.in_mem[ch].copy_from_slice(&buf[n..n + OVERLAP]);
         }
 
-        // No pitch pre-filter yet: its flag says so.
-        let pf_on = false;
-        if !hybrid && tell + 16 <= total_bits {
-            enc.bit_logp(false, 1);
+        // The pitch pre-filter, where there are bytes for its parameters.
+        let prefilter_tapset = self.tapset_decision as usize;
+        let enabled = nb_available_bytes > 12 * ci && !hybrid && !silence && self.complexity >= 5;
+        let pf = self.run_prefilter(&mut input, n, prefilter_tapset, enabled, nb_available_bytes);
+        let pf_on = pf.on;
+        if !pf_on {
+            if !hybrid && tell + 16 <= total_bits {
+                enc.bit_logp(false, 1);
+            }
+        } else {
+            // No check of the bits left: `enabled` saw to it.
+            enc.bit_logp(true, 1);
+            let coded = pf.pitch as u32 + 1;
+            let octave = (32 - coded.leading_zeros()) - 5;
+            enc.uint(octave, 6);
+            enc.bits(coded - (16 << octave), 4 + octave);
+            enc.bits(pf.qg, 3);
+            enc.icdf(prefilter_tapset, &TAPSET_ICDF, 2);
         }
 
         let mut transient = false;
@@ -1308,6 +1487,9 @@ impl CeltEncoder {
                 self.old_log_e2[ch * NB_EBANDS + i] = -28.0;
             }
         }
+        self.prefilter_period = pf.pitch;
+        self.prefilter_gain = pf.gain;
+        self.prefilter_tapset = prefilter_tapset;
         if transient || transient_got_disabled {
             self.consec_transient += 1;
         } else {

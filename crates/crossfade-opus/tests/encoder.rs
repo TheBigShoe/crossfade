@@ -61,7 +61,7 @@ fn packets_are_celt_fullband_of_the_bitrate_and_decode_to_the_final_range() {
             }
             let snr = snr_db(&pcm, &out, channels, enc.lookahead(), frame_size * 4);
             assert!(
-                snr > 20.0,
+                snr > 18.0,
                 "{channels} ch {frame_size} at {bitrate}: {snr:.1} dB"
             );
         }

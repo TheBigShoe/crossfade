@@ -198,6 +198,121 @@ pub(super) fn pitch_search(x_lp: &[f32], y: &[f32], len: usize, max_pitch: usize
     (2 * best[0] as isize - offset).max(0) as usize
 }
 
+/// `compute_pitch_gain`.
+fn pitch_gain(xy: f32, xx: f32, yy: f32) -> f32 {
+    xy / (1.0 + xx * yy).sqrt()
+}
+
+/// `remove_doubling`: `t0` (a period found in the half-rate `x`, whose history is
+/// `max_period / 2` samples before the `n / 2` of the frame) may be a multiple of the true
+/// period; looks for a strong correlation at its submultiples, leaning to the last frame's
+/// period, and returns the pitch gain with `t0` corrected.
+#[allow(clippy::needless_range_loop)] // index loops as the reference writes them
+pub(super) fn remove_doubling(
+    x: &[f32],
+    max_period: usize,
+    min_period: usize,
+    n: usize,
+    t0: &mut usize,
+    prev_period: usize,
+    prev_gain: f32,
+) -> f32 {
+    const SECOND_CHECK: [usize; 16] = [0, 0, 3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2];
+    let min_period0 = min_period;
+    let max_period = max_period / 2;
+    let min_period = min_period / 2;
+    let prev_period = (prev_period / 2) as isize;
+    let n = n / 2;
+    let base = max_period;
+    let at = |i: isize| x[(base as isize + i) as usize];
+    let start = (*t0 / 2).min(max_period - 1);
+    let mut t = start;
+    let inner = |lag: usize| -> f32 {
+        let mut sum = 0.0f32;
+        for i in 0..n {
+            sum += x[base + i] * x[base + i - lag];
+        }
+        sum
+    };
+    let xx = inner(0);
+    let mut xy = inner(start);
+    let mut yy_lookup = vec![0.0f32; max_period + 1];
+    yy_lookup[0] = xx;
+    let mut yy = xx;
+    for i in 1..=max_period {
+        let (a, b) = (at(-(i as isize)), at(n as isize - i as isize));
+        yy = yy + a * a - b * b;
+        yy_lookup[i] = yy.max(0.0);
+    }
+    yy = yy_lookup[start];
+    let mut best_xy = xy;
+    let mut best_yy = yy;
+    let g0 = pitch_gain(xy, xx, yy);
+    let mut g = g0;
+    // Any pitch at T / k.
+    for k in 2..=15usize {
+        let t1 = (2 * start + k) / (2 * k);
+        if t1 < min_period {
+            break;
+        }
+        // Another strong correlation is wanted at t1b.
+        let t1b = if k == 2 {
+            if t1 + start > max_period {
+                start
+            } else {
+                start + t1
+            }
+        } else {
+            (2 * SECOND_CHECK[k] * start + k) / (2 * k)
+        };
+        xy = 0.5 * (inner(t1) + inner(t1b));
+        yy = 0.5 * (yy_lookup[t1] + yy_lookup[t1b]);
+        let g1 = pitch_gain(xy, xx, yy);
+        let gap = (t1 as isize - prev_period).abs();
+        let cont = if gap <= 1 {
+            prev_gain
+        } else if gap <= 2 && 5 * k * k < start {
+            0.5 * prev_gain
+        } else {
+            0.0
+        };
+        // Against very short periods, which short-term correlation fakes.
+        let thresh = if t1 < 3 * min_period {
+            (0.85 * g0 - cont).max(0.4)
+        } else if t1 < 2 * min_period {
+            (0.9 * g0 - cont).max(0.5)
+        } else {
+            (0.7 * g0 - cont).max(0.3)
+        };
+        if g1 > thresh {
+            best_xy = xy;
+            best_yy = yy;
+            t = t1;
+            g = g1;
+        }
+    }
+    let best_xy = best_xy.max(0.0);
+    let pg = if best_yy <= best_xy {
+        1.0
+    } else {
+        best_xy / (best_yy + 1.0)
+    };
+    let xcorr = [
+        inner(t.saturating_sub(1)),
+        inner(t),
+        inner((t + 1).min(max_period)),
+    ];
+    let offset: isize = if (xcorr[2] - xcorr[0]) > 0.7 * (xcorr[1] - xcorr[0]) {
+        1
+    } else if (xcorr[0] - xcorr[2]) > 0.7 * (xcorr[1] - xcorr[2]) {
+        -1
+    } else {
+        0
+    };
+    *t0 = ((2 * t as isize + offset).max(min_period0 as isize)) as usize;
+    pg.min(g)
+}
+
 #[cfg(test)]
 #[path = "lpc_tests.rs"]
 mod tests;
