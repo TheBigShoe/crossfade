@@ -185,24 +185,55 @@ fn opus_is_copied_into_ogg_opus_and_decodes_the_same() {
 }
 
 #[test]
-fn encoding_opus_is_refused_and_leaves_no_file() {
-    let d = Dir::new("no-encoder");
+fn pcm_is_encoded_to_opus_by_extension_or_by_name() {
+    let d = Dir::new("encode");
     let (bytes, _, _) = ogg();
     std::fs::write(d.path("in.opus"), &bytes).unwrap();
     let out = run(&["convert", &d.path("in.opus"), "-o", &d.path("pcm.wav")]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
-    for input in ["pcm.wav", "in.opus"] {
-        let out = run(&["convert", &d.path(input), "-o", &d.path("out.opus")]);
-        assert_eq!(out.status.code(), Some(1), "{input}");
-        let err = text(&out.stderr);
-        assert!(
-            err.contains(
-                "opus encoding is not available yet; --codec copy keeps an opus input as it is"
-            ),
-            "{err}"
+    for (args, output) in [
+        (vec![], "out.opus"),
+        (vec!["--codec", "opus"], "named.ogg"),
+        (vec!["--channels", "mono"], "mono.opus"),
+    ] {
+        let mut all = vec![
+            "convert".to_string(),
+            d.path("pcm.wav"),
+            "-o".into(),
+            d.path(output),
+        ];
+        all.extend(args.iter().map(|a| a.to_string()));
+        let all: Vec<&str> = all.iter().map(String::as_str).collect();
+        let out = run(&all);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{output}: {}",
+            text(&out.stderr)
         );
-        assert!(!std::path::Path::new(&d.path("out.opus")).exists());
+        let probe = run(&["probe", &d.path(output)]);
+        let report = text(&probe.stdout);
+        assert!(
+            report.contains("opus") && report.contains("48000"),
+            "{output}: {report}"
+        );
     }
+    // What Opus cannot take is said by name, and leaves no file.
+    let out = run(&[
+        "convert",
+        &d.path("pcm.wav"),
+        "-o",
+        &d.path("no.opus"),
+        "--sample-format",
+        "s24",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("opus has no sample format; leave out --sample-format"),
+        "{err}"
+    );
+    assert!(!std::path::Path::new(&d.path("no.opus")).exists());
     // PCM has no Opus packets to copy.
     let out = run(&[
         "convert",
