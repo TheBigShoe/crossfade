@@ -38,6 +38,7 @@ conformance:
     cargo test --release -p crossfade-format --features aac --test conformance_aac -- --ignored
     cargo test --release -p crossfade-format --test conformance_vorbis -- --ignored
     cargo test --release -p crossfade-format --test conformance_opus -- --ignored
+    cargo test --release -p crossfade-format --test conformance_opus_encode -- --ignored
 
 # Library-only builds need no linker or NDK. Keep in sync with the CI mobile job.
 mobile:

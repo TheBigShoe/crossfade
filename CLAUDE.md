@@ -269,7 +269,7 @@ Beyond the plain `cargo test`:
 
 - 3: conformance against reference vectors (`just conformance`, part of `just ci`: the
   FLAC corpus, seeking on every codec, the MP3 and AAC ISO streams, Xiph's Vorbis files and
-  the RFC 8251 Opus vectors (final range per packet, `opus_compare`), each against frozen
+  the RFC 8251 Opus vectors (final range per packet, `opus_compare`), and the Opus encoder on four of their reference decodings (every packet back to the encoder's final range; bytes and SNR per setting), each against frozen
   results in `crates/crossfade-format/tests/conformance/`, rewritten only on purpose, with
   `CROSSFADE_BLESS=1`; ~60 s with the corpus cached)
 - 4: UI (`#[gpui_test]` runs on every `cargo test`; screenshots are a review
