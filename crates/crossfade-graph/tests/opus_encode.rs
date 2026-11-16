@@ -188,14 +188,25 @@ fn opus_from_opus_and_what_opus_cannot_take_are_said_by_name() {
         "codec opus cannot be written into wav"
     );
 
-    let surround = spec(
+    // A layout Opus has no order for: here side surrounds, labelled by a conversion first.
+    let plain = spec(
         48_000,
         SampleFormat::S16,
-        ChannelLayout::from_name("5.1").unwrap(),
+        ChannelLayout::unpositioned(6).unwrap(),
     );
-    io.insert("six.wav", sine_wav(&surround, 4800).1);
+    io.insert("six.wav", sine_wav(&plain, 4800).1);
+    let mut j = job("six.wav", "side.wav", None);
+    j.outputs[0].audio.channels = Some(crossfade_graph::filter::parse_channels("5.1").unwrap());
+    run(
+        &j,
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
     assert_eq!(
-        refusal(&mut io, &job("six.wav", "out.opus", None)),
+        refusal(&mut io, &job("side.wav", "out.opus", None)),
         "opus cannot hold the layout 5.1 (opus takes mono, stereo, 3.0, quad, 5.0-back, \
          5.1-back, 6.1 or 7.1; choose --channels)"
     );
@@ -248,34 +259,54 @@ fn the_bitrate_setting_sizes_the_file_and_belongs_to_opus_alone() {
 #[test]
 fn surround_is_written_as_a_multistream_file_that_reads_back_with_its_layout() {
     let layout = ChannelLayout::from_name("5.1-back").unwrap();
-    let s = spec(48_000, SampleFormat::S16, layout.clone());
+    // A plain six-channel WAV says nothing of its speakers: Opus's layout for six is taken.
+    let plain = spec(
+        48_000,
+        SampleFormat::S16,
+        ChannelLayout::unpositioned(6).unwrap(),
+    );
     let mut io = MemoryIo::new();
-    io.insert("six.wav", sine_wav(&s, 48_000).1);
-    let quiet = &mut |_: &Event| {};
+    io.insert("six.wav", sine_wav(&plain, 48_000).1);
+    let mut events = Vec::new();
     run(
         &job("six.wav", "six.opus", None),
         &mut io,
         &Limits::default(),
         &CancelToken::new(),
-        quiet,
+        &mut |e| events.push(e.clone()),
     )
     .unwrap();
+    let Some(Event::Started { plan }) = events.first() else {
+        panic!("no start");
+    };
+    assert_eq!(
+        plan.notes,
+        ["6 unlabelled channels are written as 5.1-back"]
+    );
     let stream = stream_of(&io, "six.opus");
     assert_eq!(stream.audio.layout(), &layout);
     assert_eq!(stream.frames, Some(48_000));
     let got = decoded(&mut io, "six.opus");
     assert_eq!(got.len(), 48_000 * 6);
     assert!(snr_against_the_sine(&got, 6) > 100.0);
-    // A side-surround source gets there by naming the layout Opus has.
-    let side = spec(
-        48_000,
-        SampleFormat::S16,
-        ChannelLayout::from_name("5.1").unwrap(),
-    );
-    io.insert("side.wav", sine_wav(&side, 4800).1);
-    let mut j = job("side.wav", "side.opus", None);
-    j.outputs[0].audio.channels =
-        Some(crossfade_graph::filter::parse_channels("5.1-back").unwrap());
-    run(&j, &mut io, &Limits::default(), &CancelToken::new(), quiet).unwrap();
-    assert_eq!(stream_of(&io, "side.opus").audio.layout(), &layout);
+    // A labelled source of that layout says nothing; one with side surrounds gets there by
+    // naming the layout.
+    for (name, note_free) in [("5.1-back", true), ("5.1", true)] {
+        let mut j = job("six.wav", "labelled.wav", None);
+        j.outputs[0].audio.channels = Some(crossfade_graph::filter::parse_channels(name).unwrap());
+        run(
+            &j,
+            &mut io,
+            &Limits::default(),
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let mut j = job("labelled.wav", "labelled.opus", None);
+        j.outputs[0].audio.channels =
+            Some(crossfade_graph::filter::parse_channels("5.1-back").unwrap());
+        let p = Pipeline::open(&j, &mut io, &Limits::default()).unwrap();
+        assert_eq!(p.plan().notes.is_empty(), note_free, "{name}");
+        assert_eq!(p.plan().output.audio.layout(), &layout, "{name}");
+    }
 }

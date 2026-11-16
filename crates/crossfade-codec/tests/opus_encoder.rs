@@ -137,11 +137,15 @@ fn only_48_khz_float_mono_or_stereo_is_taken() {
         refused(spec(48_000, SampleFormat::F32, side)),
         format!("opus cannot hold the layout 5.1 ({hint})")
     );
-    let unlabelled = ChannelLayout::unpositioned(4).unwrap();
-    assert_eq!(
-        refused(spec(48_000, SampleFormat::F32, unlabelled)),
-        format!("opus cannot hold 4 unlabelled channels ({hint})")
+    // Unlabelled channels are taken as the layout Opus has for their count (a plain
+    // multichannel WAV is like that).
+    let unlabelled = spec(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::unpositioned(4).unwrap(),
     );
+    let head = crossfade_codec::opus::head(&unlabelled).unwrap();
+    assert_eq!(OpusHead::parse(&head).unwrap().mapping.family, 1);
     let nine = ChannelLayout::unpositioned(9).unwrap();
     assert_eq!(
         refused(spec(48_000, SampleFormat::F32, nine)),
