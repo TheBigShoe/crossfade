@@ -66,6 +66,49 @@ fn allocate(
 }
 
 #[test]
+fn the_encoders_decisions_are_what_the_decoder_reads() {
+    for lm in 0..4 {
+        for c in 1..=2 {
+            for (start, end) in [(0, 13), (0, 17), (0, 21), (17, 21)] {
+                for (trim, intensity, dual, prev, bw) in
+                    [(5, 21, false, 0, 20), (2, 12, true, 15, 16), (9, 3, true, 21, 12)]
+                {
+                    for total in (64..1275 * 64).step_by(1499) {
+                        let mut offsets = [0; NB_EBANDS];
+                        offsets[start + 1] = 48;
+                        let cap = init_caps(lm, c);
+                        let mut enc = crate::range_enc::RangeEncoder::new(1275);
+                        let mut coder = AllocEncoder {
+                            enc: &mut enc,
+                            intensity: intensity.clamp(start, end),
+                            dual_stereo: dual,
+                            prev,
+                            signal_bandwidth: bw,
+                        };
+                        let want = compute_allocation(
+                            start, end, &offsets, &cap, trim, total, c, lm, &mut coder,
+                        );
+                        let rng = enc.rng();
+                        let frame = enc.done().expect("fits");
+                        let mut dec = RangeDecoder::new(&frame);
+                        let mut ec = Ec::new(&mut dec);
+                        let got = compute_allocation(
+                            start, end, &offsets, &cap, trim, total, c, lm, &mut ec,
+                        );
+                        let what = format!("lm {lm} c {c} {start}..{end} total {total}");
+                        assert_eq!(got, want, "{what}");
+                        assert_eq!(ec.rng(), rng, "{what}");
+                        if c == 2 && want.intensity > start {
+                            assert!(want.intensity <= intensity.max(start), "{what}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn nothing_to_share_gives_nothing() {
     let a = allocate(&[0; 8], 0, 21, 5, 0, 1, 3);
     assert_eq!(a.pulses, [0; NB_EBANDS]);
