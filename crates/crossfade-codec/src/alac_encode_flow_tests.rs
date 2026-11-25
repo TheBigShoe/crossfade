@@ -117,6 +117,24 @@ fn every_depth_and_channel_count_comes_back_exactly() {
     check(S16, 12, 2, 5000, 1500);
 }
 
+/// A layout that only names ALAC's surround pair differently, or names nothing, is coded as
+/// ALAC's own: the same bytes, every channel at its index.
+#[test]
+fn a_renamed_or_unlabelled_layout_is_coded_exactly_as_alacs_own() {
+    let own = spec(S16, 6);
+    let v = signal(5000, 6, 16, 16);
+    let (want, want_cookie) = encode(&own, &EncodeOptions::default(), &v, 5000);
+    for layout in [
+        ChannelLayout::from_name("5.1-back").unwrap(),
+        ChannelLayout::unpositioned(6).unwrap(),
+    ] {
+        let spec = AudioSpec::new(44100, S16, layout.clone()).unwrap();
+        let (packets, cookie) = encode(&spec, &EncodeOptions::default(), &v, 5000);
+        assert_eq!(packets, want, "{layout:?}");
+        assert_eq!(cookie, want_cookie);
+    }
+}
+
 #[test]
 fn packets_hold_4096_frames_and_only_the_last_is_shorter() {
     let spec = spec(S16, 2);

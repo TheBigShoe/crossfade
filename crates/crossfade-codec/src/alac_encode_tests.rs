@@ -57,11 +57,74 @@ fn only_alacs_own_layout_for_the_channel_count_is_accepted() {
             "{n}"
         );
     }
-    let skewed = AudioSpec::new(44100, S16, ChannelLayout::unpositioned(2).unwrap()).unwrap();
+    let skewed = ChannelLayout::from_positions(vec![
+        crossfade_core::Channel::FrontLeft,
+        crossfade_core::Channel::FrontCenter,
+    ])
+    .unwrap();
+    let skewed = AudioSpec::new(44100, S16, skewed).unwrap();
     let w = what(encoder(&skewed, &EncodeOptions::default()));
     assert!(w.contains("one layout only"), "{w}");
     let nine = AudioSpec::new(44100, S16, ChannelLayout::unpositioned(9).unwrap()).unwrap();
     assert!(what(encoder(&nine, &EncodeOptions::default())).contains("8 channels"));
+}
+
+#[test]
+fn a_layout_that_differs_only_in_its_surround_name_or_has_none_is_accepted_with_a_note() {
+    let spec_of = |layout| AudioSpec::new(44100, S16, layout).unwrap();
+    let back = ChannelLayout::from_name("5.1-back").unwrap();
+    assert!(encoder(&spec_of(back.clone()), &EncodeOptions::default()).is_ok());
+    assert_eq!(
+        layout_note(&back).as_deref(),
+        Some(
+            "5.1 with back surrounds written as 5.1 with side surrounds: alac names its \
+             surround pair as side speakers"
+        )
+    );
+    for (n, want) in [
+        (
+            2,
+            "2 unlabelled channels taken as stereo: alac's layout for 2 channels",
+        ),
+        (
+            6,
+            "6 unlabelled channels taken as 5.1 with side surrounds: alac's layout for 6 channels",
+        ),
+        (
+            8,
+            "8 unlabelled channels taken as alac's own 8-channel layout",
+        ),
+    ] {
+        let unlabelled = ChannelLayout::unpositioned(n).unwrap();
+        assert!(encoder(&spec_of(unlabelled.clone()), &EncodeOptions::default()).is_ok());
+        assert_eq!(layout_note(&unlabelled).as_deref(), Some(want));
+    }
+    // Its own layout needs no note.
+    assert_eq!(layout_note(&alac_layout(6)), None);
+}
+
+#[test]
+fn what_is_not_a_rename_stays_refused() {
+    let spec_of = |layout| AudioSpec::new(44100, S16, layout).unwrap();
+    for (layout, words) in [
+        // ALAC's 4 channels are FC and BC in the middle, not a quad.
+        (
+            ChannelLayout::from_name("quad").unwrap(),
+            "alac stores 4 channels in one layout only (4.0) and this stream is quad",
+        ),
+        // Both surround pairs: nothing to rename.
+        (
+            ChannelLayout::from_name("7.1").unwrap(),
+            "alac stores 8 channels in one layout only (its own 8-channel order) and this \
+             stream is 7.1",
+        ),
+    ] {
+        assert!(layout_note(&layout).is_none(), "{layout:?}");
+        assert_eq!(
+            what(encoder(&spec_of(layout), &EncodeOptions::default())),
+            words
+        );
+    }
 }
 
 #[test]
