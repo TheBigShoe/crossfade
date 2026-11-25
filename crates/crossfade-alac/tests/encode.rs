@@ -308,3 +308,50 @@ fn a_single_channel_compresses() {
         }
     }
 }
+
+#[test]
+fn channel_pairs_compress() {
+    for (depth, share) in [(16, 0.25), (20, 0.4), (24, 0.5), (32, 0.75)] {
+        for channels in [2, 6, 8] {
+            let pcm = signal::interleave(
+                &(0..channels)
+                    .map(|c| signal::sine(4096 * 2, depth, 0.011 + 0.002 * f64::from(c), 0.9))
+                    .collect::<Vec<_>>(),
+            );
+            let (packets, _) = round_trip(config(depth, channels, 4096), &pcm);
+            let raw = escape_bytes(depth, channels, 4096, false) as f64;
+            for p in &packets {
+                assert!(
+                    (p.len() as f64) < raw * share,
+                    "{depth} {channels}: {} of {raw}",
+                    p.len()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn correlated_stereo_codes_smaller_than_its_channels_apart() {
+    let frames = 4096 * 3;
+    let left: Vec<i32> = signal::sine(frames, 16, 0.02, 0.9)
+        .iter()
+        .zip(signal::noise(frames, 8, 1))
+        .map(|(s, n)| s + n)
+        .collect();
+    let right: Vec<i32> = left
+        .iter()
+        .zip(signal::noise(frames, 4, 2))
+        .map(|(s, n)| s + n)
+        .collect();
+    let bytes = |channels, pcm: &[i32]| -> usize {
+        let (packets, _) = round_trip(config(16, channels, 4096), pcm);
+        packets.iter().map(Vec::len).sum()
+    };
+    let apart = bytes(1, &left) + bytes(1, &right);
+    let together = bytes(2, &signal::interleave(&[left, right]));
+    assert!(
+        (together as f64) < apart as f64 * 0.85,
+        "{together} against {apart}"
+    );
+}
