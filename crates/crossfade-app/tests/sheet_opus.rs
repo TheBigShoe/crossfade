@@ -8,6 +8,7 @@ use common::{sine_wav, spec};
 use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
 use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice, PRESETS, Problem};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
+use crossfade_graph::filter::parse_channels;
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
 use crossfade_testkit::memory::MemoryIo;
 
@@ -138,7 +139,7 @@ fn only_48_khz_is_offered_and_another_rate_is_dropped() {
 }
 
 #[test]
-fn a_surround_source_is_refused_in_words_that_name_no_flag() {
+fn a_surround_source_is_refused_in_words_that_name_no_flag_unless_it_is_vorbis_layout() {
     let mut s = wav_sheet(48_000, ChannelLayout::from_name("5.1").unwrap());
     s.set_container(Container::Opus);
     let problems = s.problems(&nothing_exists);
@@ -147,7 +148,31 @@ fn a_surround_source_is_refused_in_words_that_name_no_flag() {
     };
     assert_eq!(
         text,
-        "Opus can store one or two channels; this file has 6. Choose Mono or Stereo under Channels."
+        "Opus stores 6 channels in one layout only (5.1-back) and this stream is 6 unlabelled channels. Choose \
+         Mono or Stereo under Channels."
+    );
+    // Choosing Stereo clears it.
+    s.set_channels(Some(parse_channels("stereo").unwrap()));
+    assert!(s.problems(&nothing_exists).is_empty());
+    // Vorbis's 5.1 is written as it is, with a surround default bitrate and larger choices.
+    let mut s = wav_sheet(48_000, ChannelLayout::vorbis_order(6).unwrap());
+    s.set_container(Container::Opus);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(s.bitrate_label(None), "Default (320 kb/s)");
+    assert!(s.bitrate_options().contains(&Some(512_000)));
+    assert!(!s.bitrate_options().contains(&Some(32_000)));
+    s.set_bitrate(Some(384_000));
+    assert!(s.build(&nothing_exists).is_ok());
+    // More than eight channels.
+    let mut s = wav_sheet(48_000, ChannelLayout::unpositioned(9).unwrap());
+    s.set_container(Container::Opus);
+    let problems = s.problems(&nothing_exists);
+    let [Problem::Source(text)] = problems.as_slice() else {
+        panic!("{problems:?}");
+    };
+    assert_eq!(
+        text,
+        "Opus holds at most 8 channels, got 9. Choose Mono or Stereo under Channels."
     );
 }
 
