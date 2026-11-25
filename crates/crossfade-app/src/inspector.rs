@@ -198,7 +198,7 @@ fn stream_section(s: &ProbeStream) -> Section {
         row(
             "duration_seconds",
             "Duration",
-            or_unknown(s.duration_seconds, duration),
+            or_unknown(s.duration_seconds, duration_text),
         ),
     ];
     if let Some(bits) = s.bits_per_raw_sample.filter(|_| !is_lossy(s)) {
@@ -257,7 +257,12 @@ fn grouped(n: u64) -> String {
     out
 }
 
-fn duration(seconds: f64) -> String {
+/// `1:02.250`, `1:02:03.250` past an hour, and `0.208 ms` under a millisecond, so a file
+/// with frames never reads as no time at all.
+pub fn duration_text(seconds: f64) -> String {
+    if seconds > 0.0 && seconds < 0.001 {
+        return format!("{:.3} ms", seconds * 1000.0);
+    }
     let ms = (seconds.max(0.0) * 1000.0).round() as u64;
     let (total_s, ms) = (ms / 1000, ms % 1000);
     let (h, m, s) = (total_s / 3600, total_s / 60 % 60, total_s % 60);

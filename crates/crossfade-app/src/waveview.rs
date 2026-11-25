@@ -265,6 +265,8 @@ impl WaveView {
         let limit = self.width as f32 - LABEL_ROOM_PX;
         (first..)
             .map(|k| (k, (k as f64 * step * rate).round() as u64))
+            // Never past the audio, which a file narrower than the strip ends before.
+            .take_while(|(_, frame)| *frame <= self.frames)
             .map(|(k, frame)| (k, self.x_of(frame)))
             .take_while(|(_, x)| *x <= limit)
             .map(|(k, x)| Tick {

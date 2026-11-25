@@ -47,18 +47,6 @@ fn kilohertz(rate: u32) -> String {
     }
 }
 
-/// `1:02.250`, or `1:02:03.250` past an hour.
-fn clock(seconds: f64) -> String {
-    let millis = (seconds * 1000.0).round() as u64;
-    let (total, ms) = (millis / 1000, millis % 1000);
-    let (hours, minutes, secs) = (total / 3600, total / 60 % 60, total % 60);
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{secs:02}.{ms:03}")
-    } else {
-        format!("{minutes}:{secs:02}.{ms:03}")
-    }
-}
-
 /// The muted line under a file's name: `FLAC · 48 kHz · stereo · 24-bit · 1:02.250`.
 pub(crate) fn summary(entry: &InputEntry) -> String {
     let InputState::Probed(doc, _) = &entry.state else {
@@ -77,7 +65,7 @@ fn summary_of(doc: &ProbeDocument) -> String {
         stream.layout.clone(),
     ];
     parts.extend(inspector::depth(stream));
-    parts.extend(stream.duration_seconds.map(clock));
+    parts.extend(stream.duration_seconds.map(inspector::duration_text));
     parts.join(" \u{b7} ")
 }
 
