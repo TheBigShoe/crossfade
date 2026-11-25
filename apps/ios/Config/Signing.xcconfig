@@ -1,0 +1,13 @@
+// The two things to set before running on a device (the simulator needs neither).
+// Either edit them here, or put your own lines in Signing.local.xcconfig beside this file,
+// which git ignores and which overrides these.
+
+// Your Apple developer team id (Xcode: Settings › Accounts), such as ABCDE12345.
+DEVELOPMENT_TEAM =
+
+// A bundle identifier you own, in reverse-DNS form.
+PRODUCT_BUNDLE_IDENTIFIER = com.example.crossfade
+
+CODE_SIGN_STYLE = Automatic
+
+#include? "Signing.local.xcconfig"
