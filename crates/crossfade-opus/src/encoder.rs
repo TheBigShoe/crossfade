@@ -1671,3 +1671,7 @@ mod modes_tests;
 #[cfg(test)]
 #[path = "encoder_analysis_tests.rs"]
 mod analysis_tests;
+
+#[cfg(test)]
+#[path = "encoder_depth_tests.rs"]
+mod depth_tests;
