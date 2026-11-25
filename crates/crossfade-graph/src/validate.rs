@@ -11,6 +11,7 @@ use crossfade_dsp::filters::mix::assumption;
 
 /// Stands in for a normalising job's gain when only checking that the job builds.
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
+use crossfade_codec::alac_encode::coded_depth;
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
     is_threaded_encoder,
@@ -143,14 +144,23 @@ pub fn processing(
     }))
 }
 
-/// The container named by `path`'s extension, if we can write it.
-pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
+/// The container named by `path`'s extension, if we can write it. `.opus` names Ogg Opus,
+/// which only a stream copy writes so far; anything else would put FLAC under that name.
+pub(crate) fn output_format_for(path: &str, settings: &AudioSettings) -> Result<FormatId, Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
     match FormatId::from_extension(ext) {
-        Some(f) if can_write(f) => Ok(f),
+        Some(f) if can_write(f) => {
+            if ext.eq_ignore_ascii_case("opus") && settings.codec.as_deref() != Some("copy") {
+                return Err(unsupported(
+                    "encoding opus is not supported yet; an opus stream can be copied with \
+                     --codec copy into .opus",
+                ));
+            }
+            Ok(f)
+        }
         _ => Err(unsupported(format!(
             "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
-                 .oga/.ogg)"
+             .oga/.ogg, .m4a/.mp4/.m4b)"
         ))),
     }
 }
@@ -172,10 +182,10 @@ fn plan_output(
             return Err(unsupported("--codec copy cannot take a compression level"));
         }
         if !can_hold(output_format, input.codec) {
-            let why = if output_format == FormatId::Ogg {
-                " (ogg holds flac only)"
-            } else {
-                ""
+            let why = match output_format {
+                FormatId::Ogg => " (ogg holds flac and opus)",
+                FormatId::Mp4 => " (mp4 holds alac only)",
+                _ => "",
             };
             return Err(unsupported(format!(
                 "cannot copy {} into {}{why}",
@@ -231,12 +241,17 @@ fn output_plan(
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
     encode_options(codec, settings.compression_level)?;
+    let mut all = Vec::from_iter(sample_format_note(input, settings));
+    let depth = if codec == CodecId::Alac {
+        alac_depth(out_format, depth, &mut all)
+    } else {
+        depth
+    };
     let output = StreamInfo {
         frames,
         bits_per_raw_sample: depth,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
-    let mut all = Vec::from_iter(sample_format_note(input, settings));
     all.extend(notes(in_spec, chain));
     Ok(OutputPlan {
         output_format,
@@ -244,6 +259,16 @@ fn output_plan(
         copy: false,
         notes: all,
     })
+}
+
+/// The true depth an ALAC stream names for `true_depth` in `format`: 20 in `S24`, else the
+/// format's full width (`None`). A depth ALAC cannot code is written one up, and `notes` says so.
+fn alac_depth(format: SampleFormat, true_depth: Option<u8>, notes: &mut Vec<String>) -> Option<u8> {
+    let coded = coded_depth(format, true_depth)?;
+    if let Some(d) = true_depth.filter(|&d| d != coded && usize::from(d) < format.bits()) {
+        notes.push(format!("alac cannot code {d}-bit audio: writing {coded}-bit"));
+    }
+    (usize::from(coded) != format.bits()).then_some(coded)
 }
 
 /// Copying passes packets through untouched, so it cannot honour anything that changes them.
@@ -340,7 +365,7 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_output(input, format, settings).map(|(plan, _)| plan)
 }
 
@@ -353,7 +378,7 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
     let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
@@ -556,7 +581,7 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_join(inputs, format, settings).map(|j| j.plan)
 }
 
@@ -567,7 +592,7 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,
