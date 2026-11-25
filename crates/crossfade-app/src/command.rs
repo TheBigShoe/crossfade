@@ -73,6 +73,12 @@ fn subcommand_args(
     if let Some(level) = audio.compression_level {
         args.extend(["--compression-level".to_owned(), level.to_string()]);
     }
+    if let Some(bitrate) = audio.bitrate {
+        args.extend(["--bitrate".to_owned(), bitrate.to_string()]);
+    }
+    if audio.constant_bitrate {
+        args.push("--cbr".to_owned());
+    }
     if let Some(rate) = audio.sample_rate {
         args.extend(["--sample-rate".to_owned(), rate.to_string()]);
     }
