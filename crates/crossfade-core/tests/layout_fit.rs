@@ -20,7 +20,11 @@ fn the_same_layout_fits_itself() {
 
 #[test]
 fn one_surround_pair_under_the_other_name_is_the_same_speakers() {
-    for (side, back) in [("quad-side", "quad"), ("5.0", "5.0-back"), ("5.1", "5.1-back")] {
+    for (side, back) in [
+        ("quad-side", "quad"),
+        ("5.0", "5.0-back"),
+        ("5.1", "5.1-back"),
+    ] {
         assert_eq!(named(side).fit_to(&named(back)), Fit::Renamed, "{side}");
         assert_eq!(named(back).fit_to(&named(side)), Fit::Renamed, "{back}");
     }
