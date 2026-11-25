@@ -202,6 +202,35 @@ fn an_ogg_file_that_is_not_flac_is_refused_in_plain_words() {
 }
 
 #[test]
+fn up_and_down_move_the_selection_and_stop_at_the_ends() {
+    let mut inputs = Inputs::new();
+    inputs.select_next();
+    assert!(inputs.selected().is_none(), "nothing to select");
+    for name in ["a.wav", "b.wav", "c.wav"] {
+        inputs.add(name, failed());
+    }
+    let selected = |i: &Inputs| i.selected().map(|e| e.name.clone());
+    assert_eq!(selected(&inputs).as_deref(), Some("c.wav"));
+    inputs.select_next();
+    assert_eq!(
+        selected(&inputs).as_deref(),
+        Some("c.wav"),
+        "stays at the end"
+    );
+    inputs.select_previous();
+    inputs.select_previous();
+    assert_eq!(selected(&inputs).as_deref(), Some("a.wav"));
+    inputs.select_previous();
+    assert_eq!(
+        selected(&inputs).as_deref(),
+        Some("a.wav"),
+        "stays at the start"
+    );
+    inputs.select_next();
+    assert_eq!(selected(&inputs).as_deref(), Some("b.wav"));
+}
+
+#[test]
 fn aac_without_the_feature_says_this_build_lacks_it() {
     let engine = Error::Unsupported {
         what: "aac decoding is not part of this build (AAC is patent-encumbered); build with --features aac".into(),

@@ -172,8 +172,10 @@ fn a_failure_shows_its_message_and_retry_queues_the_same_request_again(cx: &mut 
 
     click(cx, rig.window, "queue-retry-0");
     draw(cx, rig.window);
-    assert!(has(cx, rig.window, "queue-row-1"));
-    // The failed job is not running, so the retry starts at once.
+    // The retry takes the failed row's place: no second row, no second retry button.
+    assert!(!has(cx, rig.window, "queue-row-1"));
+    assert!(!has(cx, rig.window, "queue-retry-0"));
+    // Nothing else runs, so the retry starts at once.
     assert_eq!(rig.script.starts().len(), 2);
     assert_eq!(
         rig.script.starts()[1].request,
@@ -181,7 +183,7 @@ fn a_failure_shows_its_message_and_retry_queues_the_same_request_again(cx: &mut 
     );
     assert_eq!(
         rig.workspace.read_with(cx, |w, _| w.status_queue()),
-        "1 running \u{b7} 1 failed"
+        "1 running"
     );
 }
 

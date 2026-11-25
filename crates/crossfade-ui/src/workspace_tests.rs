@@ -96,3 +96,23 @@ fn the_default_shortcuts_open_the_sheet_and_toggle_the_queue(cx: &mut TestAppCon
     press(cx, rig.window, "secondary-j");
     assert!(!rig.workspace.read_with(cx, |w, _| w.queue_open()));
 }
+
+#[gpui_test]
+fn about_opens_a_dialog_with_a_line_for_each_fact(cx: &mut TestAppContext) {
+    let (window, _) = open_test_window(cx);
+    draw(cx, window);
+    cx.dispatch_action(window, crate::actions::About);
+    cx.run_until_parked();
+    step(cx, 3);
+    draw(cx, window);
+    assert!(has(cx, window, "about"), "the dialog is open");
+    let lines = crossfade_app::about::lines().len();
+    let shown = cx
+        .update_window(window, |_, window, _| {
+            (0..lines)
+                .filter(|n| window.try_find(("about-line", *n)).is_some())
+                .count()
+        })
+        .unwrap();
+    assert_eq!(shown, lines);
+}

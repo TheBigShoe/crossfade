@@ -14,8 +14,8 @@ use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
 use crate::actions::{
-    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, PlaybackToEnd, PlaybackToStart,
-    Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
+    About, AppAction, CONTROLS_CONTEXT, Convert, OpenFiles, OpenKeymap, OpenSettings,
+    PlaybackToEnd, PlaybackToStart, Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
 use crate::config::{self, Config};
@@ -111,6 +111,8 @@ enum ConfigFile {
 /// The root view.
 pub struct Workspace {
     pub(crate) focus: FocusHandle,
+    /// The files list's, a Tab stop: Up and Down move the selection while it has focus.
+    pub(crate) files_focus: FocusHandle,
     last_action: Option<AppAction>,
     pub(crate) inputs: Inputs,
     /// The selected file's waveform and loudness, shown in the inspector.
@@ -207,6 +209,7 @@ impl Workspace {
         let strip = cx.new(|cx| WaveformStrip::new(Arc::clone(&io), audio, cx));
         Self {
             focus,
+            files_focus: cx.focus_handle().tab_stop(true),
             last_action: None,
             inputs: Inputs::new(),
             strip,
@@ -566,6 +569,7 @@ impl Workspace {
         let menu_focus = self.focus.clone();
         h_flex()
             .id("toolbar")
+            .key_context(CONTROLS_CONTEXT)
             .flex_none()
             .w_full()
             .h(HEADER_HEIGHT + px(8.))
@@ -667,6 +671,30 @@ impl Workspace {
     }
 }
 
+/// "About Crossfade": the name and version, what it does, its licences. Escape or the close
+/// button dismisses it.
+fn open_about_dialog(window: &mut Window, cx: &mut App) {
+    let muted = cx.theme().muted_foreground;
+    window.open_dialog(cx, move |dialog, _, _| {
+        let lines = crossfade_app::about::lines();
+        dialog.title("About Crossfade").w(px(420.)).child(
+            v_flex()
+                .id("about")
+                .test_support()
+                .gap_2()
+                .pt_2()
+                .pb_2()
+                .children(lines.into_iter().enumerate().map(|(n, line)| {
+                    div()
+                        .id(("about-line", n))
+                        .test_support()
+                        .when(n > 0, |line| line.text_color(muted))
+                        .child(SharedString::from(line))
+                })),
+        )
+    });
+}
+
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -698,8 +726,9 @@ impl Render for Workspace {
                 this.record(AppAction::OpenKeymap, cx);
                 this.open_config_file(ConfigFile::Keymap, cx);
             }))
-            .on_action(cx.listener(|this, _: &About, _, cx| {
+            .on_action(cx.listener(|this, _: &About, window, cx| {
                 this.record(AppAction::About, cx);
+                open_about_dialog(window, cx);
             }))
             // From the files list or the strip: both are inside the workspace's context.
             .on_action(cx.listener(|this, _: &TogglePlayback, _, cx| {

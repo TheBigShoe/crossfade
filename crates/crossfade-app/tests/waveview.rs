@@ -94,6 +94,22 @@ fn pan_moves_by_pixels_and_clamps_at_both_ends() {
 }
 
 #[test]
+fn a_plain_wheel_pans_a_zoomed_view_and_leaves_a_fitted_one_to_the_page() {
+    let mut v = view(10_000, 100);
+    assert!(!v.scroll(0.0, -10.0), "fitted: the inspector scrolls");
+    assert_eq!(v.start(), 0);
+    v.zoom(4.0, 0.0);
+    // Wheel down (negative) moves later in the file, as content follows a trackpad.
+    assert!(v.scroll(0.0, -10.0));
+    assert_eq!(v.start(), 250);
+    assert!(v.scroll(0.0, 10.0));
+    assert_eq!(v.start(), 0);
+    // A horizontal swipe still pans.
+    assert!(v.scroll(-10.0, 1.0));
+    assert_eq!(v.start(), 250);
+}
+
+#[test]
 fn panning_a_fitted_view_does_nothing() {
     let mut v = view(10_000, 100);
     v.pan_px(30.0);
@@ -175,6 +191,15 @@ fn ticks_use_nice_steps_and_minutes_seconds() {
         ["0:00", "0:15", "0:30", "0:45", "1:00", "1:15", "1:30"]
     );
     assert!((ticks[1].x - 90.0).abs() < 0.5);
+}
+
+#[test]
+fn the_ruler_stops_where_a_short_file_ends() {
+    // 32 frames at one frame a pixel: the audio spans 32 of the strip's 854 px.
+    let v = view(32, 854);
+    let t = v.ticks();
+    assert!(!t.is_empty());
+    assert!(t.iter().all(|t| t.x <= 32.0), "{:?}", labels(&v));
 }
 
 #[test]

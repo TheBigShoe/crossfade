@@ -173,9 +173,10 @@ fn each_level_mode_keeps_its_own_value() {
     s.set_level_mode(LevelMode::Gain);
     s.set_adjust_text(AdjustField::Level, "-3".into());
     s.set_level_mode(LevelMode::Normalize);
-    assert_eq!(s.adjust_text(AdjustField::Level), "");
-    assert!(filters(&s).is_empty());
-    s.set_adjust_text(AdjustField::Level, "-16".into());
+    // Not the gain's -3: its own default.
+    assert_eq!(s.adjust_text(AdjustField::Level), "-16");
+    assert_eq!(filters(&s), ["normalize -16LUFS"]);
+    s.set_adjust_text(AdjustField::Level, "-14".into());
     s.set_level_mode(LevelMode::Gain);
     assert_eq!(s.adjust_text(AdjustField::Level), "-3");
     assert_eq!(filters(&s), ["gain -3dB"]);
@@ -287,9 +288,37 @@ fn a_value_the_engine_refuses_blocks_the_sheet_with_the_engines_reason() {
 }
 
 #[test]
-fn an_empty_value_is_not_a_problem() {
+fn choosing_normalize_fills_in_its_default_so_what_shows_is_what_runs() {
     let mut s = sheet();
     s.set_level_mode(LevelMode::Normalize);
+    assert_eq!(s.adjust_text(AdjustField::Level), "-16");
+    assert_eq!(s.adjust_problem(AdjustRow::Level), None);
+    assert_eq!(filters(&s), ["normalize -16LUFS"]);
+    // A value of the person's own is kept when they come back to Normalize.
+    s.set_adjust_text(AdjustField::Level, "-23".into());
+    s.set_level_mode(LevelMode::Off);
+    s.set_level_mode(LevelMode::Normalize);
+    assert_eq!(s.adjust_text(AdjustField::Level), "-23");
+}
+
+#[test]
+fn an_empty_level_value_blocks_the_queue_and_says_what_to_enter() {
+    let mut s = sheet();
+    s.set_level_mode(LevelMode::Gain);
+    assert_eq!(
+        s.adjust_problem(AdjustRow::Level).as_deref(),
+        Some("Enter a gain in dB, such as -3.")
+    );
+    assert!(s.build(&nothing_exists).is_err());
+    s.set_level_mode(LevelMode::Normalize);
+    s.set_adjust_text(AdjustField::Level, " ".into());
+    assert_eq!(
+        s.adjust_problem(AdjustRow::Level).as_deref(),
+        Some("Enter a loudness target in LUFS, such as -16.")
+    );
+    assert!(s.build(&nothing_exists).is_err());
+    // Off asks for nothing.
+    s.set_level_mode(LevelMode::Off);
     assert_eq!(s.adjust_problem(AdjustRow::Level), None);
     assert!(s.build(&nothing_exists).is_ok());
 }

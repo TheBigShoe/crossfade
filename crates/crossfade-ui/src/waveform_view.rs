@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crossfade_app::analysis::{Analyzer, Snapshot, State};
 use crossfade_app::player::{Follow, Player, State as PlayState, transport_text};
-use crossfade_app::strip::{Strip, Wake};
+use crossfade_app::strip::{Draw, Drawn, Strip, Wake};
 use crossfade_app::waveview::{Lane, LanePlan, Segment, WaveView, readout};
 use crossfade_core::Limits;
 
@@ -132,6 +132,8 @@ pub struct WaveformStrip {
     /// Where the lanes are, in window pixels: their left edge, as last laid out.
     left: Rc<Cell<f32>>,
     lanes: Entity<Lanes>,
+    /// What the lanes were last drawn for, and so whether a frame may serve their cache.
+    drawn: Drawn<LanesKey>,
     /// `None` when there is no audio output; `audio_note` says why.
     player: Option<Player>,
     audio_note: Option<String>,
@@ -176,11 +178,12 @@ impl WaveformStrip {
         };
         Self {
             strip: Strip::default(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             io,
             wake,
             sender,
             left: Rc::new(Cell::new(0.)),
+            drawn: Drawn::new(),
             lanes: cx.new(|_| Lanes {
                 key: None,
                 lanes: Vec::new(),
@@ -519,8 +522,13 @@ impl WaveformStrip {
     }
 
     /// Keeps the lanes view's data current; recomputes the columns only when what they show
-    /// changed.
-    fn update_lanes(&mut self, snapshot: &Snapshot, view: &WaveView, cx: &mut Context<Self>) {
+    /// changed, and says whether this frame must draw them afresh.
+    fn update_lanes(
+        &mut self,
+        snapshot: &Snapshot,
+        view: &WaveView,
+        cx: &mut Context<Self>,
+    ) -> Draw {
         let theme = cx.theme();
         let channels = snapshot
             .stream
@@ -535,8 +543,8 @@ impl WaveformStrip {
             wave: theme.primary.opacity(0.6),
             line: theme.muted_foreground.opacity(0.35),
         };
-        if self.lanes.read(cx).key.as_ref() == Some(&key) {
-            return;
+        if self.drawn.frame(key.clone()) == Draw::Cached {
+            return Draw::Cached;
         }
         let lanes: Vec<Lane> = self
             .strip
@@ -556,6 +564,7 @@ impl WaveformStrip {
             };
             cx.notify();
         });
+        Draw::Fresh
     }
 
     fn drawn(
@@ -591,7 +600,7 @@ impl WaveformStrip {
             window.request_animation_frame();
         }
         let view = self.strip.view().clone();
-        self.update_lanes(snapshot, &view, cx);
+        let draw = self.update_lanes(snapshot, &view, cx);
         let left = Rc::clone(&self.left);
         let entity = cx.entity();
         // Measures the lanes' place without painting: the pointer maths and the width.
@@ -646,11 +655,18 @@ impl WaveformStrip {
             })
             .when(self.playable().is_some(), |s| s.cursor_pointer())
             .child(measure)
-            .child(
-                self.lanes
+            .child(match draw {
+                Draw::Fresh => div()
+                    .absolute()
+                    .size_full()
+                    .child(self.lanes.clone())
+                    .into_any_element(),
+                Draw::Cached => self
+                    .lanes
                     .clone()
-                    .cached(StyleRefinement::default().absolute().size_full()),
-            )
+                    .cached(StyleRefinement::default().absolute().size_full())
+                    .into_any_element(),
+            })
             .children(playhead)
             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
@@ -692,10 +708,13 @@ impl WaveformStrip {
                 if event.modifiers.secondary(cx) {
                     this.edit(cx, |view| view.zoom_scroll(dy, anchor));
                     cx.stop_propagation();
-                } else if dx.abs() > dy.abs() {
-                    // Content follows the fingers: moving right shows earlier audio.
-                    this.edit(cx, |view| view.pan_px(-dx));
-                    cx.stop_propagation();
+                } else {
+                    // A wheel the strip does not take scrolls the inspector.
+                    if this.strip.view_mut().scroll(dx, dy) {
+                        this.follow.user_moved();
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
                 }
             }))
             .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {

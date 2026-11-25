@@ -136,7 +136,7 @@ fn cancelling_a_finished_job_changes_nothing() {
 }
 
 #[test]
-fn a_failed_job_can_be_retried_at_the_back() {
+fn a_retried_job_takes_the_place_of_the_failed_one() {
     let (mut q, mut r) = (Queue::new(), Scripted::default());
     let a = q.enqueue(request("a"));
     let b = q.enqueue(request("b"));
@@ -157,8 +157,11 @@ fn a_failed_job_can_be_retried_at_the_back() {
     assert_ne!(again, a);
     assert_eq!(q.get(again).unwrap().request, request("a"));
     assert_eq!(state(&q, again), JobState::Pending);
+    // Replaced in place: repeated retries cannot pile up rows.
     let order: Vec<_> = q.items().iter().map(|i| i.id).collect();
-    assert_eq!(order, [a, b, again]);
+    assert_eq!(order, [again, b]);
+    assert!(q.get(a).is_none());
+    assert_eq!(q.retry(a), None, "the old row is gone");
 }
 
 #[test]

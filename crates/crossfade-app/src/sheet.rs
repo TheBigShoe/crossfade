@@ -692,7 +692,7 @@ impl ConvertSheet {
     }
 
     pub fn set_level_mode(&mut self, mode: LevelMode) {
-        self.adjust.mode = mode;
+        self.adjust.set_mode(mode);
     }
 
     /// What the field holds, as typed.

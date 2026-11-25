@@ -197,6 +197,20 @@ fn a_read_error_names_the_file() {
 }
 
 #[test]
+fn a_file_cut_off_mid_value_points_at_where_it_ends() {
+    for text in [
+        "{\n  \"display\": { \"mode\": \"he",
+        "{\n  \"size\":",
+        "{\n  \"size\": 12",
+    ] {
+        let err = error_of(text);
+        let (line, column) = position(&err);
+        assert_eq!(line, 2, "{text:?}: {err}");
+        assert!(column > 1, "{text:?}: {err}");
+    }
+}
+
+#[test]
 fn errors_carry_file_line_column_and_message() {
     let dir = TempDir::new("errors");
     let bad_syntax = dir.write("syntax.json", "{\n  \"size\": ,\n}\n");

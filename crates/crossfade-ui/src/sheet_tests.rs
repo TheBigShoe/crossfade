@@ -973,6 +973,27 @@ fn typed_values_queue_what_the_cli_builds(cx: &mut TestAppContext) {
 }
 
 #[gpui_test]
+fn untouched_normalize_queues_its_shown_target_and_an_empty_gain_blocks_the_queue(
+    cx: &mut TestAppContext,
+) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    expand_adjust(cx, &rig);
+    click(cx, rig.window, "sheet-level-gain");
+    draw(cx, rig.window);
+    assert!(disabled(cx, rig.window, "dialog-ok"), "nothing to apply");
+    click(cx, rig.window, "sheet-level-normalize");
+    draw(cx, rig.window);
+    click(cx, rig.window, "dialog-ok");
+    step(cx, 3);
+    draw(cx, rig.window);
+    assert_eq!(
+        queued(cx, &rig),
+        [cli_request(&rig, &["--normalize", "-16LUFS"])]
+    );
+}
+
+#[gpui_test]
 fn rate_and_normalize_build_what_the_cli_builds(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     open_sheet(cx, &rig);

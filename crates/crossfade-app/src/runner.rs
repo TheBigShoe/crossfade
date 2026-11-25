@@ -153,7 +153,10 @@ fn work(
                         frames_total: latest.1,
                     });
                 }
-                send(RunnerEvent::Finished { frames: *frames });
+                // The engine counts input progress (both passes of a normalise, all of a
+                // trimmed input); what was written is what the committed file holds.
+                let written = written_frames(&request.job, limits).unwrap_or(*frames);
+                send(RunnerEvent::Finished { frames: written });
             }
         },
     );
@@ -164,6 +167,15 @@ fn work(
             message: e.to_string(),
         }),
     }
+}
+
+/// The frames the job's one output says it holds, once committed.
+fn written_frames(job: &crossfade_graph::Job, limits: &Limits) -> Option<u64> {
+    let [output] = job.outputs.as_slice() else {
+        return None;
+    };
+    let report = crossfade_graph::probe(&output.path, &mut FsIo::new(), limits).ok()?;
+    report.streams.first()?.frames
 }
 
 #[cfg(test)]

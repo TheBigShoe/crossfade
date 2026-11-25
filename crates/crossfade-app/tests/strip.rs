@@ -2,7 +2,7 @@ mod common;
 
 use common::{spec, wav_bytes};
 use crossfade_app::analysis::{Analyzer, State};
-use crossfade_app::strip::{Cache, Strip, Wake};
+use crossfade_app::strip::{Cache, Draw, Drawn, Strip, Wake};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::CancelToken;
 use crossfade_testkit::memory::MemoryIo;
@@ -178,4 +178,16 @@ fn wake_ups_coalesce_until_acknowledged() {
     assert!(!w.request());
     w.acknowledge();
     assert!(w.request());
+}
+
+#[test]
+fn a_cached_drawing_is_drawn_afresh_in_the_frame_its_key_changes() {
+    let mut lanes = Drawn::new();
+    assert_eq!(lanes.frame((0u64, 57u64)), Draw::Fresh, "nothing drawn yet");
+    assert_eq!(lanes.frame((0, 57)), Draw::Cached);
+    // A zoom: the frame that sees the new key cannot be served the old drawing.
+    assert_eq!(lanes.frame((11_956, 29)), Draw::Fresh);
+    assert_eq!(lanes.frame((11_956, 29)), Draw::Cached);
+    // Back to an earlier key is still a change from what the cache holds.
+    assert_eq!(lanes.frame((0, 57)), Draw::Fresh);
 }

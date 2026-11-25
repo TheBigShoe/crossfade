@@ -19,7 +19,9 @@ actions!(
         WaveformPanRight,
         TogglePlayback,
         PlaybackToStart,
-        PlaybackToEnd
+        PlaybackToEnd,
+        SelectPreviousFile,
+        SelectNextFile
     ]
 );
 
@@ -38,6 +40,12 @@ pub enum AppAction {
 /// The key context of the main window's root view; bindings that only make sense there
 /// are scoped to it.
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
+
+/// The key context of the focused files list.
+pub const FILES_CONTEXT: &str = "Files";
+
+/// The key context of the toolbar and the queue dock, whose buttons take Space themselves.
+pub const CONTROLS_CONTEXT: &str = "Controls";
 
 /// The key context of a focused waveform strip.
 pub const WAVEFORM_CONTEXT: &str = "Waveform";

@@ -215,6 +215,22 @@ impl WaveView {
         self.clamp();
     }
 
+    /// A wheel or trackpad scroll without the zoom modifier, in pixels. A horizontal swipe
+    /// pans; a vertical wheel pans only a zoomed view (down shows later audio), so over a
+    /// fitted strip it is left to scroll the page. True when the view took it.
+    pub fn scroll(&mut self, dx: f32, dy: f32) -> bool {
+        // Content follows the fingers: a positive delta shows earlier audio.
+        if dx.abs() > dy.abs() {
+            self.pan_px(-dx);
+            return true;
+        }
+        if dy == 0.0 || self.is_fit() {
+            return false;
+        }
+        self.pan_px(-dy);
+        true
+    }
+
     /// An arrow key: a tenth of the visible range, `direction` 1 for later and -1 for earlier.
     pub fn pan_step(&mut self, direction: i32) {
         self.pan_px(direction as f32 * self.width as f32 * KEY_PAN as f32);
@@ -249,6 +265,8 @@ impl WaveView {
         let limit = self.width as f32 - LABEL_ROOM_PX;
         (first..)
             .map(|k| (k, (k as f64 * step * rate).round() as u64))
+            // Never past the audio, which a file narrower than the strip ends before.
+            .take_while(|(_, frame)| *frame <= self.frames)
             .map(|(k, frame)| (k, self.x_of(frame)))
             .take_while(|(_, x)| *x <= limit)
             .map(|(k, x)| Tick {
