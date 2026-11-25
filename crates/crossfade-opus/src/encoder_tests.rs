@@ -430,3 +430,55 @@ proptest::proptest! {
         proptest::prop_assert!(out.iter().all(|v| v.is_finite()));
     }
 }
+
+/// FNV-1a over every packet's length and bytes and the final ranges.
+fn digest(cfg: &EncoderConfig, pcm: &[f32]) -> (usize, u64) {
+    let mut enc = Encoder::new(cfg).expect("valid");
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |b: u8| {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    };
+    let mut total = 0;
+    let mut p = vec![];
+    for f in pcm.chunks_exact(enc.frame_size() * usize::from(cfg.channels)) {
+        enc.encode(f, &mut p).expect("encodes");
+        total += p.len();
+        (p.len() as u16)
+            .to_le_bytes()
+            .into_iter()
+            .for_each(&mut eat);
+        p.iter().copied().for_each(&mut eat);
+        enc.final_range()
+            .to_le_bytes()
+            .into_iter()
+            .for_each(&mut eat);
+    }
+    (total, h)
+}
+
+#[test]
+fn the_same_input_gives_the_same_bytes_on_every_platform() {
+    // Frozen: a change here changes the encoder's output, which must be on purpose.
+    let mut cases = vec![];
+    for (channels, kind, bitrate, vbr, d) in [
+        (2u8, "music", 128_000, true, FrameDuration::Ms20),
+        (2, "music", 64_000, false, FrameDuration::Ms10),
+        (1, "sweep", 32_000, true, FrameDuration::Ms5),
+        (1, "clicks", 96_000, false, FrameDuration::Ms2_5),
+        (2, "noise", 24_000, true, FrameDuration::Ms20),
+    ] {
+        let pcm = signal(kind, usize::from(channels), 0.5);
+        cases.push(digest(&config(channels, bitrate, vbr, d), &pcm));
+    }
+    assert_eq!(
+        cases,
+        [
+            (8712, 3738388940056785679),
+            (4000, 5718751726521388479),
+            (2064, 7820095403110596320),
+            (6000, 756888785635609228),
+            (1705, 13128124336842510805)
+        ]
+    );
+}
