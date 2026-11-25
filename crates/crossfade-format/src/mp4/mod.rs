@@ -18,6 +18,7 @@ mod entry;
 mod ilst;
 mod moov;
 mod mux;
+mod sample_entry;
 mod table;
 
 pub use mux::create;

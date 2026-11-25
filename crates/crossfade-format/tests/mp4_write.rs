@@ -2,7 +2,7 @@
 //! `tests/fixtures/mp4/README.md`): what the reader gives, the writer takes, and the reader
 //! gives the same again.
 
-use crossfade_core::{Demuxer, Error, Limits, MediaSink, Muxer, Packet, StreamInfo, Tags};
+use crossfade_core::{Error, Limits, MediaSink, Muxer, Packet, StreamInfo, Tags};
 use crossfade_format::{FormatId, create_muxer, open_demuxer};
 use std::io::{Cursor, SeekFrom};
 use std::sync::{Arc, Mutex};
