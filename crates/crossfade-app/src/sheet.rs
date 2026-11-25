@@ -631,21 +631,26 @@ impl ConvertSheet {
         format!("{} kHz", khz.trim_end_matches('0').trim_end_matches('.'))
     }
 
-    /// The rates to choose from: the source's own is what "Same as source" means.
+    /// Opus is always coded at 48 kHz, so "Same as source" would say something untrue.
+    fn fixed_rate(&self) -> bool {
+        self.container == Container::Opus && !self.copy()
+    }
+
+    /// The rates to choose from: the source's own is what "Same as source" means. Opus has
+    /// the one.
     pub fn rate_options(&self) -> Vec<Option<u32>> {
+        if self.fixed_rate() {
+            return vec![Some(OPUS_RATE)];
+        }
         let own = self.stream.as_ref().map(|s| s.audio.sample_rate());
-        let rates: &[u32] = if self.container == Container::Opus {
-            &[OPUS_RATE]
-        } else {
-            &RATES
-        };
         std::iter::once(None)
-            .chain(rates.iter().copied().filter(|r| Some(*r) != own).map(Some))
+            .chain(RATES.iter().copied().filter(|r| Some(*r) != own).map(Some))
             .collect()
     }
 
+    /// The rate the row shows. The request only names one when the person chose it.
     pub fn sample_rate(&self) -> Option<u32> {
-        self.sample_rate
+        self.sample_rate.or(self.fixed_rate().then_some(OPUS_RATE))
     }
 
     pub fn set_sample_rate(&mut self, rate: Option<u32>) {
