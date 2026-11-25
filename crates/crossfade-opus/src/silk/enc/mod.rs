@@ -5,4 +5,6 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 mod encode_pulses;
+mod fix;
+mod nlsf_enc;
 mod tables;
