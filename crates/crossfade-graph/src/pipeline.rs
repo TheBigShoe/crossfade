@@ -124,7 +124,7 @@ impl Pipeline {
                 job.outputs.len()
             )));
         };
-        let output_format = output_format_for(&output.path, &output.audio)?;
+        let (output_format, audio) = output_format_for(&output.path, &output.audio)?;
         let make_muxer = |io: &mut dyn JobIo,
                           out_stream: &StreamInfo,
                           tags: &Tags|
@@ -146,7 +146,7 @@ impl Pipeline {
                     input_format,
                     output_format,
                     demuxer,
-                    &output.audio,
+                    &audio,
                     limits.max_threads,
                     pass,
                     |out_stream, tags| make_muxer(io, out_stream, tags),
@@ -166,13 +166,8 @@ impl Pipeline {
                 let Some((input_format, demuxer)) = first else {
                     return Err(unsupported("0 inputs"));
                 };
-                let (join, codecs) = resolve_join(
-                    &streams,
-                    output_format,
-                    &output.audio,
-                    limits.max_threads,
-                    pass,
-                )?;
+                let (join, codecs) =
+                    resolve_join(&streams, output_format, &audio, limits.max_threads, pass)?;
                 let decoder = decoder_for_threads(&streams[0], codecs.decoder_threads[0])?;
                 let conform =
                     conform_chain(&streams[0], join.conform[0].as_ref(), limits.max_threads)?;

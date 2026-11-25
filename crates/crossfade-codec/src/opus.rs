@@ -14,7 +14,7 @@ use crate::vorbis::speakers;
 use crossfade_core::{AudioFrame, Decoder, Error, Packet, SampleFormat, Samples, StreamInfo};
 use crossfade_opus::{MultistreamDecoder, OpusHead};
 
-fn engine_error(e: crossfade_opus::Error) -> Error {
+pub(crate) fn engine_error(e: crossfade_opus::Error) -> Error {
     match e {
         crossfade_opus::Error::Unsupported(_) => Error::Unsupported {
             what: e.to_string(),

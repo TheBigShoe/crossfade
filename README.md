@@ -3,10 +3,10 @@
 An audio (and, later, video) conversion tool in pure Rust: one engine, a
 command line (`crossfade`) and a desktop app (`crossfade-gui`).
 
-Crossfade is early. It writes lossless audio (WAV, FLAC, AIFF, Ogg FLAC, Apple Lossless in M4A) and
-reads those and lossy audio too (MP3, AAC, Vorbis, Opus), with
+Crossfade is early. It writes WAV, FLAC, AIFF, Ogg FLAC, Apple Lossless in M4A and Opus, and
+reads those and more lossy audio (MP3, AAC, Vorbis), with
 processing: sample rate and channel conversion, gain, loudness normalising,
-trim, fades and joining files. Lossy encoders and video are planned. It has
+trim, fades and joining files. More lossy encoders (AAC, MP3, Vorbis) and video are planned. It has
 only been run on macOS so far.
 
 ## What works
@@ -16,8 +16,8 @@ only been run on macOS so far.
 | WAV | yes | yes | 8- to 32-bit integer, 32- and 64-bit float; `LIST/INFO` tags; true depth below the container (valid bits) and speaker layout (channel mask) |
 | FLAC | yes | yes | Our own decoder, checked against the IETF FLAC test files. Output is 4- to 32-bit integer, up to 8 channels, any rate up to 1,048,575 Hz; speaker layouts other than FLAC's defaults travel in the channel mask tag |
 | AIFF / AIFF-C | yes | yes | Integer and float PCM; text-chunk tags; true depth as `sampleSize`. No channel mask: layouts beyond mono and stereo are not kept |
-| Ogg | FLAC, Vorbis and Opus | FLAC; an Opus stream by `--codec copy` | `.oga`, `.ogg` and `.opus` (a name that takes only an Opus stream copy, until an Opus encoder exists): gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link |
-| Opus | yes (in Ogg) | no | Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |
+| Ogg | FLAC, Vorbis and Opus | FLAC; Opus (`--codec opus`, or the name `.opus`); an Opus stream by `--codec copy` | `.oga`, `.ogg` and `.opus`: gapless from the granule positions (priming, Opus's pre-skip and end trimming cut), seeking, Vorbis comments as tags; a chained file is read to the end of its first link. `.oga` and `.ogg` hold FLAC unless `--codec opus`; `.opus` holds Opus only |
+| Opus | yes (in Ogg) | yes (in Ogg), 1 to 8 channels | Our own decoder (SILK, CELT and hybrid, every mode switch, packet loss concealment, multistream up to 8 channels in WAVE speaker order; ambisonics refused), the same bits on every platform: all twelve RFC 8251 test vectors pass, the SILK-only ones sample for sample. Always 48 kHz 32-bit float (16-bit by default to an integer container), the header's output gain applied. Seeking starts decoding 1 s early, so the audio just after a seek is within 0.001 (about 30 16-bit steps) of a decode from the start, often exact, not always |. Our own encoder (20 ms frames, variable bitrate by default or constant with `--cbr`; `--bitrate` 6 to 256 kb/s per channel, 96 kb/s mono, 128 kb/s stereo and 320 kb/s for 5.1 when not given; mapping family 1 for 3 to 8 channels): input is resampled to 48 kHz with a note, a header records the source's rate, the pre-skip is 312 and the length is exact; files pass `opusinfo`, decode in `opusdec` and FFmpeg to the same length, and in our decoder. A rate other than 48 kHz and a sample format are refused (Opus has no bit depth); three or more channels are written only from Vorbis's layout for their count (3.0, quad, 5.0-back, 5.1-back, 6.1, 7.1), and another layout, such as 5.1 with side surrounds, is refused with `--channels stereo` or a matrix as the advice |
 | Vorbis | yes (in Ogg) | no | Our own decoder, the same bits on every platform: Xiph's 29 test files decode, within 9e-6 of lewton. Output is 32-bit float (16-bit by default when written to an integer container), 1 to 8 channels in WAVE speaker order |
 | MP4 / M4A | yes | ALAC only | `.mp4`, `.m4a`, `.m4b`: the first audio track, gapless (edit list or `iTunSMPB`), iTunes tags, seeking; ALAC tracks decode, AAC-LC tracks decode with `--features aac`, MP3 tracks decode; `moov` after `mdat` needs a seekable input; fragmented and encrypted files are refused. Writing needs an output that can seek, carries the tags and an edit list for the exact length, and takes `--codec copy` from another ALAC `.m4a`; AAC and MP3 are not written |
 | ALAC | yes (in MP4) | yes (in MP4) | Our own decoder, bit-exact against `afconvert`: 16-, 20-, 24- and 32-bit, 1 to 8 channels in WAVE speaker order. Our own encoder (any depth and channel count, mid-side and predictor search, never larger than raw; one thread, the same bytes every time); its files decode bit for bit in our decoder and in FFmpeg's. ALAC stores one layout per channel count (mono, stereo, 3.0, 4.0, 5.0, 5.1, 6.1 and an 8-channel one no `--channels` name selects), so another layout (quad, 5.1 with back surrounds, 7.1) is refused with a note on what would work. A depth ALAC has no name for is written one up (12-bit as 16-bit) and the plan says so |
@@ -59,6 +59,9 @@ crossfade convert song.flac -o song.aiff --sample-format s24
 crossfade convert song.oga -o song.flac --codec copy
 crossfade convert song.wav -o song.m4a                 # Apple Lossless
 crossfade convert song.m4a -o copy.m4a --codec copy    # the packets, unchanged
+crossfade convert song.wav -o song.opus --bitrate 128k # Ogg Opus (48 kHz; other rates are resampled)
+crossfade convert song.wav -o song.opus --bitrate 64kbps --cbr
+crossfade convert song.wav -o song.ogg --codec opus    # Opus in .ogg (the default there is FLAC)
 crossfade convert song.opus -o song.ogg --codec copy   # an Opus stream into Ogg, undecoded
 crossfade convert song.mp3 -o song.flac
 crossfade convert song.opus -o song.flac
@@ -67,8 +70,8 @@ crossfade probe song.m4a
 
 Readable: WAV, FLAC, AIFF/AIFF-C, Ogg (FLAC, Vorbis and Opus), MP3, MP4/M4A (ALAC;
 AAC too, as is ADTS `.aac`, in a build with the `aac` feature). Writable: WAV,
-FLAC, AIFF, Ogg FLAC, M4A (Apple Lossless), and with `--codec copy` an Opus stream
-into Ogg (`.opus`, `.ogg`, `.oga`). `crossfade convert --help` lists every option. FLAC decoding and encoding use
+FLAC, AIFF, Ogg FLAC, M4A (Apple Lossless), Opus (`.opus`, or `--codec opus` into `.ogg` or
+`.oga`), and with `--codec copy` an Opus stream into Ogg. `crossfade convert --help` lists every option. FLAC decoding and encoding use
 several threads unless `--threads 1` says otherwise; the output is the same
 either way. Output is written to a
 temporary file and moved into place only when the conversion succeeds. An
@@ -78,7 +81,7 @@ existing output is never replaced without `--force`.
 
 Filters run in the order given, one per `--filter`: a name, an optional value,
 then `key=value` words. Units are always written (`dB`, `s`, `ms`, `1:30`,
-`LUFS`, `dBTP`, `Hz`, `kHz`), and a mistake names the word and what was expected.
+`LUFS`, `dBTP`, `Hz`, `kHz`, `128k` or `64kbps` for a bitrate), and a mistake names the word and what was expected.
 
 ```sh
 crossfade convert in.wav -o out.flac --gain -6dB                 # shortcut for --filter "gain -6dB"
@@ -95,7 +98,7 @@ crossfade concat a.wav b.wav -o both.flac                        # several input
 | trim | `trim start=10s end=1:30`, `trim duration=500ms` | Sample-accurate |
 | fade | `fade in=2s out=3s curve=equal-power` (`linear`, `equal-power`, `s-curve`) | A fade-out holds its length in memory: at most 10 minutes |
 | normalize | `normalize -16LUFS peak=-1dBTP` (two passes: measure, then convert) | Measures the signal as it reaches the stage (after any trim or rate change before it); a note says when the true-peak ceiling stops it short of the target |
-| resample | `resample 48kHz quality=best` (`fast`, `good`, `best`); also `--sample-rate` | Band-limited, time-aligned, on several threads with the same bytes; a 44.1 -> 48 -> 44.1 kHz round trip keeps 143 / 159 / 239 dB (fast / good / best) |
+| resample | `resample 48kHz quality=best` (`fast`, `good`, `best`); also `--sample-rate`; Opus output adds one to 48 kHz by itself, with a note | Band-limited, time-aligned, on several threads with the same bytes; a 44.1 -> 48 -> 44.1 kHz round trip keeps 143 / 159 / 239 dB (fast / good / best) |
 | mix | `mix stereo`, `mix 1 matrix=0.5,0.5`; also `--channels` | Standard down- and up-mixes by speaker position (BS.775, LFE dropped, level-normalised), or a matrix; unlabelled channels mixed down are taken as FLAC's default layout for their count, with a note |
 | concat | `crossfade concat a.wav b.wav -o out.flac` | Inputs conformed to the first one's rate and layout, sample-exact seams, bit-exact when the inputs match |
 

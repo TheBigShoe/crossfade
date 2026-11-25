@@ -1167,7 +1167,7 @@ fn unwritable_combinations_are_refused_with_one_line_and_no_files() {
         ),
         (
             &["convert", "s16.wav", "-o", "o.ogg", "--codec", "pcm"],
-            "codec pcm cannot be written into ogg (ogg writes flac only; an opus stream can be copied",
+            "codec pcm cannot be written into ogg (ogg writes flac and opus)",
         ),
         (
             &["convert", "s16.wav", "-o", "o.oga", "--codec", "copy"],

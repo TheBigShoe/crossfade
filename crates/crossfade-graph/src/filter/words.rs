@@ -13,6 +13,7 @@ pub(super) const TIME: &str = "expected a time such as 10s, 500ms or 1:30";
 pub(super) const DB: &str = "expected a level in dB, such as -3dB";
 pub(super) const LUFS: &str = "expected a loudness in LUFS, such as -16LUFS";
 pub(super) const DBTP: &str = "expected a true peak in dBTP, such as -1dBTP";
+pub(super) const BITRATE: &str = "expected a bitrate such as 128k, 96000 or 64kbps";
 pub(super) const RATE: &str = "expected a sample rate such as 48000, 48000Hz or 44.1kHz";
 
 pub(super) fn channels_expected() -> String {
@@ -165,4 +166,41 @@ pub fn parse_channels(s: &str) -> Result<Channels, FilterError> {
     let c = channels(s).ok_or_else(|| FilterError::at(s, channels_expected()))?;
     c.check().map_err(|m| FilterError::at(s, m))?;
     Ok(c)
+}
+
+/// A bitrate such as `128k`, `96000`, `64kbps` or `64kb/s` (what `--bitrate` takes), in bits
+/// per second. Kilo is 1000, as in Opus's own rates.
+pub fn parse_bitrate(s: &str) -> Result<u32, FilterError> {
+    let bits = word(s, bitrate(s), BITRATE)?;
+    if bits == 0 {
+        return Err(FilterError::at(s, "a bitrate must be at least 1 b/s"));
+    }
+    Ok(bits)
+}
+
+fn bitrate(s: &str) -> Option<u32> {
+    let kilo = ["kb/s", "kbps", "k"].iter().find_map(|u| s.strip_suffix(u));
+    let Some(k) = kilo else {
+        let digits = s.strip_suffix("bps").unwrap_or(s);
+        return if is_digits(digits) {
+            digits.parse().ok()
+        } else {
+            None
+        };
+    };
+    let (int, frac) = match k.split_once('.') {
+        Some((i, f)) if is_digits(f) && f.len() <= 3 => (i, f),
+        Some(_) => return None,
+        None => (k, ""),
+    };
+    if !is_digits(int) {
+        return None;
+    }
+    let frac: u64 = format!("{frac:0<3}").parse().ok()?;
+    let bits = int
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1000)?
+        .checked_add(frac)?;
+    u32::try_from(bits).ok()
 }

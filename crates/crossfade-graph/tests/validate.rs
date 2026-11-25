@@ -102,6 +102,10 @@ fn table() -> Vec<Case> {
         ("s16.m4a", "o.flac", settings(None, None, None)),
         ("in.opus", "o.opus", settings(None, Some("copy"), None)),
         ("in.opus", "o.ogg", settings(None, Some("copy"), None)),
+        ("in.opus", "o.opus", settings(None, None, None)),
+        ("in.opus", "o.ogg", settings(None, Some("opus"), None)),
+        ("s16.wav", "o.opus", settings(None, None, None)),
+        ("hi.wav", "o.opus", settings(None, None, None)),
         // Refusals.
         ("f32.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.flac", settings(Some(F64), None, None)),
@@ -129,8 +133,9 @@ fn table() -> Vec<Case> {
         ("s16.wav", "o.m4a", settings(None, Some("copy"), None)),
         ("s16.flac", "o.m4a", settings(None, Some("copy"), None)),
         ("wide.wav", "o.m4a", settings(None, None, None)),
-        ("in.opus", "o.opus", settings(None, None, None)),
-        ("in.opus", "o.ogg", settings(None, Some("opus"), None)),
+        ("wide.wav", "o.opus", settings(None, None, None)),
+        ("s16.wav", "o.opus", settings(Some(S16), None, None)),
+        ("s16.wav", "o.opus", settings(None, Some("flac"), None)),
         ("s16.m4a", "o.wav", settings(None, Some("copy"), None)),
     ]
 }
@@ -164,7 +169,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 28, "the table keeps its refusals");
+    assert_eq!(refused, 29, "the table keeps its refusals");
 }
 
 #[test]
@@ -183,8 +188,7 @@ fn validate_names_the_cause() {
     );
     assert_eq!(
         text(&settings(None, Some("pcm"), None), "o.oga"),
-        "unsupported: codec pcm cannot be written into ogg (ogg writes flac only; an opus \
-         stream can be copied with --codec copy)"
+        "unsupported: codec pcm cannot be written into ogg (ogg writes flac and opus)"
     );
     assert_eq!(
         text(&settings(None, Some("copy"), None), "o.m4a"),
@@ -199,13 +203,10 @@ fn validate_names_the_cause() {
         text(&settings(None, None, Some(5)), "o.m4a"),
         "unsupported: --compression-level applies to flac only"
     );
-    let opus = probe("in.opus", &mut io, &limits).unwrap().streams[0].clone();
     assert_eq!(
-        validate(&opus, "o.opus", &settings(None, None, None))
-            .unwrap_err()
-            .to_string(),
-        "unsupported: encoding opus is not supported yet; an opus stream can be copied with \
-         --codec copy into .opus"
+        text(&settings(None, Some("flac"), None), "o.opus"),
+        "unsupported: codec flac cannot be written into .opus (an .opus file holds opus; use \
+         .ogg or .oga for flac)"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),
@@ -330,7 +331,7 @@ fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
         [
-            "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "m4a", "mp4", "m4b"
+            "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus", "m4a", "mp4", "m4b"
         ]
     );
     let mut io = io();

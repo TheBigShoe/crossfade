@@ -19,6 +19,16 @@ use crossfade_dsp::level::db_to_linear;
 /// filters, and the output rate and channels are the input's): that job takes the
 /// unprocessed, bit-exact path.
 pub fn plan(input: &AudioSpec, settings: &AudioSettings) -> Result<Option<ChainPlan>, Error> {
+    plan_at(input, settings, None)
+}
+
+/// [`plan`] for an output with one rate only (`fixed_rate`: Opus's 48 kHz), which the output's
+/// rate conversion then always reaches.
+pub fn plan_at(
+    input: &AudioSpec,
+    settings: &AudioSettings,
+    fixed_rate: Option<u32>,
+) -> Result<Option<ChainPlan>, Error> {
     settings.check().map_err(|e| Error::Malformed {
         what: e.to_string(),
     })?;
@@ -45,7 +55,7 @@ pub fn plan(input: &AudioSpec, settings: &AudioSettings) -> Result<Option<ChainP
             ),
         });
     }
-    let rate = settings.sample_rate.unwrap_or(spec.sample_rate());
+    let rate = fixed_rate.unwrap_or_else(|| settings.sample_rate.unwrap_or(spec.sample_rate()));
     let layout = settings
         .channels
         .as_ref()

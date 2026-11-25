@@ -26,3 +26,14 @@ fn only_the_flac_encoder_can_use_threads_but_both_flac_and_alac_decoders_can() {
     assert!(!is_threaded_encoder(CodecId::Alac));
     assert!(!is_threaded_encoder(CodecId::PcmS16Le));
 }
+
+#[test]
+fn opus_has_an_encoder_that_uses_no_threads() {
+    let audio = AudioSpec::new(48000, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
+    let opts = EncodeOptions::default();
+    assert!(!is_threaded_encoder(CodecId::Opus));
+    for threads in [0, 1, 4] {
+        let e = encoder_for_threads(CodecId::Opus, &audio, &opts, threads).unwrap();
+        assert_eq!(&e.extradata()[..8], b"OpusHead");
+    }
+}

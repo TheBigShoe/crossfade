@@ -60,7 +60,7 @@ fn typing_an_m4a_name_switches_to_it() {
     }
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
+        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .opus, .m4a, .mp4 and .m4b files."
     );
 }
 
@@ -165,6 +165,7 @@ fn every_writable_extension_maps_to_its_own_container() {
             "aiff" | "aif" | "aifc" => Container::Aiff,
             "oga" | "ogg" => Container::OggFlac,
             "m4a" | "mp4" | "m4b" => Container::Mp4,
+            "opus" => Container::Opus,
             other => panic!("{other} has no container here: add it to this test and the sheet"),
         };
         s.set_container(Container::Wav);
