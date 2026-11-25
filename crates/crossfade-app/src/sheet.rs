@@ -229,6 +229,10 @@ pub fn plain(what: &str) -> String {
     out
 }
 
+pub fn plain_note(note: &str) -> String {
+    note.to_owned()
+}
+
 #[derive(Debug, Clone)]
 pub struct ConvertSheet {
     input: String,
@@ -803,6 +807,11 @@ impl ConvertSheet {
     /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1" or "mp3
     /// has no bit depth: writing 16-bit": the same notes the command line prints.
     pub fn notes(&self) -> Vec<String> {
+        self.engine_notes()
+    }
+
+    /// The plan's notes exactly as the engine wrote them.
+    pub fn engine_notes(&self) -> Vec<String> {
         self.plan().map(|p| p.notes).unwrap_or_default()
     }
 

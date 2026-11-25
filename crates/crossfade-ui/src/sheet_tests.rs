@@ -1209,6 +1209,6 @@ fn the_sheet_shows_the_note_for_the_rate_opus_forces(cx: &mut TestAppContext) {
     assert!(has(cx, rig.window, "sheet-notes"));
     assert_eq!(
         dialog(cx, &rig, |d, _| d.notes()),
-        ["opus is always 48 kHz: resampling from 44100 Hz"]
+        ["Opus is always 48 kHz: resampling from 44100 Hz"]
     );
 }

@@ -6,7 +6,7 @@ mod common;
 
 use common::{sine_wav, spec};
 use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
-use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice, PRESETS, Problem};
+use crossfade_app::sheet::{Container, ConvertSheet, FormatChoice, PRESETS, Problem, plain_note};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::filter::parse_channels;
 use crossfade_graph::{AudioSettings, CancelToken, Job, JobInput, JobOutput, run};
@@ -220,7 +220,7 @@ fn a_surround_source_that_is_not_opuss_is_refused_in_words_that_name_no_flag() {
 
 #[test]
 fn side_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the_note() {
-    let side = "5.1 with side surrounds written as 5.1 with back surrounds: opus names its \
+    let side = "5.1 with side surrounds written as 5.1 with back surrounds: Opus names its \
                 surround pair as back speakers";
     let mut s = labelled_sheet(6, 0x60F);
     s.set_container(Container::Opus);
@@ -235,7 +235,7 @@ fn side_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the
     assert!(s.problems(&nothing_exists).is_empty());
     assert_eq!(
         s.notes(),
-        ["6 unlabelled channels taken as 5.1 with back surrounds: opus's layout for 6 channels"]
+        ["6 unlabelled channels taken as 5.1 with back surrounds: Opus's layout for 6 channels"]
     );
     // Opus's own layout needs no note.
     let mut s = labelled_sheet(6, 0x3F);
@@ -250,7 +250,7 @@ fn the_notes_are_the_ones_the_command_line_prints() {
     s.set_container(Container::Opus);
     assert_eq!(
         s.notes(),
-        ["opus is always 48 kHz: resampling from 44100 Hz"]
+        ["Opus is always 48 kHz: resampling from 44100 Hz"]
     );
     assert!(s.processing_hint().unwrap().starts_with("48 kHz"));
     // A lossy source written as 16-bit: no processing asked, the note shows all the same.
@@ -258,7 +258,7 @@ fn the_notes_are_the_ones_the_command_line_prints() {
     s.set_container(Container::Wav);
     assert_eq!(
         s.notes(),
-        ["opus has no bit depth: writing 16-bit; choose --sample-format to change"]
+        ["Opus has no bit depth: writing 16-bit; choose a Format to change it"]
     );
     s.set_format(FormatChoice::Format(SampleFormat::S24));
     assert!(s.notes().is_empty());
@@ -325,4 +325,52 @@ fn copy_into_opus_is_offered_for_opus_only() {
     let mut opus = opus_sheet();
     opus.set_container(Container::Opus);
     assert!(opus.copy_available());
+}
+
+#[test]
+fn notes_speak_of_the_sheets_controls_and_the_names_it_shows() {
+    for (engine, shown) in [
+        (
+            "vorbis has no bit depth: writing 16-bit; choose --sample-format to change",
+            "Vorbis has no bit depth: writing 16-bit; choose a Format to change it",
+        ),
+        (
+            "mp3 has no bit depth: writing 16-bit; choose --sample-format to change",
+            "MP3 has no bit depth: writing 16-bit; choose a Format to change it",
+        ),
+        (
+            "alac cannot code 12-bit audio: writing 16-bit",
+            "Apple Lossless cannot code 12-bit audio: writing 16-bit",
+        ),
+        (
+            "4 unlabelled channels taken as 4.0: alac's layout for 4 channels",
+            "4 unlabelled channels taken as 4.0: Apple Lossless's layout for 4 channels",
+        ),
+        (
+            "9 unlabelled channels taken as opus's own 9-channel layout",
+            "9 unlabelled channels taken as Opus's own 9-channel layout",
+        ),
+        // Nothing to translate, or nothing known: as the engine wrote it.
+        (
+            "treating 6 unlabelled channels as 5.1",
+            "treating 6 unlabelled channels as 5.1",
+        ),
+        (
+            "wavpack has no bit depth: choose --sample-format s16",
+            "wavpack has no bit depth: choose --sample-format s16",
+        ),
+    ] {
+        assert_eq!(plain_note(engine), shown);
+    }
+}
+
+#[test]
+fn the_sheet_shows_the_notes_the_engine_wrote_in_the_sheets_words() {
+    let mut s = opus_sheet();
+    s.set_container(Container::Wav);
+    assert_eq!(
+        s.engine_notes(),
+        ["opus has no bit depth: writing 16-bit; choose --sample-format to change"]
+    );
+    assert_eq!(s.notes(), [plain_note(&s.engine_notes()[0])]);
 }
