@@ -153,7 +153,7 @@ fn build(
     let (log, seen) = (log.clone(), seen_tags.clone());
     Pipeline::build(
         FormatId::Wav,
-        format,
+        format.into(),
         d,
         s,
         0,

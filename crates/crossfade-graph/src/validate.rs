@@ -174,12 +174,29 @@ pub fn processing(
     }))
 }
 
+/// What an output name asks of the stream: the container, and whether the name restricts it
+/// to opus (`.opus`, where `.ogg` and `.oga` take any codec the container holds).
+#[derive(Clone, Copy)]
+pub(crate) struct Target {
+    pub format: FormatId,
+    opus_only: bool,
+}
+
+impl From<FormatId> for Target {
+    fn from(format: FormatId) -> Self {
+        Self {
+            format,
+            opus_only: false,
+        }
+    }
+}
+
 /// The container named by `path`'s extension, if we can write it, and the settings the job runs
 /// with: `.opus` names Ogg Opus, so it puts "opus" in the codec when none is asked.
 pub(crate) fn output_format_for(
     path: &str,
     settings: &AudioSettings,
-) -> Result<(FormatId, AudioSettings), Error> {
+) -> Result<(Target, AudioSettings), Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
     let mut settings = settings.clone();
     match FormatId::from_extension(ext) {
@@ -196,7 +213,14 @@ pub(crate) fn output_format_for(
                     }
                 }
             }
-            Ok((f, settings))
+            let opus_only = ext.eq_ignore_ascii_case("opus");
+            Ok((
+                Target {
+                    format: f,
+                    opus_only,
+                },
+                settings,
+            ))
         }
         _ => Err(unsupported(format!(
             "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
@@ -262,9 +286,10 @@ fn check_opus_stream(layout: &ChannelLayout, settings: &AudioSettings) -> Result
 /// runs. Pure: nothing is built.
 fn plan_output(
     input: &StreamInfo,
-    output_format: FormatId,
+    target: Target,
     settings: &AudioSettings,
 ) -> Result<(OutputPlan, Option<ChainPlan>), Error> {
+    let output_format = target.format;
     let requested = settings.codec.as_deref();
     if requested == Some("copy") {
         refuse_processing_on_copy(input, settings)?;
@@ -276,6 +301,13 @@ fn plan_output(
         }
         if settings.bitrate.is_some() || settings.constant_bitrate {
             return Err(unsupported("--codec copy cannot take a bitrate"));
+        }
+        if target.opus_only && input.codec != CodecId::Opus {
+            return Err(unsupported(format!(
+                "{} cannot be copied into .opus (an .opus file holds opus): use .oga or .ogg \
+                 to copy it, or leave out --codec copy to encode it as opus",
+                input.codec.name()
+            )));
         }
         if !can_hold(output_format, input.codec) {
             let why = match output_format {
@@ -466,12 +498,12 @@ fn refuse_processing_on_copy(input: &StreamInfo, settings: &AudioSettings) -> Re
 /// sharing `threads` between the codecs (see `Limits::max_threads` and `share_threads`).
 pub(crate) fn resolve(
     input: &StreamInfo,
-    output_format: FormatId,
+    target: Target,
     settings: &AudioSettings,
     threads: usize,
     pass: Pass,
 ) -> Result<(OutputPlan, Option<Codecs>), Error> {
-    let (plan, chain) = plan_output(input, output_format, settings)?;
+    let (plan, chain) = plan_output(input, target, settings)?;
     let source_rate = input.audio.sample_rate();
     if plan.copy {
         return Ok((plan, None));
@@ -528,8 +560,8 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let (format, settings) = output_format_for(output_path, settings)?;
-    plan_output(input, format, &settings).map(|(plan, _)| plan)
+    let (target, settings) = output_format_for(output_path, settings)?;
+    plan_output(input, target, &settings).map(|(plan, _)| plan)
 }
 
 /// Checks a job's output against its input stream without touching any file: the container from
@@ -541,10 +573,11 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let (format, settings) = output_format_for(output_path, settings)?;
+    let (target, settings) = output_format_for(output_path, settings)?;
+    let format = target.format;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
-    let (plan, _) = resolve(input, format, &settings, 1, Pass::Convert(Some(UNITY)))?;
+    let (plan, _) = resolve(input, target, &settings, 1, Pass::Convert(Some(UNITY)))?;
     // A muxer writes its header on creation, so a scratch buffer shows whether it would refuse.
     create_muxer(
         format,
@@ -756,7 +789,8 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let (format, settings) = output_format_for(output_path, settings)?;
+    let (target, settings) = output_format_for(output_path, settings)?;
+    let format = target.format;
     plan_join(inputs, format, &settings).map(|j| j.plan)
 }
 
@@ -767,7 +801,8 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let (format, settings) = output_format_for(output_path, settings)?;
+    let (target, settings) = output_format_for(output_path, settings)?;
+    let format = target.format;
     let (join, _) = resolve_join(inputs, format, &settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,

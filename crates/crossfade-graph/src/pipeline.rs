@@ -1,7 +1,7 @@
 use crate::job::{AudioSettings, Job};
 use crate::timeline::Timeline;
 use crate::two_pass::{Measuring, NullMuxer, Pass};
-use crate::validate::{output_format_for, resolve, resolve_join};
+use crate::validate::{Target, output_format_for, resolve, resolve_join};
 use crossfade_codec::decoder_for_threads;
 use crossfade_core::{
     AudioFrame, Decoder, Demuxer, Encoder, Error, Filter, JobIo, Limits, Muxer, Packet,
@@ -124,7 +124,8 @@ impl Pipeline {
                 job.outputs.len()
             )));
         };
-        let (output_format, audio) = output_format_for(&output.path, &output.audio)?;
+        let (target, audio) = output_format_for(&output.path, &output.audio)?;
+        let output_format = target.format;
         let make_muxer = |io: &mut dyn JobIo,
                           out_stream: &StreamInfo,
                           tags: &Tags|
@@ -144,7 +145,7 @@ impl Pipeline {
                 only_stream(&*demuxer, &input.path)?;
                 let mut p = Self::build(
                     input_format,
-                    output_format,
+                    target,
                     demuxer,
                     &audio,
                     limits.max_threads,
@@ -227,7 +228,7 @@ impl Pipeline {
     /// created for the output if an earlier choice is refused.
     fn build(
         input_format: FormatId,
-        output_format: FormatId,
+        target: Target,
         demuxer: Box<dyn Demuxer>,
         settings: &AudioSettings,
         threads: usize,
@@ -237,7 +238,8 @@ impl Pipeline {
         let [stream] = demuxer.streams() else {
             return Err(unsupported("exactly one stream is supported"));
         };
-        let (output, codecs) = resolve(stream, output_format, settings, threads, pass)?;
+        let output_format = target.format;
+        let (output, codecs) = resolve(stream, target, settings, threads, pass)?;
         let mut measuring = None;
         let engine = match codecs {
             None => Engine::Copy,
