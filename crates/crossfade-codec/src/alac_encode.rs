@@ -8,6 +8,7 @@
 
 use crate::EncodeOptions;
 use crate::alac::engine_error as map;
+use crate::layout;
 use crossfade_core::{
     AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples,
 };
@@ -41,30 +42,15 @@ pub fn layout_for(channels: u16) -> Option<ChannelLayout> {
 }
 
 /// What is wrong with writing `layout` as ALAC, if anything: the layout it has for that many
-/// channels is the only one it stores (a count past 8 is the encoder's to refuse).
+/// channels is the only one it stores, but the same speakers under the other surround name, or
+/// no labels at all, are written as it (a count past 8 is the encoder's to refuse).
 pub fn layout_problem(layout: &ChannelLayout) -> Option<String> {
-    let wanted = layout_for(layout.channels()).filter(|w| w != layout)?;
-    let words = |l: &ChannelLayout| {
-        l.name().map_or_else(
-            || {
-                if l.positions().is_none() {
-                    format!("{} unlabelled channels", l.channels())
-                } else {
-                    format!("{} channels in another layout", l.channels())
-                }
-            },
-            str::to_owned,
-        )
-    };
-    Some(format!(
-        "alac stores {} channels in one layout only ({}) and this stream is {}",
-        layout.channels(),
-        wanted.name().map_or_else(
-            || format!("its own {}-channel order", layout.channels()),
-            str::to_owned
-        ),
-        words(layout)
-    ))
+    layout::problem("alac", layout, &layout_for(layout.channels())?)
+}
+
+/// What a front end should say when `layout` is written as ALAC's by assumption.
+pub fn layout_note(layout: &ChannelLayout) -> Option<String> {
+    layout::note("alac", layout, &layout_for(layout.channels())?)
 }
 
 struct AlacEncoder {

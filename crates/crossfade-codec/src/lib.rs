@@ -7,6 +7,7 @@ mod aac;
 pub mod alac;
 pub mod alac_encode;
 pub mod flac;
+mod layout;
 pub mod mp3;
 pub mod opus;
 pub mod opus_encode;
