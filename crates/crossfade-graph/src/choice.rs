@@ -196,9 +196,43 @@ mod tests {
         );
         assert_eq!(
             what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
-            "codec pcm cannot be written into ogg (ogg holds flac only)"
+            "codec pcm cannot be written into ogg (ogg writes flac only; an opus stream can be \
+             copied with --codec copy)"
         );
         assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
+    }
+
+    #[test]
+    fn opus_is_not_written_yet_but_the_refusal_says_so() {
+        assert_eq!(
+            what(output_codec(FormatId::Ogg, S16, Some("opus"))),
+            "codec opus cannot be written into ogg (encoding opus is not supported yet; an opus \
+             stream can be copied with --codec copy)"
+        );
+    }
+
+    #[test]
+    fn mp4_writes_alac_only() {
+        for f in [S16, S24, S32] {
+            assert_eq!(output_codec(FormatId::Mp4, f, None), Ok(CodecId::Alac));
+            assert_eq!(
+                output_codec(FormatId::Mp4, f, Some("alac")),
+                Ok(CodecId::Alac)
+            );
+        }
+        for codec in ["aac", "mp3", "flac", "pcm"] {
+            assert_eq!(
+                what(output_codec(FormatId::Mp4, S16, Some(codec))),
+                format!(
+                    "codec {codec} cannot be written into mp4 (mp4 writes alac only; aac and mp3 \
+                     are not written)"
+                )
+            );
+        }
+        for f in [U8, F32, F64] {
+            let w = what(output_codec(FormatId::Mp4, f, None));
+            assert!(w.contains("alac") && w.contains("--sample-format s16, s24 or s32"), "{w}");
+        }
     }
 
     #[test]
@@ -250,6 +284,25 @@ mod tests {
             assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
         }
         assert!(can_hold(FormatId::Ogg, Flac));
+        assert!(can_hold(FormatId::Ogg, Opus));
+        assert!(!can_hold(FormatId::Ogg, Vorbis));
+        assert!(!can_hold(FormatId::Flac, Opus));
+        assert!(can_hold(FormatId::Mp4, Alac));
+        for c in [Aac, Mp3, Flac, Opus].into_iter().chain(le).chain(be) {
+            assert!(!can_hold(FormatId::Mp4, c), "{c:?}");
+        }
+        assert!(!can_hold(FormatId::Wav, Alac));
+    }
+
+    #[test]
+    fn mp4_is_a_writable_container_with_the_readers_extensions() {
+        assert!(can_write(FormatId::Mp4));
+        assert!(!can_write(FormatId::Mp3));
+        let ext = writable_extensions();
+        for e in ["m4a", "mp4", "m4b"] {
+            assert!(ext.contains(&e), "{e}");
+            assert_eq!(FormatId::from_extension(e), Some(FormatId::Mp4));
+        }
     }
 
     #[test]
