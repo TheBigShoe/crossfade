@@ -10,8 +10,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use crossfade_app::{FsIo, Request};
 use crossfade_core::{Error, JobIo, Limits, SampleFormat};
 use crossfade_graph::filter::{
-    Channels, Curve, DEFAULT_TRUE_PEAK_DBTP, FilterSpec, parse_channels, parse_db, parse_dbtp,
-    parse_lufs, parse_rate, parse_time,
+    Channels, Curve, DEFAULT_TRUE_PEAK_DBTP, FilterSpec, parse_bitrate, parse_channels, parse_db,
+    parse_dbtp, parse_lufs, parse_rate, parse_time,
 };
 use crossfade_graph::{
     AudioSettings, CancelToken, Dither, Event, Job, JobInput, JobOutput, Normalization,
@@ -99,8 +99,8 @@ enum Command {
 #[derive(Args)]
 struct OutputArgs {
     /// File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc,
-    /// .oga/.ogg (Ogg FLAC; --codec copy also puts an Opus stream in .opus/.ogg/.oga) or
-    /// .m4a/.mp4/.m4b (Apple Lossless).
+    /// .oga/.ogg (Ogg FLAC; --codec opus or --codec copy of an Opus stream puts Opus in
+    /// them), .opus (Ogg Opus) or .m4a/.mp4/.m4b (Apple Lossless).
     #[arg(short, long)]
     output: String,
     /// Output sample format; defaults to the input's.
@@ -117,13 +117,22 @@ struct OutputArgs {
     /// Converted after the filters.
     #[arg(long, value_name = "LAYOUT", value_parser = value(parse_channels))]
     channels: Option<Channels>,
-    /// How audio is written: copy the packets unchanged, raw pcm, flac, or alac (Apple
-    /// Lossless). Defaults to the container's own.
-    #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac", "alac"]))]
+    /// How audio is written: copy the packets unchanged, raw pcm, flac, alac (Apple
+    /// Lossless) or opus. Defaults to the container's own (.opus: opus).
+    #[arg(long, value_parser = PossibleValuesParser::new(["copy", "pcm", "flac", "alac", "opus"]))]
     codec: Option<String>,
     /// FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
     compression_level: Option<u8>,
+    /// Opus bitrate for the whole stream, such as 128k, 96000 or 64kbps (6 to 256 kb/s per
+    /// channel) [default: 96k mono, 128k stereo]. Opus is always written at 48 kHz, mono or
+    /// stereo, from float samples: other rates are resampled, and --sample-rate and
+    /// --sample-format are refused.
+    #[arg(long, value_name = "BITS/S", value_parser = value(parse_bitrate))]
+    bitrate: Option<u32>,
+    /// Opus at a constant bitrate (every packet the same size) instead of variable.
+    #[arg(long)]
+    cbr: bool,
     /// A filter: a name, an optional value, then key=value words, such as "gain -3dB" or
     /// "fade out=3s curve=equal-power". Repeat for more; they run in the order given.
     #[arg(long = "filter", value_name = "FILTER", value_parser = value(str::parse::<FilterSpec>), help_heading = "Processing")]
@@ -249,8 +258,8 @@ impl OutputArgs {
                 .and_then(SampleFormat::from_name),
             codec: self.codec.clone(),
             compression_level: self.compression_level,
-            bitrate: None,
-            constant_bitrate: false,
+            bitrate: self.bitrate,
+            constant_bitrate: self.cbr,
             sample_rate: self.sample_rate,
             channels: self.channels.clone(),
             dither: self

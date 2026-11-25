@@ -11,7 +11,7 @@ Arguments:
 
 Options:
   -o, --output <OUTPUT>
-          File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC; --codec copy also puts an Opus stream in .opus/.ogg/.oga) or .m4a/.mp4/.m4b (Apple Lossless)
+          File to write; its extension picks the container: .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg (Ogg FLAC; --codec opus or --codec copy of an Opus stream puts Opus in them), .opus (Ogg Opus) or .m4a/.mp4/.m4b (Apple Lossless)
       --sample-format <SAMPLE_FORMAT>
           Output sample format; defaults to the input's [possible values: u8, s16, s24, s32, f32, f64]
       --sample-rate <HZ>
@@ -19,9 +19,13 @@ Options:
       --channels <LAYOUT>
           Output channels: a layout (mono, stereo, 5.1, ...) or a count; defaults to the input's. Converted after the filters
       --codec <CODEC>
-          How audio is written: copy the packets unchanged, raw pcm, flac, or alac (Apple Lossless). Defaults to the container's own [possible values: copy, pcm, flac, alac]
+          How audio is written: copy the packets unchanged, raw pcm, flac, alac (Apple Lossless) or opus. Defaults to the container's own (.opus: opus) [possible values: copy, pcm, flac, alac, opus]
       --compression-level <COMPRESSION_LEVEL>
           FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file
+      --bitrate <BITS/S>
+          Opus bitrate for the whole stream, such as 128k, 96000 or 64kbps (6 to 256 kb/s per channel) [default: 96k mono, 128k stereo]. Opus is always written at 48 kHz, mono or stereo, from float samples: other rates are resampled, and --sample-rate and --sample-format are refused
+      --cbr
+          Opus at a constant bitrate (every packet the same size) instead of variable
       --threads <THREADS>
           Threads for coding: auto (the default) uses the machine's cores, 1 keeps everything on one thread. The output is the same either way [default: auto]
       --force
