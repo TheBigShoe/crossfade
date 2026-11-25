@@ -1,0 +1,243 @@
+---
+source: crates/crossfade-ffi/tests/shapes.rs
+expression: "shown(sheet_state(&input, opus), &root)"
+---
+{
+  "adjust": {
+    "enabled": true,
+    "fade_in": "",
+    "fade_out": "0.5",
+    "level_mode": "normalize",
+    "level_value": "-16",
+    "open": true,
+    "problems": {
+      "fade": null,
+      "level": null,
+      "trim": null
+    },
+    "summary": "Normalize −16 LUFS · Fade out 0.5 s",
+    "trim_end": "",
+    "trim_start": ""
+  },
+  "bitrate": {
+    "enabled": true,
+    "label": "96 kb/s",
+    "options": [
+      {
+        "label": "Default (128 kb/s)",
+        "value": null
+      },
+      {
+        "label": "32 kb/s",
+        "value": 32000
+      },
+      {
+        "label": "64 kb/s",
+        "value": 64000
+      },
+      {
+        "label": "96 kb/s",
+        "value": 96000
+      },
+      {
+        "label": "128 kb/s",
+        "value": 128000
+      },
+      {
+        "label": "160 kb/s",
+        "value": 160000
+      },
+      {
+        "label": "192 kb/s",
+        "value": 192000
+      },
+      {
+        "label": "256 kb/s",
+        "value": 256000
+      }
+    ],
+    "value": 96000,
+    "visible": true
+  },
+  "can_queue": true,
+  "channels": {
+    "enabled": true,
+    "label": "Same as source",
+    "options": [
+      {
+        "label": "Same as source",
+        "value": null
+      },
+      {
+        "label": "Mono",
+        "value": "mono"
+      }
+    ],
+    "value": null
+  },
+  "command_line": "crossfade convert <dir>/in.wav -o <dir>/in.opus --bitrate 96000 --filter 'fade out=0.5s' --filter 'normalize -16LUFS'",
+  "compression_level": {
+    "enabled": false,
+    "options": [
+      null,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "value": null,
+    "visible": false
+  },
+  "container": {
+    "label": "Opus",
+    "options": [
+      {
+        "extension": "wav",
+        "id": "wav",
+        "label": "WAV"
+      },
+      {
+        "extension": "flac",
+        "id": "flac",
+        "label": "FLAC"
+      },
+      {
+        "extension": "aiff",
+        "id": "aiff",
+        "label": "AIFF"
+      },
+      {
+        "extension": "oga",
+        "id": "oga",
+        "label": "Ogg FLAC"
+      },
+      {
+        "extension": "m4a",
+        "id": "m4a",
+        "label": "Apple Lossless"
+      },
+      {
+        "extension": "opus",
+        "id": "opus",
+        "label": "Opus"
+      }
+    ],
+    "value": "opus"
+  },
+  "copy": {
+    "available": false,
+    "value": false
+  },
+  "format": {
+    "enabled": true,
+    "hint": null,
+    "label": "Same as source",
+    "options": [
+      {
+        "id": "same",
+        "label": "Same as source"
+      }
+    ],
+    "value": "same",
+    "visible": false
+  },
+  "input": "<dir>/in.wav",
+  "notes": [
+    "Opus is always 48 kHz: resampling from 44100 Hz"
+  ],
+  "output": "<dir>/in.opus",
+  "overwrite": false,
+  "preset": {
+    "options": [
+      {
+        "id": "same",
+        "label": "Same as source"
+      },
+      {
+        "id": "cd",
+        "label": "16-bit (CD)"
+      },
+      {
+        "id": "studio",
+        "label": "24-bit"
+      },
+      {
+        "id": "float",
+        "label": "32-bit float"
+      },
+      {
+        "id": "flac",
+        "label": "FLAC"
+      },
+      {
+        "id": "flac-cd",
+        "label": "FLAC 16-bit"
+      },
+      {
+        "id": "flac-24",
+        "label": "FLAC 24-bit"
+      },
+      {
+        "id": "aiff",
+        "label": "AIFF"
+      },
+      {
+        "id": "alac",
+        "label": "Apple Lossless"
+      },
+      {
+        "id": "opus",
+        "label": "Opus"
+      }
+    ],
+    "value": "opus"
+  },
+  "problems": [],
+  "processing_note": "48 kHz · stereo · 0:01.000",
+  "request": {
+    "job": {
+      "inputs": [
+        {
+          "path": "<dir>/in.wav"
+        }
+      ],
+      "outputs": [
+        {
+          "audio": {
+            "bitrate": 96000,
+            "filters": [
+              {
+                "filter": "fade",
+                "out_seconds": 0.5
+              },
+              {
+                "filter": "normalize",
+                "lufs": -16.0,
+                "true_peak_dbtp": -1.0
+              }
+            ]
+          },
+          "path": "<dir>/in.opus"
+        }
+      ],
+      "version": 1
+    },
+    "overwrite": false
+  },
+  "sample_rate": {
+    "enabled": true,
+    "label": "48 kHz",
+    "options": [
+      {
+        "label": "48 kHz",
+        "value": 48000
+      }
+    ],
+    "value": 48000
+  }
+}

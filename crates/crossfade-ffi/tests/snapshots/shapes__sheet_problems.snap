@@ -1,0 +1,278 @@
+---
+source: crates/crossfade-ffi/tests/shapes.rs
+expression: "shown(sheet_state(&input, problems), &root)"
+---
+{
+  "adjust": {
+    "enabled": true,
+    "fade_in": "",
+    "fade_out": "",
+    "level_mode": "off",
+    "level_value": "",
+    "open": false,
+    "problems": {
+      "fade": null,
+      "level": null,
+      "trim": null
+    },
+    "summary": null,
+    "trim_end": "",
+    "trim_start": ""
+  },
+  "bitrate": {
+    "enabled": false,
+    "label": "Default (128 kb/s)",
+    "options": [
+      {
+        "label": "Default (128 kb/s)",
+        "value": null
+      },
+      {
+        "label": "32 kb/s",
+        "value": 32000
+      },
+      {
+        "label": "64 kb/s",
+        "value": 64000
+      },
+      {
+        "label": "96 kb/s",
+        "value": 96000
+      },
+      {
+        "label": "128 kb/s",
+        "value": 128000
+      },
+      {
+        "label": "160 kb/s",
+        "value": 160000
+      },
+      {
+        "label": "192 kb/s",
+        "value": 192000
+      },
+      {
+        "label": "256 kb/s",
+        "value": 256000
+      }
+    ],
+    "value": null,
+    "visible": false
+  },
+  "can_queue": false,
+  "channels": {
+    "enabled": true,
+    "label": "Same as source",
+    "options": [
+      {
+        "label": "Same as source",
+        "value": null
+      },
+      {
+        "label": "Mono",
+        "value": "mono"
+      }
+    ],
+    "value": null
+  },
+  "command_line": null,
+  "compression_level": {
+    "enabled": false,
+    "options": [
+      null,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "value": null,
+    "visible": false
+  },
+  "container": {
+    "label": "WAV",
+    "options": [
+      {
+        "extension": "wav",
+        "id": "wav",
+        "label": "WAV"
+      },
+      {
+        "extension": "flac",
+        "id": "flac",
+        "label": "FLAC"
+      },
+      {
+        "extension": "aiff",
+        "id": "aiff",
+        "label": "AIFF"
+      },
+      {
+        "extension": "oga",
+        "id": "oga",
+        "label": "Ogg FLAC"
+      },
+      {
+        "extension": "m4a",
+        "id": "m4a",
+        "label": "Apple Lossless"
+      },
+      {
+        "extension": "opus",
+        "id": "opus",
+        "label": "Opus"
+      }
+    ],
+    "value": "wav"
+  },
+  "copy": {
+    "available": true,
+    "value": false
+  },
+  "format": {
+    "enabled": true,
+    "hint": null,
+    "label": "Same as source",
+    "options": [
+      {
+        "id": "same",
+        "label": "Same as source"
+      },
+      {
+        "id": "u8",
+        "label": "8-bit"
+      },
+      {
+        "id": "s16",
+        "label": "16-bit"
+      },
+      {
+        "id": "s24",
+        "label": "24-bit"
+      },
+      {
+        "id": "s32",
+        "label": "32-bit"
+      },
+      {
+        "id": "f32",
+        "label": "32-bit float"
+      },
+      {
+        "id": "f64",
+        "label": "64-bit float"
+      }
+    ],
+    "value": "same",
+    "visible": true
+  },
+  "input": "<dir>/in.wav",
+  "notes": [],
+  "output": "<dir>/x.mp3",
+  "overwrite": false,
+  "preset": {
+    "options": [
+      {
+        "id": "same",
+        "label": "Same as source"
+      },
+      {
+        "id": "cd",
+        "label": "16-bit (CD)"
+      },
+      {
+        "id": "studio",
+        "label": "24-bit"
+      },
+      {
+        "id": "float",
+        "label": "32-bit float"
+      },
+      {
+        "id": "flac",
+        "label": "FLAC"
+      },
+      {
+        "id": "flac-cd",
+        "label": "FLAC 16-bit"
+      },
+      {
+        "id": "flac-24",
+        "label": "FLAC 24-bit"
+      },
+      {
+        "id": "aiff",
+        "label": "AIFF"
+      },
+      {
+        "id": "alac",
+        "label": "Apple Lossless"
+      },
+      {
+        "id": "opus",
+        "label": "Opus"
+      }
+    ],
+    "value": "same"
+  },
+  "problems": [
+    {
+      "kind": "extension",
+      "message": "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .opus, .m4a, .mp4 and .m4b files.",
+      "row": null
+    }
+  ],
+  "processing_note": null,
+  "request": {
+    "job": {
+      "inputs": [
+        {
+          "path": "<dir>/in.wav"
+        }
+      ],
+      "outputs": [
+        {
+          "audio": {},
+          "path": "<dir>/x.mp3"
+        }
+      ],
+      "version": 1
+    },
+    "overwrite": false
+  },
+  "sample_rate": {
+    "enabled": true,
+    "label": "Same as source",
+    "options": [
+      {
+        "label": "Same as source",
+        "value": null
+      },
+      {
+        "label": "48 kHz",
+        "value": 48000
+      },
+      {
+        "label": "88.2 kHz",
+        "value": 88200
+      },
+      {
+        "label": "96 kHz",
+        "value": 96000
+      },
+      {
+        "label": "176.4 kHz",
+        "value": 176400
+      },
+      {
+        "label": "192 kHz",
+        "value": 192000
+      }
+    ],
+    "value": null
+  }
+}

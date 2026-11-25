@@ -1,0 +1,13 @@
+---
+source: crates/crossfade-ffi/tests/shapes.rs
+expression: "shown(v, \"/nowhere\")"
+---
+{
+  "abi_version": 1,
+  "lines": [
+    "Crossfade <version>",
+    "Converts, inspects and normalises audio files, in pure Rust.",
+    "MIT or Apache-2.0; the Opus codec is BSD-3-Clause."
+  ],
+  "version": "<version>"
+}
