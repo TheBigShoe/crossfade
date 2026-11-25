@@ -408,3 +408,53 @@ fn every_channel_comes_back_in_its_place_with_its_own_tone() {
         }
     }
 }
+
+#[test]
+fn the_source_depth_is_an_integer_sources_true_depth() {
+    let source = |codec, format, raw| {
+        let audio = AudioSpec::new(44_100, format, ChannelLayout::stereo()).unwrap();
+        StreamInfo {
+            bits_per_raw_sample: raw,
+            ..StreamInfo::new(0, codec, audio, TimeBase::new(1, 44_100).unwrap())
+        }
+    };
+    for (codec, format, raw, want) in [
+        (CodecId::PcmU8, SampleFormat::U8, None, Some(8)),
+        (CodecId::PcmS16Le, SampleFormat::S16, None, Some(16)),
+        (CodecId::Flac, SampleFormat::S16, Some(12), Some(12)),
+        (CodecId::Flac, SampleFormat::S24, Some(20), Some(20)),
+        (CodecId::PcmS24Le, SampleFormat::S24, None, Some(24)),
+        (CodecId::PcmS32Le, SampleFormat::S32, None, Some(32)),
+        (CodecId::PcmF32Le, SampleFormat::F32, None, None),
+        (CodecId::PcmF64Le, SampleFormat::F64, None, None),
+        (CodecId::Mp3, SampleFormat::F32, None, None),
+        (CodecId::Opus, SampleFormat::F32, None, None),
+    ] {
+        let s = source(codec, format, raw);
+        assert_eq!(source_bits_per_sample(&s), want, "{codec:?} {format:?} {raw:?}");
+    }
+}
+
+#[test]
+fn the_encoder_takes_the_source_depth_as_its_input_depth_within_8_to_24_bits() {
+    // A tone at 1e-5 is digital silence at 16 bits (three-byte packets) and not at 24.
+    let pcm: Vec<f32> = (0..48_000 * 2)
+        .map(|i| (1e-5 * (2.0 * std::f64::consts::PI * 440.0 * (i / 2) as f64 / 48e3).sin()) as f32)
+        .collect();
+    for (bits, silent) in [
+        (None, false),
+        (Some(4), true),
+        (Some(16), true),
+        (Some(20), false),
+        (Some(32), false),
+    ] {
+        let options = EncodeOptions {
+            source_bits_per_sample: bits,
+            ..EncodeOptions::default()
+        };
+        let (packets, _) = encode_with(&spec(2), &options, &pcm, 960);
+        let tiny = packets.iter().filter(|p| p.data.len() <= 3).count();
+        let want = if silent { packets.len() } else { 0 };
+        assert_eq!(tiny, want, "{bits:?}");
+    }
+}
