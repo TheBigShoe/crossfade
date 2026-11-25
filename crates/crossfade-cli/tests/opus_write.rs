@@ -375,20 +375,149 @@ fn what_opus_cannot_take_is_refused_in_plain_words() {
     assert!(e.contains("opus has no bit depth"), "{e}");
     let e = refused(&["convert", &wav, "-o", &dir.path("o.wav"), "--codec", "opus"]);
     assert!(e.contains("codec opus cannot be written into wav"), "{e}");
-    // Six channels: refused up front, with the advice that works.
+    // Six unlabelled channels are not Vorbis's 5.1: refused up front, with the advice that works.
     let six = dir.path("six.wav");
-    let mut wav6 = wav16(48_000, 6, &chirp(48_000, 6, 4_800), None);
-    // WAVE_FORMAT_EXTENSIBLE is not needed: a plain 6-channel header reads as unlabelled
-    // channels, and the 5.1 default is what --channels stereo mixes from.
-    wav6.truncate(wav6.len());
-    std::fs::write(&six, wav6).unwrap();
+    std::fs::write(&six, wav16(48_000, 6, &chirp(48_000, 6, 4_800), None)).unwrap();
     let e = refused(&["convert", &six, "-o", &opus]);
     assert!(
-        e.contains("surround opus is not written yet (6 channels)")
+        e.contains("opus stores 6 channels in one layout only (5.1-back)")
             && e.contains("--channels stereo"),
         "{e}"
     );
     ok(&["convert", &six, "-o", &opus, "--channels", "stereo"]);
+    // And nine channels have no layout at all.
+    let nine = dir.path("nine.wav");
+    std::fs::write(&nine, wav16(48_000, 9, &chirp(48_000, 9, 4_800), None)).unwrap();
+    let e = refused(&["convert", &nine, "-o", &dir.path("n.opus")]);
+    assert!(e.contains("opus holds at most 8 channels, got 9"), "{e}");
+}
+
+/// A 16-bit WAVE_FORMAT_EXTENSIBLE file with a channel mask.
+fn wav_mask(rate: u32, channels: usize, mask: u32, samples: &[f32]) -> Vec<u8> {
+    let data: Vec<u8> = samples
+        .iter()
+        .flat_map(|&x| ((x * 32767.0).round() as i16).to_le_bytes())
+        .collect();
+    let mut b = Vec::new();
+    b.extend_from_slice(b"RIFF\0\0\0\0WAVEfmt ");
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    b.extend_from_slice(&(channels as u16).to_le_bytes());
+    b.extend_from_slice(&rate.to_le_bytes());
+    b.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
+    b.extend_from_slice(&(channels as u16 * 2).to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&22u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&mask.to_le_bytes());
+    // The PCM sub-format GUID.
+    b.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71,
+    ]);
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    b.extend_from_slice(&data);
+    let riff = (b.len() - 8) as u32;
+    b[4..8].copy_from_slice(&riff.to_le_bytes());
+    b
+}
+
+/// How much of channel `c` (of `ch`) lies at `hz`, by the Goertzel recurrence.
+fn tone_at(x: &[f32], ch: usize, c: usize, hz: f64) -> f64 {
+    let w = 2.0 * std::f64::consts::PI * hz / 48_000.0;
+    let (mut s1, mut s2) = (0.0f64, 0.0f64);
+    for f in x.chunks_exact(ch) {
+        let s = f64::from(f[c]) + 2.0 * w.cos() * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    (s1 * s1 + s2 * s2 - 2.0 * w.cos() * s1 * s2)
+        .max(0.0)
+        .sqrt()
+        / (x.len() / ch) as f64
+}
+
+#[test]
+fn surround_comes_back_with_every_channel_in_its_place() {
+    let dir = Dir::new("surround");
+    // 5.1 with back surrounds (FL FR FC LFE BL BR) and 7.1 (those, then SL SR): the WAVE order.
+    for (channels, mask, name) in [(6usize, 0x3Fu32, "5.1-back"), (8, 0x63F, "7.1")] {
+        // A different tone on each channel; the LFE (index 3) a low one.
+        let tones: Vec<f64> = (0..channels)
+            .map(|c| {
+                if c == 3 {
+                    90.0
+                } else {
+                    700.0 + 530.0 * c as f64
+                }
+            })
+            .collect();
+        let frames = 24_000;
+        let pcm: Vec<f32> = (0..frames)
+            .flat_map(|i| {
+                tones.iter().map(move |hz| {
+                    (0.2 * (2.0 * std::f64::consts::PI * hz * i as f64 / 48_000.0).sin()) as f32
+                })
+            })
+            .collect();
+        let wav = dir.path("in.wav");
+        std::fs::write(&wav, wav_mask(48_000, channels, mask, &pcm)).unwrap();
+        let (opus, back) = (dir.path("s.opus"), dir.path("back.wav"));
+        ok(&["convert", "--force", &wav, "-o", &opus]);
+        let shown = ok(&["probe", &opus]);
+        assert!(
+            shown.contains("opus, 48000 Hz") && shown.contains(name),
+            "{shown}"
+        );
+        ok(&[
+            "convert",
+            "--force",
+            &opus,
+            "-o",
+            &back,
+            "--sample-format",
+            "f32",
+        ]);
+        let got = read_f32(&back);
+        assert_eq!(got.len(), pcm.len(), "{name}");
+        for c in 0..channels {
+            let own = tone_at(&got, channels, c, tones[c]);
+            assert!(own > 0.03, "{name}: channel {c} lost its tone ({own})");
+            for (d, hz) in tones.iter().enumerate().filter(|(d, _)| *d != c) {
+                let other = tone_at(&got, channels, c, *hz);
+                assert!(
+                    other * 10.0 < own,
+                    "{name}: channel {c} carries channel {d}'s tone ({other} vs {own})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_surround_bitrate_is_taken_for_the_whole_stream() {
+    let dir = Dir::new("surround-rate");
+    let pcm = chirp(48_000, 6, 96_000);
+    let wav = dir.path("in.wav");
+    std::fs::write(&wav, wav_mask(48_000, 6, 0x3F, &pcm)).unwrap();
+    let size = |extra: &[&str]| {
+        let opus = dir.path("s.opus");
+        let mut args = vec!["convert", "--force", wav.as_str(), "-o", opus.as_str()];
+        args.extend_from_slice(extra);
+        ok(&args);
+        std::fs::metadata(&opus).unwrap().len()
+    };
+    let (low, high) = (size(&["--bitrate", "96k"]), size(&["--bitrate", "512k"]));
+    assert!(low * 2 < high, "{low} {high}");
+    let e = refused(&[
+        "convert",
+        &wav,
+        "-o",
+        &dir.path("x.opus"),
+        "--bitrate",
+        "30k",
+    ]);
+    assert!(e.contains("36000 to 1536000"), "{e}");
 }
 
 #[test]
