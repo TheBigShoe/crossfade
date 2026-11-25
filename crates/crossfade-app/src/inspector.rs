@@ -119,6 +119,25 @@ pub fn depth(stream: &ProbeStream) -> Option<String> {
     ))
 }
 
+/// The files list's line under a name: `FLAC · 48 kHz · stereo · 24-bit · 1:02.250`.
+pub fn summary(doc: &ProbeDocument) -> String {
+    let Some(stream) = doc.streams.first() else {
+        return "no audio".to_owned();
+    };
+    let khz = if stream.sample_rate.is_multiple_of(1000) {
+        format!("{} kHz", stream.sample_rate / 1000)
+    } else {
+        format!(
+            "{} kHz",
+            (f64::from(stream.sample_rate) / 100.0).round() / 10.0
+        )
+    };
+    let mut parts = vec![format_name(&doc.format), khz, stream.layout.clone()];
+    parts.extend(depth(stream));
+    parts.extend(stream.duration_seconds.map(duration_text));
+    parts.join(" \u{b7} ")
+}
+
 fn or_unknown<T>(v: Option<T>, f: impl FnOnce(T) -> String) -> String {
     v.map_or_else(|| UNKNOWN.to_owned(), f)
 }
