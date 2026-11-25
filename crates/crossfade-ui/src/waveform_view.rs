@@ -774,8 +774,10 @@ impl WaveformStrip {
             .h(LINE_HEIGHT)
             .line_height(LINE_HEIGHT)
             .text_size(LABEL_SIZE)
-            .children(line.segments.into_iter().map(|segment| {
+            .children(line.segments.into_iter().enumerate().map(|(n, segment)| {
                 div()
+                    .id(("waveform-readout-segment", n))
+                    .test_support()
                     .whitespace_nowrap()
                     .text_color(if segment.warn { warning } else { muted })
                     .child(SharedString::from(segment.text))

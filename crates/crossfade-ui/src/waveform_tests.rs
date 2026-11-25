@@ -264,6 +264,36 @@ fn a_resize_asks_for_the_frame_that_paints_the_new_width(cx: &mut TestAppContext
     assert!(lanes_show_the_view(cx, &strip));
 }
 
+#[gpui_test]
+fn a_narrow_strip_never_cuts_a_readout_figure_from_the_left(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    // Long enough for a loudness range: the readout's three figures.
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480_000);
+    add_paths(cx, &rig, &[&a]);
+    finish(cx, &rig);
+    // The narrowest window: the readout no longer fits beside the transport.
+    VisualTestContext::from_window(rig.window, cx).simulate_resize(size(px(640.), px(400.)));
+    draw(cx, rig.window);
+    let (line, segments) = cx
+        .update_window(rig.window, |_, window, _| {
+            let line = window.find("waveform-readout").bounds();
+            let segments: Vec<Bounds<Pixels>> = (0..5usize)
+                .filter_map(|n| window.try_find(("waveform-readout-segment", n)))
+                .map(|s| s.bounds())
+                .collect();
+            (line, segments)
+        })
+        .unwrap();
+    assert_eq!(segments.len(), 5, "three figures and two separators");
+    for s in segments {
+        // A figure cut at its left reads as another number ("12.7" for "−12.7").
+        assert!(
+            s.left() >= line.left() && s.right() <= line.right(),
+            "{s:?} outside {line:?}"
+        );
+    }
+}
+
 fn secondary() -> Modifiers {
     Modifiers {
         platform: cfg!(target_os = "macos"),
