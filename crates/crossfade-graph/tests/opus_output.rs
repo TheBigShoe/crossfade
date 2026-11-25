@@ -209,18 +209,48 @@ fn surround_is_written_from_vorbis_layouts_and_other_layouts_are_refused_with_wh
         assert_eq!((head.channels, head.mapping.family), (n, 1), "{n}");
         assert_eq!(plan.output.audio.layout().channels(), u16::from(n));
     }
-    // 5.1 with side surrounds is not Vorbis's 5.1 (back surrounds), and no standard mix goes
-    // between the two: stereo is a conversion away, the rest a matrix.
+    // 5.1 with side surrounds is Vorbis's 5.1 under another name: written as it, with a note.
     let five_one = pcm(48_000, ChannelLayout::from_name("5.1").unwrap());
-    let w = refusal(describe(&five_one, "o.opus", &AudioSettings::default()));
+    let plan = describe(&five_one, "o.opus", &AudioSettings::default()).unwrap();
+    assert_eq!(
+        *plan.output.audio.layout(),
+        ChannelLayout::vorbis_order(6).unwrap()
+    );
+    assert_eq!(
+        plan.notes,
+        [
+            "5.1 with side surrounds written as 5.1 with back surrounds: opus names its \
+             surround pair as back speakers"
+        ]
+    );
+    assert_eq!(OpusHead::parse(&plan.output.extradata).unwrap().channels, 6);
+    assert_eq!(
+        validate(&five_one, "o.opus", &AudioSettings::default()).unwrap(),
+        plan
+    );
+    // Channels with no labels are Vorbis's layout for their count.
+    for (n, words) in [(3, "3.0"), (6, "5.1 with back surrounds"), (8, "7.1")] {
+        let unlabelled = pcm(48_000, ChannelLayout::unpositioned(n).unwrap());
+        let plan = describe(&unlabelled, "o.opus", &AudioSettings::default()).unwrap();
+        assert_eq!(
+            plan.notes,
+            [format!(
+                "{n} unlabelled channels taken as {words}: opus's layout for {n} channels"
+            )]
+        );
+    }
+    // Other speakers are refused with what works: stereo is a conversion away, the rest a
+    // matrix.
+    let four = pcm(48_000, ChannelLayout::from_name("4.0").unwrap());
+    let w = refusal(describe(&four, "o.opus", &AudioSettings::default()));
     assert_eq!(
         w,
-        "opus stores 6 channels in one layout only (5.1-back) and this stream is 5.1; use \
+        "opus stores 4 channels in one layout only (quad) and this stream is 4.0; use \
          --channels stereo to mix down, or a mix filter with a matrix puts the channels in that \
          layout"
     );
     let plan = describe(
-        &five_one,
+        &four,
         "o.opus",
         &with(|s| s.channels = Some(Channels::Layout(ChannelLayout::stereo()))),
     )

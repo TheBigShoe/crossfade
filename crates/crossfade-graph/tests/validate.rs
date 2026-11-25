@@ -5,7 +5,7 @@ mod common;
 use common::{job, sine_wav, spec};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{
-    AudioSettings, CancelToken, Pipeline, probe, run, validate, writable_extensions,
+    AudioSettings, CancelToken, Pipeline, describe, probe, run, validate, writable_extensions,
 };
 use crossfade_opus::testing::ogg::{self as w, OggLayout};
 use crossfade_testkit::memory::MemoryIo;
@@ -278,22 +278,17 @@ fn alac_refuses_another_layout_and_says_what_would_work() {
     let err = |input: &str| text(input, &none).unwrap_err().to_string();
     // The standard mixes never invent a position, so only what already has a name works.
     assert_eq!(
-        err("four.wav"),
-        "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is 4 \
-         unlabelled channels; use --channels 4.0 to convert"
-    );
-    assert_eq!(
         err("quad.wav"),
         "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is quad; \
          no standard mix reaches it, so a mix filter with a matrix is the way"
     );
     assert!(
-        err("eight.wav").ends_with("no --channels name selects it"),
+        err("seven1.wav").contains("this stream is 7.1;"),
         "{}",
-        err("eight.wav")
+        err("seven1.wav")
     );
     assert!(
-        err("seven1.wav").contains("this stream is 7.1;"),
+        err("seven1.wav").ends_with("no --channels name selects it"),
         "{}",
         err("seven1.wav")
     );
@@ -308,6 +303,53 @@ fn alac_refuses_another_layout_and_says_what_would_work() {
     );
     assert!(text("five1.wav", &none).is_ok());
     assert!(text("seven1.wav", &channels("stereo")).is_ok());
+}
+
+/// The same speakers with the surround pair named back, and channels with no labels, are
+/// written as ALAC's layout for their count, and the plan says what it assumed.
+#[test]
+fn alac_takes_the_other_surround_name_and_unlabelled_channels_with_a_note() {
+    let stream = |layout: ChannelLayout| {
+        let mut io = MemoryIo::new();
+        io.insert(
+            "in.wav",
+            sine_wav(&spec(8000, SampleFormat::S16, ChannelLayout::stereo()), 3000).1,
+        );
+        let mut s = probe("in.wav", &mut io, &Limits::default()).unwrap().streams[0].clone();
+        s.audio = spec(8000, SampleFormat::S16, layout);
+        s
+    };
+    let plan = |layout: ChannelLayout| {
+        let s = stream(layout);
+        let described = describe(&s, "o.m4a", &AudioSettings::default()).unwrap();
+        let validated = validate(&s, "o.m4a", &AudioSettings::default()).unwrap();
+        assert_eq!(described, validated);
+        validated
+    };
+    let five_one = ChannelLayout::from_name("5.1").unwrap();
+    let p = plan(ChannelLayout::from_name("5.1-back").unwrap());
+    assert_eq!(*p.output.audio.layout(), five_one);
+    assert_eq!(
+        p.notes,
+        [
+            "5.1 with back surrounds written as 5.1 with side surrounds: alac names its \
+             surround pair as side speakers"
+        ]
+    );
+    let p = plan(ChannelLayout::unpositioned(6).unwrap());
+    assert_eq!(*p.output.audio.layout(), five_one);
+    assert_eq!(
+        p.notes,
+        ["6 unlabelled channels taken as 5.1 with side surrounds: alac's layout for 6 channels"]
+    );
+    let p = plan(ChannelLayout::unpositioned(4).unwrap());
+    assert_eq!(*p.output.audio.layout(), ChannelLayout::from_name("4.0").unwrap());
+    assert_eq!(
+        p.notes,
+        ["4 unlabelled channels taken as 4.0: alac's layout for 4 channels"]
+    );
+    // ALAC's own layouts need no note.
+    assert!(plan(five_one).notes.is_empty());
 }
 
 #[test]
