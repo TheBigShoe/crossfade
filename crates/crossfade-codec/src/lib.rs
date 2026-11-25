@@ -9,6 +9,7 @@ pub mod alac_encode;
 pub mod flac;
 pub mod mp3;
 pub mod opus;
+pub mod opus_encode;
 pub mod pcm;
 pub mod vorbis;
 
@@ -22,6 +23,14 @@ pub struct EncodeOptions {
     /// FLAC: the true bit depth of samples carried left-justified in a wider container
     /// (`None`: the container's own width). Other codecs ignore it.
     pub bits_per_sample: Option<u8>,
+    /// Opus: bits per second for the whole stream (`None`: [`opus_encode::default_bitrate`]).
+    /// Other codecs ignore it.
+    pub bitrate: Option<u32>,
+    /// Opus: constant instead of variable bitrate. Other codecs ignore it.
+    pub constant_bitrate: bool,
+    /// Opus: the rate of the audio before it was brought to 48 kHz, recorded in the header
+    /// (`None`: 48000). It changes no sample. Other codecs ignore it.
+    pub input_sample_rate: Option<u32>,
 }
 
 /// What a thread count of 0 ("the machine's parallelism") stands for here.
@@ -108,6 +117,9 @@ pub fn encoder_for_threads(
     }
     if codec == CodecId::Alac {
         return alac_encode::encoder(spec, options);
+    }
+    if codec == CodecId::Opus {
+        return opus_encode::encoder(spec, options);
     }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),
