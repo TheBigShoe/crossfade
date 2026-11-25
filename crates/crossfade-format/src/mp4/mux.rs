@@ -17,6 +17,9 @@ const FTYP: &[u8; 28] = b"\0\0\0\x1cftypM4A \0\0\0\0M4A mp42isom";
 /// needs it (see [`mdat_header`]).
 const MDAT_AT: u64 = FTYP.len() as u64;
 const DATA_AT: u64 = MDAT_AT + 16;
+/// A chunk is closed once it holds this much: small enough to read in one go, large enough
+/// that the tables stay short.
+const CHUNK_BYTES: u64 = 1 << 20;
 
 struct Mp4Muxer {
     sink: Box<dyn MediaSink>,
@@ -27,6 +30,7 @@ struct Mp4Muxer {
     /// Where the next byte goes.
     pos: u64,
     sizes: Vec<u32>,
+    chunks: Chunks,
     /// `stts` as (samples, duration) runs.
     durations: Vec<(u32, u32)>,
     /// The first packet's pts, and where the next one must start, in frames.
@@ -54,12 +58,13 @@ pub fn create(
     if let Some(cookie) = &cookie {
         sample_entry::entry(stream, cookie)?;
     }
-    sink.seek(SeekFrom::Current(0)).map_err(|e| Error::Unsupported {
-        what: format!(
-            "mp4: writing needs an output that can seek, to fill in the size of mdat at the \
+    sink.seek(SeekFrom::Current(0))
+        .map_err(|e| Error::Unsupported {
+            what: format!(
+                "mp4: writing needs an output that can seek, to fill in the size of mdat at the \
              end ({e})"
-        ),
-    })?;
+            ),
+        })?;
     let ilst = ilst::write(tags)?;
     let mut head = FTYP.to_vec();
     head.extend_from_slice(&mdat_header(0)?);
@@ -71,6 +76,7 @@ pub fn create(
         cookie,
         pos: DATA_AT,
         sizes: Vec::new(),
+        chunks: Chunks::new(CHUNK_BYTES),
         durations: Vec::new(),
         start: None,
         next_pts: 0,
@@ -82,6 +88,7 @@ pub fn create(
 /// the room of both.
 pub(super) fn mdat_header(payload: u64) -> Result<[u8; 16], Error> {
     let mut out = [0u8; 16];
+    let total = payload.checked_add(16).ok_or_else(|| too_big(*b"mdat"))?;
     match u32::try_from(payload + 8) {
         Ok(size) => {
             out[..8].copy_from_slice(b"\0\0\0\x08free");
@@ -91,38 +98,85 @@ pub(super) fn mdat_header(payload: u64) -> Result<[u8; 16], Error> {
         Err(_) => {
             out[..4].copy_from_slice(&1u32.to_be_bytes());
             out[4..8].copy_from_slice(b"mdat");
-            out[8..].copy_from_slice(&(payload + 16).to_be_bytes());
+            out[8..].copy_from_slice(&total.to_be_bytes());
         }
     }
     Ok(out)
 }
 
 /// The samples' places in the file: runs of consecutive samples, each a chunk.
-#[derive(Default)]
 pub(super) struct Chunks {
+    limit: u64,
     offsets: Vec<u64>,
     counts: Vec<u32>,
+    /// Bytes in the last chunk.
+    open: u64,
 }
 
 impl Chunks {
     /// A new chunk starts once the open one holds `limit` bytes.
-    pub(super) fn new(_limit: u64) -> Self {
-        Self::default()
+    pub(super) fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            offsets: Vec::new(),
+            counts: Vec::new(),
+            open: 0,
+        }
     }
 
     /// Notes a sample of `size` bytes at `offset`, which follows the previous one.
-    pub(super) fn add(&mut self, _offset: u64, _size: u32) -> Result<(), Error> {
+    pub(super) fn add(&mut self, offset: u64, size: u32) -> Result<(), Error> {
+        let full = match self.counts.last() {
+            None => true,
+            Some(&n) => self.open >= self.limit || n == u32::MAX,
+        };
+        if full {
+            self.offsets.push(offset);
+            self.counts.push(0);
+            self.open = 0;
+        }
+        if let Some(n) = self.counts.last_mut() {
+            *n += 1;
+        }
+        self.open = self.open.saturating_add(u64::from(size));
         Ok(())
     }
 
     /// The `stsc` box: runs of chunks with the same sample count.
     pub(super) fn stsc(&self) -> Result<Vec<u8>, Error> {
-        Ok(Vec::new())
+        let mut rows = Vec::new();
+        let mut n = 0u32;
+        let mut last = 0;
+        for (i, &count) in self.counts.iter().enumerate() {
+            if count != last {
+                rows.extend_from_slice(&(i as u32 + 1).to_be_bytes());
+                rows.extend_from_slice(&count.to_be_bytes());
+                rows.extend_from_slice(&1u32.to_be_bytes());
+                n += 1;
+                last = count;
+            }
+        }
+        full(b"stsc", 0, 0, &[&table(n, &rows)])
     }
 
     /// `stco`, or `co64` when an offset needs more than 32 bits.
     pub(super) fn offsets(&self) -> Result<Vec<u8>, Error> {
-        Ok(Vec::new())
+        let count = u32::try_from(self.offsets.len()).map_err(|_| too_big(*b"stco"))?;
+        let wide = self.offsets.iter().any(|&o| o > u64::from(u32::MAX));
+        let mut rows = Vec::new();
+        for &o in &self.offsets {
+            if wide {
+                rows.extend_from_slice(&o.to_be_bytes());
+            } else {
+                rows.extend_from_slice(&(o as u32).to_be_bytes());
+            }
+        }
+        full(
+            if wide { b"co64" } else { b"stco" },
+            0,
+            0,
+            &[&table(count, &rows)],
+        )
     }
 }
 
@@ -154,30 +208,26 @@ impl Mp4Muxer {
             rows.extend_from_slice(&n.to_be_bytes());
             rows.extend_from_slice(&d.to_be_bytes());
         }
-        let stts = full(b"stts", 0, 0, &[&table(self.durations.len() as u32, &rows)])?;
-        let count = u32::try_from(self.sizes.len()).map_err(|_| too_big(*b"stsz"))?;
-        let stsc = full(
-            b"stsc",
-            0,
-            0,
-            &[&table(
-                1,
-                &[
-                    &1u32.to_be_bytes()[..],
-                    &count.to_be_bytes(),
-                    &1u32.to_be_bytes(),
-                ]
-                .concat(),
-            )],
-        )?;
+        // A run is at least one sample, and `write_packet` keeps the samples under 2^32.
+        let runs = self.durations.len() as u32;
+        let stts = full(b"stts", 0, 0, &[&table(runs, &rows)])?;
+        let count = self.sizes.len() as u32;
         let mut sizes = 0u32.to_be_bytes().to_vec();
         sizes.extend_from_slice(&count.to_be_bytes());
         for s in &self.sizes {
             sizes.extend_from_slice(&s.to_be_bytes());
         }
         let stsz = full(b"stsz", 0, 0, &[&sizes])?;
-        let stco = full(b"stco", 0, 0, &[&table(1, &(DATA_AT as u32).to_be_bytes())])?;
-        boxed(b"stbl", &[&stsd, &stts, &stsc, &stsz, &stco])
+        boxed(
+            b"stbl",
+            &[
+                &stsd,
+                &stts,
+                &self.chunks.stsc()?,
+                &stsz,
+                &self.chunks.offsets()?,
+            ],
+        )
     }
 
     /// The timeline the packets and the stream's length make; a length they cannot back is an
@@ -309,9 +359,13 @@ impl Muxer for Mp4Muxer {
             }
             _ => {}
         }
+        if self.sizes.len() >= u32::MAX as usize {
+            return Err(too_big(*b"stsz"));
+        }
         let size = u32::try_from(packet.data.len()).map_err(|_| too_big(*b"mdat"))?;
         let duration = u32::try_from(packet.duration).map_err(|_| too_big(*b"stts"))?;
         self.sink.write_all(&packet.data)?;
+        self.chunks.add(self.pos, size)?;
         self.pos = self
             .pos
             .checked_add(u64::from(size))
