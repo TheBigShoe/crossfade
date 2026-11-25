@@ -379,7 +379,11 @@ fn low_rate_hybrid_codes_weak_transients_as_long_blocks_unless_voiced() {
     for (i, v) in pcm.iter_mut().enumerate() {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         let r = ((seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
-        *v = if i >= 2 * 960 + 500 { 0.2 * r } else { 0.05 * r };
+        *v = if i >= 2 * 960 + 500 {
+            0.2 * r
+        } else {
+            0.05 * r
+        };
     }
     let flags = |signal_type| {
         let f = hybrid(960, 1, 21, signal_type, 100);

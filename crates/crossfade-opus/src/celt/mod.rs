@@ -101,7 +101,7 @@ mod test_util;
 mod vq;
 
 pub(crate) use decoder::CeltDecoder;
-pub(crate) use encoder::{CeltEncodeFrame, CeltEncoder, DELAY as CELT_DELAY};
+pub(crate) use encoder::{CeltEncodeFrame, CeltEncoder, DELAY as CELT_DELAY, SilkInfo};
 /// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
 pub(crate) use tables::{OVERLAP, WINDOW};
 

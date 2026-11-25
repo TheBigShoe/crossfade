@@ -4,7 +4,7 @@
 //! the lookahead the same once SILK and hybrid join), the rate-dependent stereo and
 //! bandwidth decisions, CBR and VBR, the TOC byte and code-0 packets.
 
-use crate::celt::{CELT_DELAY, CeltEncodeFrame, CeltEncoder, OVERLAP, WINDOW};
+use crate::celt::{CELT_DELAY, CeltEncodeFrame, CeltEncoder, OVERLAP, SilkInfo, WINDOW};
 use crate::error::{Error, Result};
 use crate::range_enc::RangeEncoder;
 
@@ -335,6 +335,7 @@ impl Encoder {
             bitrate: vbr.then_some(bitrate),
             vbr,
             constrained_vbr: self.config.constrained_vbr,
+            silk_info: SilkInfo::default(),
         };
         let len = self.celt.encode(&pcm_buf[..n * ch], &frame, &mut enc)?;
         self.final_range = self.celt.final_range();
