@@ -72,7 +72,7 @@ fn any_bytes_decode_without_panic() {
 #[test]
 fn encode_writes_the_reference_symbol_and_clamps_the_value() {
     for (fs, decay) in [(72 << 7, 127 << 6), (24 << 7, 179 << 6), (192 << 7, 6 << 6)] {
-        let mut enc = crate::RangeEncoder::new(400);
+        let mut enc = RangeEncoder::new(400);
         let mut ops = vec![];
         let mut want = vec![];
         for val in (-40..40).chain([-20000, 20000]) {
