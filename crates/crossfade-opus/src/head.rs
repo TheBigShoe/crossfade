@@ -127,6 +127,24 @@ impl OpusHead {
         })
     }
 
+    /// The header packet (`OpusHead`, version 1 whatever `version` says): family 0 with no
+    /// table, other families with their stream counts and table.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut h = b"OpusHead".to_vec();
+        h.push(1);
+        h.push(self.channels);
+        h.extend(self.pre_skip.to_le_bytes());
+        h.extend(self.input_sample_rate.to_le_bytes());
+        h.extend(self.output_gain.to_le_bytes());
+        h.push(self.mapping.family);
+        if self.mapping.family != 0 {
+            h.push(self.mapping.streams);
+            h.push(self.mapping.coupled);
+            h.extend_from_slice(&self.mapping.table);
+        }
+        h
+    }
+
     /// The output gain in dB.
     pub fn output_gain_db(&self) -> f64 {
         f64::from(self.output_gain) / 256.0

@@ -99,6 +99,7 @@ fn quantised_energies_are_what_the_decoder_reads_back() {
                         nb_available_bytes: storage as i32,
                         force_intra: frame == 0,
                         two_pass,
+                        lfe: false,
                     };
                     quant_coarse_energy(
                         &coarse,

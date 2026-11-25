@@ -1,19 +1,31 @@
 #![no_main]
-//! The Opus encoder on any config and any PCM bits (NaN and infinities included), with
-//! resets: never a panic; every packet parses, lasts one frame, and decodes with the
-//! encoder's final range. The input: channels, bitrate, VBR flags and frame duration from
-//! the first bytes, then frames of raw `f32` bits, a reset between some.
+//! The Opus encoders on any config and any PCM bits (NaN and infinities included), with
+//! bitrate changes and resets: never a panic; every packet parses, lasts one frame, and
+//! decodes with the encoder's final range (every stream's, for a multistream packet). The
+//! input: channels (1 to 8; from 3, or by a flag, the multistream encoder), bitrate, VBR,
+//! frame duration (2.5 to 60 ms), signal, application, a forced mode and bandwidth, FEC,
+//! loss and DTX from the first bytes, then frames of raw `f32` bits, a reset or a new
+//! bitrate between some.
 
 use arbitrary::{Arbitrary, Unstructured};
-use crossfade_opus::{Decoder, Encoder, EncoderConfig, FrameDuration, Packet};
+use crossfade_opus::{
+    Application, Bandwidth, Decoder, Encoder, EncoderConfig, FrameDuration, Mode,
+    MultistreamDecoder, MultistreamEncoder, Packet, Signal,
+};
 use libfuzzer_sys::fuzz_target;
+
+enum Enc {
+    One(Encoder, Decoder),
+    Multi(MultistreamEncoder, MultistreamDecoder),
+}
 
 fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
-    let (Ok(channels), Ok(bitrate), Ok(flags)) = (
-        u.int_in_range(1u8..=2),
+    let (Ok(channels), Ok(bitrate), Ok(flags), Ok(more)) = (
+        u.int_in_range(1u8..=8),
         u.int_in_range(1u32..=700_000),
         u8::arbitrary(&mut u),
+        u16::arbitrary(&mut u),
     ) else {
         return;
     };
@@ -22,26 +34,71 @@ fuzz_target!(|data: &[u8]| {
     config.bitrate = bitrate;
     config.vbr = flags & 1 != 0;
     config.constrained_vbr = flags & 2 != 0;
-    config.frame_duration = match (flags >> 2) & 3 {
+    config.frame_duration = match (flags >> 2) & 7 {
         0 => FrameDuration::Ms2_5,
         1 => FrameDuration::Ms5,
         2 => FrameDuration::Ms10,
-        _ => FrameDuration::Ms20,
+        3 | 6 => FrameDuration::Ms20,
+        4 => FrameDuration::Ms40,
+        _ => FrameDuration::Ms60,
     };
-    let mut enc = Encoder::new(&config).unwrap();
-    let mut dec = Decoder::new(usize::from(channels)).unwrap();
-    let samples = enc.frame_size() * usize::from(channels);
-    let mut pcm = vec![0.0f32; samples];
+    config.signal = [Signal::Auto, Signal::Voice, Signal::Music, Signal::Auto][usize::from(more & 3)];
+    if more & 4 != 0 {
+        config.application = Application::Voip;
+    }
+    config.mode = [None, Some(Mode::Silk), Some(Mode::Hybrid), Some(Mode::Celt)]
+        [usize::from((more >> 3) & 3)];
+    config.bandwidth = [
+        None,
+        Some(Bandwidth::Narrow),
+        Some(Bandwidth::Medium),
+        Some(Bandwidth::Wide),
+        Some(Bandwidth::SuperWide),
+        Some(Bandwidth::Full),
+        None,
+        None,
+    ][usize::from((more >> 5) & 7)];
+    config.inband_fec = more & 0x100 != 0;
+    config.packet_loss_percent = ((more >> 9) & 0x1f) as u8 * 3;
+    config.dtx = more & 0x4000 != 0;
+    let ch = usize::from(channels);
+    let multi = channels > 2 || flags & 0x80 != 0;
+    let mut coder = if multi {
+        let enc = MultistreamEncoder::new(&config, if channels > 2 { 1 } else { 0 }).unwrap();
+        let head = enc.head(48_000);
+        assert_eq!(crossfade_opus::OpusHead::parse(&head.to_bytes()).unwrap(), head);
+        let dec = MultistreamDecoder::new(&head.mapping, ch).unwrap();
+        Enc::Multi(enc, dec)
+    } else {
+        Enc::One(Encoder::new(&config).unwrap(), Decoder::new(ch).unwrap())
+    };
+    let n = config.frame_duration.samples();
+    let mut pcm = vec![0.0f32; n * ch];
     let mut packet = vec![];
     let mut out = vec![];
-    for _ in 0..16 {
+    for _ in 0..12 {
         let Ok(ctl) = u8::arbitrary(&mut u) else {
             break;
         };
         if ctl == 0 {
-            enc.reset();
-            dec.reset();
+            match &mut coder {
+                Enc::One(e, d) => {
+                    e.reset();
+                    d.reset();
+                }
+                Enc::Multi(e, d) => {
+                    e.reset();
+                    d.reset();
+                }
+            }
             continue;
+        }
+        if ctl & 0xC0 == 0xC0 {
+            let b = u.int_in_range(1u32..=700_000).unwrap_or(64_000);
+            match &mut coder {
+                Enc::One(e, _) => e.set_bitrate(b).unwrap(),
+                Enc::Multi(e, _) => e.set_bitrate(b).unwrap(),
+            }
         }
         // Raw bits where the input has them, a scaled ramp after.
         for (i, s) in pcm.iter_mut().enumerate() {
@@ -51,12 +108,20 @@ fuzz_target!(|data: &[u8]| {
                 Err(_) => (i as f32 * 0.01).sin() * f32::from(ctl) / 64.0,
             };
         }
-        enc.encode(&pcm, &mut packet).unwrap();
-        let parsed = Packet::parse(&packet).unwrap();
-        assert_eq!(parsed.duration(), enc.frame_size());
         out.clear();
-        assert_eq!(dec.decode(Some(&packet), &mut out).unwrap(), enc.frame_size());
-        assert_eq!(dec.final_range(), enc.final_range());
+        match &mut coder {
+            Enc::One(e, d) => {
+                e.encode(&pcm, &mut packet).unwrap();
+                assert_eq!(Packet::parse(&packet).unwrap().duration(), n);
+                assert_eq!(d.decode(Some(&packet), &mut out).unwrap(), n);
+                assert_eq!(d.final_range(), e.final_range());
+            }
+            Enc::Multi(e, d) => {
+                e.encode(&pcm, &mut packet).unwrap();
+                assert_eq!(d.decode(Some(&packet), &mut out).unwrap(), n);
+                assert_eq!(d.final_ranges(), e.final_ranges());
+            }
+        }
         assert!(out.iter().all(|s| s.is_finite()));
     }
 });
