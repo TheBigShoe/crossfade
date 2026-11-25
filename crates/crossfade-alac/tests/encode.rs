@@ -252,3 +252,59 @@ fn bad_packets_are_refused_and_change_nothing() {
     let mut full = Encoder::new(config(32, 1, 2)).unwrap();
     assert_eq!(full.encode(&[i32::MIN, i32::MAX], &mut out), Ok(()));
 }
+
+/// The bytes of a packet of uncompressed elements: per element a tag, an instance tag, the
+/// header and a short frame's length, then every sample at the full depth; END, and padding.
+fn escape_bytes(depth: u8, channels: u8, frames: usize, partial: bool) -> usize {
+    let elements = [1, 1, 2, 3, 3, 4, 5, 5][usize::from(channels) - 1];
+    let header = 3 + 4 + 16 + if partial { 32 } else { 0 };
+    let bits = elements * header + frames * usize::from(channels) * usize::from(depth) + 3;
+    bits.div_ceil(8)
+}
+
+#[test]
+fn no_packet_is_larger_than_its_uncompressed_form() {
+    for depth in [16, 20, 24, 32] {
+        for channels in 1..=8 {
+            for (name, pcm) in signals(depth, channels, 1024 + 100) {
+                let (packets, _) = round_trip(config(depth, channels, 1024), &pcm);
+                let raw = [
+                    escape_bytes(depth, channels, 1024, false),
+                    escape_bytes(depth, channels, 100, true),
+                ];
+                for (p, raw) in packets.iter().zip(raw) {
+                    assert!(p.len() <= raw, "{name} {depth} {channels}: {}", p.len());
+                    if name == "noise" {
+                        assert_eq!(p.len(), raw, "{name} {depth} {channels}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn silence_codes_as_a_run_of_zeros() {
+    for depth in [16, 20, 24, 32] {
+        let (packets, _) = round_trip(config(depth, 1, 4096), &[0; 4096]);
+        assert!(packets[0].len() <= 24, "{depth}: {}", packets[0].len());
+    }
+}
+
+#[test]
+fn a_single_channel_compresses() {
+    // The share of the raw size a smooth sine takes; the low bits of 24- and 32-bit samples
+    // are mostly passed through.
+    for (depth, share) in [(16, 0.25), (20, 0.4), (24, 0.5), (32, 0.75)] {
+        let pcm = signal::sine(4096 * 3, depth, 0.013, 0.9);
+        let (packets, _) = round_trip(config(depth, 1, 4096), &pcm);
+        let raw = escape_bytes(depth, 1, 4096, false) as f64;
+        for p in &packets {
+            assert!(
+                (p.len() as f64) < raw * share,
+                "{depth}: {} of {raw}",
+                p.len()
+            );
+        }
+    }
+}
