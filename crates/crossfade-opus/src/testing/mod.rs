@@ -6,8 +6,8 @@
 //!   quality figure Q.
 //! - [`ogg`]: Ogg Opus files (RFC 7845) made in code: headers, seeded packets, pages.
 //! - [`packet_writer`]: Opus packets from their parts (RFC 6716 section 3, Appendix B).
-//! - [`range_encoder`]: the range encoder (RFC 6716 section 5.1), to write what the decoder
-//!   reads.
+//! - [`range_encoder`]: range-coded test streams as lists of operations (the encoder itself is
+//!   [`crate::range_enc`]).
 //! - [`vectors`]: a test vector decoded as `opus_demo` does, the final range checked per
 //!   packet.
 
