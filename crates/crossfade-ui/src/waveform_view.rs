@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crossfade_app::analysis::{Analyzer, Snapshot, State};
 use crossfade_app::player::{Follow, Player, State as PlayState, transport_text};
 use crossfade_app::strip::{Strip, Wake};
-use crossfade_app::waveview::{Lane, LanePlan, WaveView, readout};
+use crossfade_app::waveview::{Lane, LanePlan, Segment, WaveView, readout};
 use crossfade_core::Limits;
 
 use crate::actions::{
@@ -764,23 +764,41 @@ impl WaveformStrip {
             }));
 
         let line = readout(snapshot);
+        // A figure keeps the separator before it, so the line breaks between figures. Right
+        // aligned but never clipped at its left, where "−12.7" would read as "12.7": it wraps,
+        // and a figure wider than the whole line truncates at its right.
+        let mut groups: Vec<Vec<(usize, Segment)>> = Vec::new();
+        for (n, segment) in line.segments.into_iter().enumerate() {
+            if n % 2 == 1 || groups.is_empty() {
+                groups.push(Vec::new());
+            }
+            if let Some(group) = groups.last_mut() {
+                group.push((n, segment));
+            }
+        }
         let readout_line = h_flex()
             .id("waveform-readout")
             .test_support()
             .flex_1()
             .min_w_0()
+            .flex_wrap()
             .justify_end()
-            .overflow_hidden()
-            .h(LINE_HEIGHT)
             .line_height(LINE_HEIGHT)
             .text_size(LABEL_SIZE)
-            .children(line.segments.into_iter().enumerate().map(|(n, segment)| {
-                div()
-                    .id(("waveform-readout-segment", n))
-                    .test_support()
-                    .whitespace_nowrap()
-                    .text_color(if segment.warn { warning } else { muted })
-                    .child(SharedString::from(segment.text))
+            .children(groups.into_iter().map(|group| {
+                h_flex()
+                    .flex_none()
+                    .max_w_full()
+                    .overflow_hidden()
+                    .children(group.into_iter().map(|(n, segment)| {
+                        div()
+                            .id(("waveform-readout-segment", n))
+                            .test_support()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if segment.warn { warning } else { muted })
+                            .child(SharedString::from(segment.text))
+                    }))
             }));
         let under = h_flex()
             .w_full()
