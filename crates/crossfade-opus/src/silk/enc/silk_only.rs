@@ -1,5 +1,5 @@
 //! SILK-only Opus packets from the SILK encoder, for tests (re-exported as
-//! `testing::silk_encoder` until the crate has a public encoder): one frame per packet, the
+//! `testing::silk_encoder`, the SILK layer alone for its own tests): one frame per packet, the
 //! TOC chosen from the internal rate SILK reports, the payload ended as libopus ends a
 //! SILK-only frame.
 

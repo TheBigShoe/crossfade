@@ -1089,7 +1089,6 @@ impl CeltEncoder {
 
     /// `CELT_SET_PREDICTION`: 2 (the default) predicts freely; 1 turns the pitch pre-filter
     /// off; 0 also codes every frame's energy intra, so that each frame decodes alone.
-    #[cfg_attr(not(test), allow(dead_code))] // for the hybrid encoder's mode switches
     pub(crate) fn set_prediction(&mut self, prediction: u8) {
         self.disable_pf = prediction <= 1;
         self.force_intra = prediction == 0;
