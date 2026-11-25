@@ -259,15 +259,20 @@ fn small(tags: &Tags, key: &str) -> Option<(usize, u16)> {
         .and_then(|(i, t)| Some((i, t.value.parse::<u16>().ok().filter(|&n| n != 0)?)))
 }
 
-/// The `trkn` or `disk` item for the first usable number and total, and the indices of the
-/// tags it takes.
+/// A `trkn` or `disk` item and the indices of the tags it takes.
+struct Pair {
+    item: Vec<u8>,
+    taken: [Option<usize>; 2],
+}
+
+/// The `trkn` or `disk` item for the first usable number and total.
 fn pair_item(
     tags: &Tags,
     kind: &FourCc,
     number: &str,
     total: &str,
     trailer: &[u8],
-) -> Result<Option<(Vec<u8>, [Option<usize>; 2])>, Error> {
+) -> Result<Option<Pair>, Error> {
     let (n, t) = (small(tags, number), small(tags, total));
     if n.is_none() && t.is_none() {
         return Ok(None);
@@ -277,7 +282,10 @@ fn pair_item(
     payload.extend_from_slice(&t.map_or(0, |(_, v)| v).to_be_bytes());
     payload.extend_from_slice(trailer);
     let item = boxed(kind, &[&data_box(0, &payload)?])?;
-    Ok(Some((item, [n.map(|x| x.0), t.map(|x| x.0)])))
+    Ok(Some(Pair {
+        item,
+        taken: [n.map(|x| x.0), t.map(|x| x.0)],
+    }))
 }
 
 /// An `ilst` body holding `tags`, the inverse of [`parse`]: items in the tags' order, one per
@@ -291,9 +299,9 @@ pub(super) fn write(tags: &Tags) -> Result<Vec<u8>, Error> {
     ];
     let mut out = Vec::new();
     for (i, tag) in tags.iter().enumerate() {
-        if let Some((item, used)) = pairs.iter().flatten().find(|(_, u)| u.contains(&Some(i))) {
-            if used.iter().flatten().min() == Some(&i) {
-                out.extend_from_slice(item);
+        if let Some(pair) = pairs.iter().flatten().find(|p| p.taken.contains(&Some(i))) {
+            if pair.taken.iter().flatten().min() == Some(&i) {
+                out.extend_from_slice(&pair.item);
             }
             continue;
         }
