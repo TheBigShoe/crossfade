@@ -840,6 +840,10 @@ impl ConvertSheet {
                 "FLAC"
             };
             format!("{name} can store up to 8 channels; this file has {channels}.")
+        } else if what.starts_with("alac stores") {
+            // The rest is advice about a matrix, which the sheet has no way to give.
+            let problem = what.split("; ").next().unwrap_or(&what);
+            plain(&problem.replacen("alac", "Apple Lossless", 1))
         } else {
             plain(&what.replacen("alac", "Apple Lossless", 1))
         };
