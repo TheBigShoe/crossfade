@@ -118,6 +118,7 @@ fn presets_map_to_formats_and_back() {
             ("flac-24", "FLAC 24-bit"),
             ("aiff", "AIFF"),
             ("alac", "Apple Lossless"),
+            ("opus", "Opus"),
         ]
     );
     let mut s = sheet("a.wav");
@@ -330,7 +331,7 @@ fn typing_a_writable_extension_switches_the_container() {
     assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
+        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .opus, .m4a, .mp4 and .m4b files."
     );
 }
 

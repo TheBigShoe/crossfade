@@ -16,6 +16,7 @@ mod two_pass;
 mod validate;
 
 pub use choice::{can_hold, can_write, encode_options, output_codec, writable_extensions};
+pub use crossfade_codec::opus_encode::default_bitrate as default_opus_bitrate;
 pub use crossfade_core::JobIo;
 pub use crossfade_dsp::dither::Dither;
 pub use decode::decode_frames;

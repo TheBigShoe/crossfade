@@ -5,7 +5,7 @@
 
 use crate::command::Request;
 use crate::inputs::InputEntry;
-use crossfade_core::{Error, SampleFormat, StreamInfo};
+use crossfade_core::{CodecId, Error, SampleFormat, StreamInfo};
 use crossfade_graph::filter::{Channels, FilterSpec, parse_channels};
 use crossfade_graph::{
     AudioSettings, Job, JobInput, JobOutput, describe, validate, writable_extensions,
@@ -33,15 +33,18 @@ pub enum Container {
     OggFlac,
     /// Apple Lossless in MP4, `.m4a`.
     Mp4,
+    /// Opus in Ogg, `.opus`.
+    Opus,
 }
 
 impl Container {
-    pub const ALL: [Container; 5] = [
+    pub const ALL: [Container; 6] = [
         Container::Wav,
         Container::Flac,
         Container::Aiff,
         Container::OggFlac,
         Container::Mp4,
+        Container::Opus,
     ];
 
     pub fn label(self) -> &'static str {
@@ -51,6 +54,7 @@ impl Container {
             Self::Aiff => "AIFF",
             Self::OggFlac => "Ogg FLAC",
             Self::Mp4 => "Apple Lossless",
+            Self::Opus => "Opus",
         }
     }
 
@@ -62,12 +66,18 @@ impl Container {
             Self::Aiff => "aiff",
             Self::OggFlac => "oga",
             Self::Mp4 => "m4a",
+            Self::Opus => "opus",
         }
     }
 
     /// FLAC's compression level applies to both containers that hold FLAC.
     fn has_level(self) -> bool {
         matches!(self, Self::Flac | Self::OggFlac)
+    }
+
+    /// Opus is the one container with a bitrate.
+    fn has_bitrate(self) -> bool {
+        self == Self::Opus
     }
 
     /// The container an extension names, if the engine can write it.
@@ -81,6 +91,7 @@ impl Container {
             "flac" => Some(Self::Flac),
             "oga" | "ogg" => Some(Self::OggFlac),
             "m4a" | "mp4" | "m4b" => Some(Self::Mp4),
+            "opus" => Some(Self::Opus),
             "aiff" | "aif" | "aifc" => Some(Self::Aiff),
             _ => None,
         }
@@ -156,6 +167,7 @@ pub const PRESETS: &[Preset] = &[
         Container::Mp4,
         FormatChoice::SameAsSource,
     ),
+    preset("opus", "Opus", Container::Opus, FormatChoice::SameAsSource),
 ];
 
 /// FLAC's highest level.
@@ -228,6 +240,7 @@ pub struct ConvertSheet {
     // What the user asked for; `format()` is what the container can hold of it.
     requested: FormatChoice,
     level: Option<u8>,
+    bitrate: Option<u32>,
     copy: bool,
     overwrite: bool,
     sample_rate: Option<u32>,
@@ -235,6 +248,12 @@ pub struct ConvertSheet {
     adjust: Adjust,
     adjust_open: bool,
 }
+
+/// The one rate Opus is written at.
+const OPUS_RATE: u32 = 48_000;
+
+/// The bitrates the sheet offers for Opus besides the default, in bits per second.
+const BITRATES: [u32; 7] = [32_000, 64_000, 96_000, 128_000, 160_000, 192_000, 256_000];
 
 /// The output rates the sheet offers besides the source's own.
 const RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
@@ -249,6 +268,7 @@ impl ConvertSheet {
             container: Container::Wav,
             requested: FormatChoice::SameAsSource,
             level: None,
+            bitrate: None,
             copy: false,
             overwrite: false,
             sample_rate: None,
@@ -331,6 +351,9 @@ impl ConvertSheet {
 
     /// What will be written: the requested format, or the closest one the container holds.
     pub fn format(&self) -> FormatChoice {
+        if self.container == Container::Opus {
+            return FormatChoice::SameAsSource;
+        }
         if self.accepts(self.container, self.requested) {
             return self.requested;
         }
@@ -368,6 +391,25 @@ impl ConvertSheet {
         self.container
     }
 
+    /// What `container` is called on this sheet: Ogg is FLAC's unless the stream copy carries
+    /// something else (an Opus stream) into it.
+    pub fn container_label(&self, container: Container) -> &'static str {
+        let copies_other = self.copy()
+            && self
+                .stream
+                .as_ref()
+                .is_some_and(|s| s.codec != CodecId::Flac);
+        if container == Container::OggFlac && copies_other {
+            return "Ogg";
+        }
+        container.label()
+    }
+
+    /// Opus has no sample format to choose: it always codes from float.
+    pub fn format_visible(&self) -> bool {
+        self.container != Container::Opus || self.copy()
+    }
+
     pub fn set_container(&mut self, container: Container) {
         self.adopt(container);
         self.refresh_output();
@@ -378,6 +420,12 @@ impl ConvertSheet {
         self.container = container;
         if !container.has_level() {
             self.level = None;
+        }
+        if !container.has_bitrate() {
+            self.bitrate = None;
+        }
+        if container == Container::Opus && self.sample_rate.is_some_and(|r| r != OPUS_RATE) {
+            self.sample_rate = None;
         }
         if !self.copy_available() {
             self.copy = false;
@@ -413,6 +461,57 @@ impl ConvertSheet {
     pub fn set_format(&mut self, format: FormatChoice) {
         self.requested = format;
         self.refresh_output();
+    }
+
+    /// Opus's bitrate in bits per second; `None` is the codec's default for the channel count.
+    pub fn bitrate(&self) -> Option<u32> {
+        self.bitrate
+    }
+
+    pub fn bitrate_visible(&self) -> bool {
+        self.container.has_bitrate() && !self.copy()
+    }
+
+    pub fn bitrate_enabled(&self) -> bool {
+        self.bitrate_visible() && self.can_save()
+    }
+
+    pub fn set_bitrate(&mut self, bitrate: Option<u32>) {
+        if self.container.has_bitrate() {
+            self.bitrate = bitrate;
+        }
+    }
+
+    /// The default plus the offered bitrates.
+    pub fn bitrate_options(&self) -> Vec<Option<u32>> {
+        std::iter::once(None).chain(BITRATES.map(Some)).collect()
+    }
+
+    /// Channels the output will have, as far as Opus's default bitrate cares: one or two.
+    fn output_channels(&self) -> u16 {
+        let own = self.stream.as_ref().map(|s| s.audio.layout().clone());
+        let channels = match (&self.channels, &own) {
+            (Some(c), Some(own)) => c.resolve(own).channels(),
+            (Some(Channels::Layout(l)), None) => l.channels(),
+            (Some(Channels::Count(n)), None) => *n,
+            (None, Some(own)) => own.channels(),
+            (None, None) => 2,
+        };
+        channels.clamp(1, 2)
+    }
+
+    /// `128 kb/s`; the default says what it is for this source.
+    pub fn bitrate_label(&self, bitrate: Option<u32>) -> String {
+        let kbps = |b: u32| format!("{} kb/s", b / 1000);
+        match bitrate {
+            Some(b) => kbps(b),
+            None => format!(
+                "Default ({})",
+                kbps(crossfade_graph::default_opus_bitrate(
+                    self.output_channels() as u8
+                ))
+            ),
+        }
     }
 
     /// FLAC's level, 0 to 8; `None` is the encoder's default.
@@ -498,6 +597,7 @@ impl ConvertSheet {
         } else {
             let level = self.level.filter(|_| self.container.has_level());
             AudioSettings {
+                bitrate: self.bitrate.filter(|_| self.container.has_bitrate()),
                 sample_rate: self.sample_rate,
                 channels: self.channels.clone(),
                 filters: self.adjust.resolve().filters,
@@ -518,8 +618,13 @@ impl ConvertSheet {
     /// The rates to choose from: the source's own is what "Same as source" means.
     pub fn rate_options(&self) -> Vec<Option<u32>> {
         let own = self.stream.as_ref().map(|s| s.audio.sample_rate());
+        let rates: &[u32] = if self.container == Container::Opus {
+            &[OPUS_RATE]
+        } else {
+            &RATES
+        };
         std::iter::once(None)
-            .chain(RATES.into_iter().filter(|r| Some(*r) != own).map(Some))
+            .chain(rates.iter().copied().filter(|r| Some(*r) != own).map(Some))
             .collect()
     }
 
@@ -646,22 +751,38 @@ impl ConvertSheet {
         (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
     }
 
-    /// What the engine says the job writes, when processing changes it and its values are
-    /// good.
-    fn processed_plan(&self) -> Option<crossfade_graph::OutputPlan> {
+    /// What the engine says the job writes, when its values are good: the plan the command line
+    /// prints the notes of.
+    fn plan(&self) -> Option<crossfade_graph::OutputPlan> {
         let stream = self.stream.as_ref()?;
-        let audio = self.audio();
-        let processed =
-            audio.sample_rate.is_some() || audio.channels.is_some() || !audio.filters.is_empty();
-        if self.copy() || !processed || !self.adjust_problems().is_empty() {
+        if self.copy() || !self.adjust_problems().is_empty() {
             return None;
         }
-        describe(stream, &format!("x.{}", self.container.extension()), &audio).ok()
+        describe(
+            stream,
+            &format!("x.{}", self.container.extension()),
+            &self.audio(),
+        )
+        .ok()
     }
 
-    /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1".
+    /// The plan, when processing changes what is written (asked for, or a rate the container
+    /// forces).
+    fn processed_plan(&self) -> Option<crossfade_graph::OutputPlan> {
+        let audio = self.audio();
+        let plan = self.plan()?;
+        let own_rate = self.stream.as_ref()?.audio.sample_rate();
+        let processed = audio.sample_rate.is_some()
+            || audio.channels.is_some()
+            || !audio.filters.is_empty()
+            || plan.output.audio.sample_rate() != own_rate;
+        processed.then_some(plan)
+    }
+
+    /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1" or "mp3
+    /// has no bit depth: writing 16-bit": the same notes the command line prints.
     pub fn notes(&self) -> Vec<String> {
-        self.processed_plan().map(|p| p.notes).unwrap_or_default()
+        self.plan().map(|p| p.notes).unwrap_or_default()
     }
 
     /// What will be written, when processing changes it: `48 kHz · mono · 16-bit · 1:20.000`.
@@ -680,7 +801,11 @@ impl ConvertSheet {
             format!("{bits}-bit")
         };
         let rate = out.audio.sample_rate();
-        let mut parts = vec![Self::rate_label(Some(rate)), layout, depth];
+        let mut parts = vec![Self::rate_label(Some(rate)), layout];
+        // A lossy codec has no depth to state.
+        if !out.codec.is_lossy() {
+            parts.push(depth);
+        }
         if let Some(frames) = out.frames {
             parts.push(clock_exact(frames as f64 / f64::from(rate)));
         }
@@ -695,7 +820,12 @@ impl ConvertSheet {
         };
         let stream = self.stream.as_ref()?;
         let channels = stream.audio.layout().channels();
-        let text = if what.contains("at most 8 channels") {
+        let text = if what.contains("surround opus") {
+            format!(
+                "Opus can store one or two channels; this file has {channels}. Choose Mono or \
+                 Stereo under Channels."
+            )
+        } else if what.contains("at most 8 channels") {
             let name = if self.container == Container::Mp4 {
                 "Apple Lossless"
             } else {
