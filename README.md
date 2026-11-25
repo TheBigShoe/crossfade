@@ -6,8 +6,9 @@ command line (`crossfade`) and a desktop app (`crossfade-gui`).
 Crossfade is early. It writes WAV, FLAC, AIFF, Ogg FLAC, Apple Lossless in M4A and Opus, and
 reads those and more lossy audio (MP3, AAC, Vorbis), with
 processing: sample rate and channel conversion, gain, loudness normalising,
-trim, fades and joining files. More lossy encoders (AAC, MP3, Vorbis) and video are planned. It has
-only been run on macOS so far.
+trim, fades and joining files. More lossy encoders (AAC, MP3, Vorbis) and video are planned. It is
+developed on macOS; its tests and conformance tier also pass on Linux x86-64, where the
+desktop app has been run on a virtual display only. Windows is untried.
 
 ## What works
 
