@@ -212,12 +212,20 @@ fn up_and_down_move_the_selection_and_stop_at_the_ends() {
     let selected = |i: &Inputs| i.selected().map(|e| e.name.clone());
     assert_eq!(selected(&inputs).as_deref(), Some("c.wav"));
     inputs.select_next();
-    assert_eq!(selected(&inputs).as_deref(), Some("c.wav"), "stays at the end");
+    assert_eq!(
+        selected(&inputs).as_deref(),
+        Some("c.wav"),
+        "stays at the end"
+    );
     inputs.select_previous();
     inputs.select_previous();
     assert_eq!(selected(&inputs).as_deref(), Some("a.wav"));
     inputs.select_previous();
-    assert_eq!(selected(&inputs).as_deref(), Some("a.wav"), "stays at the start");
+    assert_eq!(
+        selected(&inputs).as_deref(),
+        Some("a.wav"),
+        "stays at the start"
+    );
     inputs.select_next();
     assert_eq!(selected(&inputs).as_deref(), Some("b.wav"));
 }

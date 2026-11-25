@@ -22,6 +22,20 @@
     }
   },
   {
+    "context": "Files",
+    "bindings": {
+      "up": "crossfade::SelectPreviousFile",
+      "down": "crossfade::SelectNextFile"
+    }
+  },
+  {
+    // A focused button takes Space itself: playback does not.
+    "context": "Controls",
+    "bindings": {
+      "space": null
+    }
+  },
+  {
     "context": "Waveform",
     "bindings": {
       "+": "crossfade::WaveformZoomIn",

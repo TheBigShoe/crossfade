@@ -14,8 +14,8 @@ use crossfade_app::{FsIo, runner::ThreadRunner};
 use crossfade_core::{JobIo, Limits};
 
 use crate::actions::{
-    About, AppAction, Convert, OpenFiles, OpenKeymap, OpenSettings, PlaybackToEnd, PlaybackToStart,
-    Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
+    About, AppAction, CONTROLS_CONTEXT, Convert, OpenFiles, OpenKeymap, OpenSettings,
+    PlaybackToEnd, PlaybackToStart, Quit, TogglePlayback, ToggleQueue, WORKSPACE_CONTEXT,
 };
 use crate::chrome::{HEADER_HEIGHT, LABEL_SIZE, STATUS_HEIGHT, icon_button, toggle_button};
 use crate::config::{self, Config};
@@ -111,6 +111,8 @@ enum ConfigFile {
 /// The root view.
 pub struct Workspace {
     pub(crate) focus: FocusHandle,
+    /// The files list's, a Tab stop: Up and Down move the selection while it has focus.
+    pub(crate) files_focus: FocusHandle,
     last_action: Option<AppAction>,
     pub(crate) inputs: Inputs,
     /// The selected file's waveform and loudness, shown in the inspector.
@@ -207,6 +209,7 @@ impl Workspace {
         let strip = cx.new(|cx| WaveformStrip::new(Arc::clone(&io), audio, cx));
         Self {
             focus,
+            files_focus: cx.focus_handle().tab_stop(true),
             last_action: None,
             inputs: Inputs::new(),
             strip,
@@ -566,6 +569,7 @@ impl Workspace {
         let menu_focus = self.focus.clone();
         h_flex()
             .id("toolbar")
+            .key_context(CONTROLS_CONTEXT)
             .flex_none()
             .w_full()
             .h(HEADER_HEIGHT + px(8.))

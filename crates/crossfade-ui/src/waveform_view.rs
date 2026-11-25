@@ -178,7 +178,7 @@ impl WaveformStrip {
         };
         Self {
             strip: Strip::default(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             io,
             wake,
             sender,

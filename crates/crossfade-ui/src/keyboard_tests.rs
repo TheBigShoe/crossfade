@@ -53,16 +53,14 @@ fn up_and_down_move_the_files_selection_when_the_list_has_focus(cx: &mut TestApp
     press(cx, rig.window, "up");
     assert_eq!(selected(cx, &rig).as_deref(), Some("b.wav"));
     // The strip follows the selection, as a click does.
-    let shown = rig.workspace.read_with(cx, |w, cx| {
-        w.strip().read(cx).path().map(str::to_owned)
-    });
+    let shown = rig
+        .workspace
+        .read_with(cx, |w, cx| w.strip().read(cx).path().map(str::to_owned));
     assert!(shown.is_some_and(|p| p.ends_with("b.wav")));
 }
 
 #[gpui_test]
-fn space_on_a_focused_toolbar_button_presses_it_and_leaves_playback_alone(
-    cx: &mut TestAppContext,
-) {
+fn space_on_a_focused_toolbar_button_presses_it_and_leaves_playback_alone(cx: &mut TestAppContext) {
     let rig = three_files(cx);
     assert!(tab_to(cx, &rig, "toolbar-queue"), "Tab reaches the button");
     let open = rig.workspace.read_with(cx, |w, _| w.queue_open());

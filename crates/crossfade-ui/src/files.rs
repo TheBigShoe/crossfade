@@ -5,6 +5,7 @@ use crossfade_app::inputs::{InputEntry, InputState};
 use crossfade_app::inspector::{self, Section};
 use crossfade_graph::ProbeDocument;
 
+use crate::actions::{FILES_CONTEXT, SelectNextFile, SelectPreviousFile};
 use crate::chrome::{
     FILE_NAME_LINE, FILE_ROW_HEIGHT, INSPECTOR_ROW, LABEL_SIZE, TITLE_SIZE, icon_button,
     panel_header, section_label,
@@ -285,7 +286,10 @@ impl Workspace {
                                     .child(SharedString::from(summary(entry))),
                             ),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_input(id, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        window.focus(&this.files_focus, cx);
+                        this.select_input(id, cx);
+                    }))
             })
             .collect::<Vec<_>>();
         v_flex()
@@ -309,6 +313,19 @@ impl Workspace {
             .child(
                 v_flex()
                     .id("files-list")
+                    .test_support()
+                    .key_context(FILES_CONTEXT)
+                    .track_focus(&self.files_focus)
+                    .on_action(cx.listener(|this, _: &SelectPreviousFile, _, cx| {
+                        this.inputs.select_previous();
+                        this.sync_strip(cx);
+                        cx.notify();
+                    }))
+                    .on_action(cx.listener(|this, _: &SelectNextFile, _, cx| {
+                        this.inputs.select_next();
+                        this.sync_strip(cx);
+                        cx.notify();
+                    }))
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()

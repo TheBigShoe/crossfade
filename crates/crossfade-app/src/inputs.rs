@@ -125,6 +125,29 @@ impl Inputs {
         }
     }
 
+    /// The entry after the selected one, staying on the last.
+    pub fn select_next(&mut self) {
+        self.step(1);
+    }
+
+    /// The entry before the selected one, staying on the first.
+    pub fn select_previous(&mut self) {
+        self.step(-1);
+    }
+
+    fn step(&mut self, by: isize) {
+        let at = self
+            .selected
+            .and_then(|id| self.entries.iter().position(|e| e.id == id));
+        let to = match at {
+            Some(at) => at
+                .saturating_add_signed(by)
+                .min(self.entries.len().saturating_sub(1)),
+            None => 0,
+        };
+        self.selected = self.entries.get(to).map(|e| e.id);
+    }
+
     pub fn selected(&self) -> Option<&InputEntry> {
         let id = self.selected?;
         self.entries.iter().find(|e| e.id == id)

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crossfade_app::queue::{JobId, JobState, QueueItem};
 
+use crate::actions::CONTROLS_CONTEXT;
 use crate::chrome::{LABEL_SIZE, icon_button, panel_header};
 use crate::prelude::*;
 use crate::workspace::Workspace;
@@ -212,6 +213,7 @@ impl Workspace {
         v_flex()
             .id("queue-dock")
             .test_support()
+            .key_context(CONTROLS_CONTEXT)
             .flex_none()
             .w(DOCK_WIDTH)
             .h_full()
