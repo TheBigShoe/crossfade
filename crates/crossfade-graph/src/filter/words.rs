@@ -166,3 +166,9 @@ pub fn parse_channels(s: &str) -> Result<Channels, FilterError> {
     c.check().map_err(|m| FilterError::at(s, m))?;
     Ok(c)
 }
+
+/// A bitrate such as `128k`, `96000`, `64kbps` or `64kb/s` (what `--bitrate` takes), in bits
+/// per second.
+pub fn parse_bitrate(s: &str) -> Result<u32, FilterError> {
+    Err(FilterError::at(s, "not implemented"))
+}

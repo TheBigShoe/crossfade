@@ -18,8 +18,8 @@ pub use plan::{plan, plan_at};
 pub use crossfade_dsp::filters::fade::Curve;
 pub use crossfade_dsp::filters::resample::Quality;
 pub use words::{
-    MAX_CHANNELS, MAX_RATE, MAX_SECONDS, parse_channels, parse_db, parse_dbtp, parse_lufs,
-    parse_rate, parse_time,
+    MAX_CHANNELS, MAX_RATE, MAX_SECONDS, parse_bitrate, parse_channels, parse_db, parse_dbtp,
+    parse_lufs, parse_rate, parse_time,
 };
 
 use crossfade_core::ChannelLayout;
