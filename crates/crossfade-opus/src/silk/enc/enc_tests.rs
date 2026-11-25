@@ -321,3 +321,54 @@ fn the_encoders_reconstruction_is_the_decoders_output() {
         }
     }
 }
+
+/// Random 16-bit input of a few shapes: white, bursts, a square wave, extremes.
+fn random_input(seed: u32, shape: u8, amp: i32, len: usize) -> Vec<i16> {
+    let n = noise(len, seed, amp.max(1));
+    match shape % 4 {
+        0 => n,
+        1 => n
+            .iter()
+            .enumerate()
+            .map(|(i, &x)| if (i / 480) % 3 == 0 { x } else { 0 })
+            .collect(),
+        2 => (0..len)
+            .map(|i| {
+                if (i / (37 + seed as usize % 200)) % 2 == 0 {
+                    amp as i16
+                } else {
+                    -(amp as i16)
+                }
+            })
+            .collect(),
+        _ => n
+            .iter()
+            .map(|&x| if x >= 0 { i16::MAX } else { i16::MIN })
+            .collect(),
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, ..Default::default() })]
+
+    /// Any configuration, any input: no panic, and every packet decodes with the encoder's
+    /// final range.
+    #[test]
+    fn any_input_and_config_make_decodable_packets(
+        channels in 1usize..=2,
+        khz in proptest::sample::select(vec![8, 12, 16]),
+        ms in proptest::sample::select(vec![10, 20, 40, 60]),
+        bitrate in 5_000i32..80_000,
+        complexity in 0i32..=10,
+        cbr: bool,
+        seed: u32,
+        shape: u8,
+        amp in 0i32..=32767,
+    ) {
+        let cfg = Cfg { channels, khz, ms, bitrate, complexity, cbr };
+        let len = 3 * 48 * ms as usize * channels;
+        let x = random_input(seed, shape, amp, len);
+        let coded = encode(cfg, &x);
+        decode_checked(cfg, &coded);
+    }
+}
