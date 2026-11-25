@@ -75,6 +75,7 @@ mod bands_enc;
 mod cwrs;
 mod decoder;
 mod ec;
+mod encoder;
 mod fft;
 mod laplace;
 mod lpc;
