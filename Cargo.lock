@@ -1632,6 +1632,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossfade-ffi"
+version = "0.0.0"
+dependencies = [
+ "crossfade-app",
+ "crossfade-cli",
+ "crossfade-core",
+ "crossfade-graph",
+ "crossfade-testkit",
+ "insta",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crossfade-flac"
 version = "0.0.0"
 dependencies = [
