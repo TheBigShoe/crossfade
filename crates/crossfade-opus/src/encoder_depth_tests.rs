@@ -1,6 +1,7 @@
 //! The input's depth (`lsb_depth`): what it changes, against libopus's own decisions (its
 //! float build at `OPUS_SET_LSB_DEPTH(16)` on the same kinds of signal).
 
+use super::modes_tests::modes;
 use super::tests::{config, encode_and_decode};
 use super::*;
 use crate::MultistreamEncoder;
@@ -53,5 +54,22 @@ fn a_signal_under_the_input_depth_is_digital_silence() {
         if depth == 24 {
             assert!(largest > 4 * 4, "{largest}");
         }
+    }
+}
+
+#[test]
+fn a_high_band_under_the_input_depth_noise_floor_is_not_coded() {
+    // Hiss at 1e-4 over loud tones: over 16 bits' noise floor in the low bands, under it
+    // above 12 kHz. libopus at 64 kb/s codes all of it fullband at 24 bits, and from the
+    // tenth frame on superwideband at 16.
+    let pcm = tone_and_hiss(2, 0.5, 1e-4);
+    for (depth, want) in [(24, Bandwidth::Full), (16, Bandwidth::SuperWide)] {
+        let cfg = at_depth(depth, config(2, 64_000, true, FrameDuration::Ms20));
+        let (packets, _) = encode_and_decode(&cfg, &pcm);
+        let got = modes(&packets[10..]);
+        assert!(
+            got.iter().all(|&m| m == (Mode::Celt, want)),
+            "{depth} bits: {got:?}"
+        );
     }
 }
