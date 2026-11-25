@@ -239,7 +239,7 @@ fn a_join_into_opus_conforms_each_input_to_48_khz_with_notes() {
     let plan = describe_concat(&inputs, "o.opus", &AudioSettings::default()).unwrap();
     assert_eq!(plan.output.audio.sample_rate(), 48_000);
     assert_eq!(plan.output.audio.format(), SampleFormat::F32);
-    assert_eq!(plan.output.frames, Some(48_000 + 48_000 + 96_000));
+    assert_eq!(plan.output.frames, Some(3 * 48_000));
     assert_eq!(
         plan.notes,
         [

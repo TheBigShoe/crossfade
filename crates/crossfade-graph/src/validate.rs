@@ -43,7 +43,7 @@ pub struct OutputPlan {
 }
 
 /// What `chain` assumes about `input` along the way.
-fn notes(input: &AudioSpec, chain: Option<&ChainPlan>) -> Vec<String> {
+fn notes(input: &AudioSpec, chain: Option<&ChainPlan>, opus: bool) -> Vec<String> {
     let mut notes = Vec::new();
     let (Some(chain), Ok(mut spec)) = (
         chain,
@@ -62,12 +62,30 @@ fn notes(input: &AudioSpec, chain: Option<&ChainPlan>) -> Vec<String> {
         {
             notes.push(note);
         }
+        if opus
+            && let FilterPlan::Resample(r) = f
+            && r.rate == OPUS_RATE
+            && spec.sample_rate() != OPUS_RATE
+        {
+            notes.push(format!(
+                "opus is always 48 kHz: resampling from {} Hz",
+                spec.sample_rate()
+            ));
+        }
         match f.output_spec(&spec) {
             Ok(next) => spec = next,
             Err(_) => break,
         }
     }
     notes
+}
+
+/// The one rate Opus is written at.
+const OPUS_RATE: u32 = crossfade_codec::opus_encode::SAMPLE_RATE;
+
+/// Whether the job writes Opus (the `.opus` extension has put its name in `settings.codec`).
+fn writes_opus(settings: &AudioSettings) -> bool {
+    settings.codec.as_deref() == Some("opus")
 }
 
 /// The codecs a transcode runs, and its chain when it processes; a copy has none.
@@ -110,6 +128,10 @@ pub(crate) fn loses_depth(input: &StreamInfo, out_format: SampleFormat) -> bool 
 /// has no bit depth to keep (its decoder emits `F32`), so without a named format it is written
 /// as 16-bit, to every container.
 pub(crate) fn output_sample_format(input: &StreamInfo, settings: &AudioSettings) -> SampleFormat {
+    if writes_opus(settings) {
+        // A lossy encoder takes float whatever the source was.
+        return SampleFormat::F32;
+    }
     settings.sample_format.unwrap_or(if input.codec.is_lossy() {
         SampleFormat::S16
     } else {
@@ -119,12 +141,14 @@ pub(crate) fn output_sample_format(input: &StreamInfo, settings: &AudioSettings)
 
 /// What [`output_sample_format`] assumed, when it chose for a lossy codec.
 fn sample_format_note(input: &StreamInfo, settings: &AudioSettings) -> Option<String> {
-    (settings.sample_format.is_none() && input.codec.is_lossy()).then(|| {
-        format!(
-            "{} has no bit depth: writing 16-bit; choose --sample-format to change",
-            input.codec.name()
-        )
-    })
+    (settings.sample_format.is_none() && input.codec.is_lossy() && !writes_opus(settings)).then(
+        || {
+            format!(
+                "{} has no bit depth: writing 16-bit; choose --sample-format to change",
+                input.codec.name()
+            )
+        },
+    )
 }
 
 /// The chain a job runs on `input`, or `None` for the unprocessed path: the filters and the
@@ -134,7 +158,11 @@ pub fn processing(
     input: &StreamInfo,
     settings: &AudioSettings,
 ) -> Result<Option<ChainPlan>, Error> {
-    let chain = filter::plan(&input.audio, settings)?;
+    let chain = filter::plan_at(
+        &input.audio,
+        settings,
+        writes_opus(settings).then_some(OPUS_RATE),
+    )?;
     if chain.is_some() || settings.dither == Dither::None {
         return Ok(chain);
     }
@@ -145,25 +173,83 @@ pub fn processing(
     }))
 }
 
-/// The container named by `path`'s extension, if we can write it. `.opus` names Ogg Opus,
-/// which only a stream copy writes so far; anything else would put FLAC under that name.
-pub(crate) fn output_format_for(path: &str, settings: &AudioSettings) -> Result<FormatId, Error> {
+/// The container named by `path`'s extension, if we can write it, and the settings the job runs
+/// with: `.opus` names Ogg Opus, so it puts "opus" in the codec when none is asked.
+pub(crate) fn output_format_for(
+    path: &str,
+    settings: &AudioSettings,
+) -> Result<(FormatId, AudioSettings), Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
+    let mut settings = settings.clone();
     match FormatId::from_extension(ext) {
         Some(f) if can_write(f) => {
-            if ext.eq_ignore_ascii_case("opus") && settings.codec.as_deref() != Some("copy") {
-                return Err(unsupported(
-                    "encoding opus is not supported yet; an opus stream can be copied with \
-                     --codec copy into .opus",
-                ));
+            if ext.eq_ignore_ascii_case("opus") {
+                match settings.codec.as_deref() {
+                    None => settings.codec = Some("opus".into()),
+                    Some("opus" | "copy") => {}
+                    Some(other) => {
+                        return Err(unsupported(format!(
+                            "codec {other} cannot be written into .opus (an .opus file holds \
+                             opus; use .ogg or .oga for flac)"
+                        )));
+                    }
+                }
             }
-            Ok(f)
+            Ok((f, settings))
         }
         _ => Err(unsupported(format!(
             "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
-             .oga/.ogg, .m4a/.mp4/.m4b)"
+             .oga/.ogg/.opus, .m4a/.mp4/.m4b)"
         ))),
     }
+}
+
+/// What Opus output refuses in the settings, whatever the input: another container, a rate
+/// other than 48 kHz, a sample format (it has no bit depth).
+fn check_opus_settings(output_format: FormatId, settings: &AudioSettings) -> Result<(), Error> {
+    if !writes_opus(settings) {
+        return Ok(());
+    }
+    output_codec(output_format, SampleFormat::F32, settings.codec.as_deref())?;
+    if let Some(rate) = settings.sample_rate.filter(|&r| r != OPUS_RATE) {
+        return Err(unsupported(format!(
+            "opus is always 48 kHz: --sample-rate {rate} cannot be written (use 48000 or leave it out)"
+        )));
+    }
+    if settings.sample_format.is_some() {
+        return Err(unsupported(
+            "opus has no bit depth: leave out --sample-format (it is always coded from 32-bit float)",
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses what Opus cannot code, saying what would work: more than two channels (a
+/// `--channels stereo` conversion, when a standard mix reaches it) and a bitrate outside
+/// 6 to 256 kb/s per channel.
+fn check_opus_stream(layout: &ChannelLayout, settings: &AudioSettings) -> Result<(), Error> {
+    let channels = layout.channels();
+    if channels > 2 {
+        let advice = if standard_matrix(layout, &ChannelLayout::stereo()).is_ok() {
+            "use --channels stereo to convert"
+        } else {
+            "no standard mix reaches stereo, so a mix filter with a matrix is the way"
+        };
+        return Err(unsupported(format!(
+            "surround opus is not written yet ({channels} channels): {advice}"
+        )));
+    }
+    if let Some(b) = settings.bitrate {
+        let (lo, hi) = (6_000 * u32::from(channels), 256_000 * u32::from(channels));
+        if !(lo..=hi).contains(&b) {
+            return Err(unsupported(format!(
+                "--bitrate {b} is outside opus's range for {channels} channel{}: {lo} to {hi} b/s \
+                 (6 to 256 kb/s per channel)",
+                if channels == 1 { "" } else { "s" }
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// What the output will be: copy or transcode, the output stream, and the chain when one
@@ -181,6 +267,9 @@ fn plan_output(
         }
         if settings.compression_level.is_some() {
             return Err(unsupported("--codec copy cannot take a compression level"));
+        }
+        if settings.bitrate.is_some() || settings.constant_bitrate {
+            return Err(unsupported("--codec copy cannot take a bitrate"));
         }
         if !can_hold(output_format, input.codec) {
             let why = match output_format {
@@ -206,17 +295,27 @@ fn plan_output(
         };
         return Ok((plan, None));
     }
+    check_opus_settings(output_format, settings)?;
     let chain = processing(input, settings)?;
-    let plan = output_plan(input, output_format, settings, chain.as_ref())?;
+    let plan = output_plan(
+        input,
+        output_format,
+        settings,
+        chain.as_ref(),
+        input.audio.sample_rate(),
+    )?;
     Ok((plan, chain))
 }
 
 /// The output stream of a transcode of `input` through `chain` (`None`: unprocessed).
+/// `source_rate` is the rate the audio had before the graph conformed it (what an Opus header
+/// records).
 fn output_plan(
     input: &StreamInfo,
     output_format: FormatId,
     settings: &AudioSettings,
     chain: Option<&ChainPlan>,
+    source_rate: u32,
 ) -> Result<OutputPlan, Error> {
     let in_spec = &input.audio;
     let out_format = output_sample_format(input, settings);
@@ -241,7 +340,7 @@ fn output_plan(
         ),
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
-    encode_options(codec, settings.compression_level)?;
+    encode_options(codec, settings)?;
     let mut all = Vec::from_iter(sample_format_note(input, settings));
     let depth = if codec == CodecId::Alac {
         alac_depth(out_format, depth, &mut all)
@@ -251,12 +350,19 @@ fn output_plan(
     if codec == CodecId::Alac {
         check_alac_layout(out_spec.layout())?;
     }
+    let mut extradata = Vec::new();
+    if codec == CodecId::Opus {
+        check_opus_stream(out_spec.layout(), settings)?;
+        extradata =
+            crossfade_codec::opus_encode::head(out_spec.layout().channels() as u8, source_rate);
+    }
     let output = StreamInfo {
         frames,
         bits_per_raw_sample: depth,
+        extradata,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
-    all.extend(notes(in_spec, chain));
+    all.extend(notes(in_spec, chain, codec == CodecId::Opus));
     Ok(OutputPlan {
         output_format,
         output,
@@ -334,6 +440,7 @@ pub(crate) fn resolve(
     pass: Pass,
 ) -> Result<(OutputPlan, Option<Codecs>), Error> {
     let (plan, chain) = plan_output(input, output_format, settings)?;
+    let source_rate = input.audio.sample_rate();
     if plan.copy {
         return Ok((plan, None));
     }
@@ -341,7 +448,8 @@ pub(crate) fn resolve(
     let out = &plan.output;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
-        ..encode_options(out.codec, settings.compression_level)?
+        input_sample_rate: Some(source_rate),
+        ..encode_options(out.codec, settings)?
     };
     let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
     let chain_format = if measuring.is_some() {
@@ -388,8 +496,8 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
-    plan_output(input, format, settings).map(|(plan, _)| plan)
+    let (format, settings) = output_format_for(output_path, settings)?;
+    plan_output(input, format, &settings).map(|(plan, _)| plan)
 }
 
 /// Checks a job's output against its input stream without touching any file: the container from
@@ -401,10 +509,10 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
+    let (format, settings) = output_format_for(output_path, settings)?;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
-    let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
+    let (plan, _) = resolve(input, format, &settings, 1, Pass::Convert(Some(UNITY)))?;
     // A muxer writes its header on creation, so a scratch buffer shows whether it would refuse.
     create_muxer(
         format,
@@ -428,7 +536,11 @@ fn joined(inputs: &[StreamInfo], settings: &AudioSettings) -> Result<StreamInfo,
         ));
     }
     let first_spec = &first.audio;
-    let rate = settings.sample_rate.unwrap_or(first_spec.sample_rate());
+    let rate = if writes_opus(settings) {
+        OPUS_RATE
+    } else {
+        settings.sample_rate.unwrap_or(first_spec.sample_rate())
+    };
     let layout = settings.channels.as_ref().map_or_else(
         || first_spec.layout().clone(),
         |c| c.resolve(first_spec.layout()),
@@ -482,6 +594,7 @@ pub(crate) fn plan_join(
     output_format: FormatId,
     settings: &AudioSettings,
 ) -> Result<Join, Error> {
+    check_opus_settings(output_format, settings)?;
     let joined = joined(inputs, settings)?;
     let conform: Vec<Option<ChainPlan>> = inputs
         .iter()
@@ -512,11 +625,17 @@ pub(crate) fn plan_join(
             dither: settings.dither,
         });
     }
-    let mut plan = output_plan(&joined, output_format, settings, main.as_ref())?;
+    let mut plan = output_plan(
+        &joined,
+        output_format,
+        settings,
+        main.as_ref(),
+        inputs[0].audio.sample_rate(),
+    )?;
     let conform_notes = inputs
         .iter()
         .zip(&conform)
-        .flat_map(|(i, c)| notes(&i.audio, c.as_ref()));
+        .flat_map(|(i, c)| notes(&i.audio, c.as_ref(), writes_opus(settings)));
     let mut all: Vec<String> = conform_notes.collect();
     all.append(&mut plan.notes);
     all.dedup();
@@ -564,7 +683,8 @@ pub(crate) fn resolve_join(
     let encoder_threads = codec_threads(threads, inputs[0].codec, out.codec).1;
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
-        ..encode_options(out.codec, settings.compression_level)?
+        input_sample_rate: Some(inputs[0].audio.sample_rate()),
+        ..encode_options(out.codec, settings)?
     };
     let chain_format = if measuring.is_some() {
         SampleFormat::F64
@@ -604,8 +724,8 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
-    plan_join(inputs, format, settings).map(|j| j.plan)
+    let (format, settings) = output_format_for(output_path, settings)?;
+    plan_join(inputs, format, &settings).map(|j| j.plan)
 }
 
 /// [`validate`] for a job that joins `inputs` in order: everything `Pipeline::open` decides,
@@ -615,8 +735,8 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path, settings)?;
-    let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
+    let (format, settings) = output_format_for(output_path, settings)?;
+    let (join, _) = resolve_join(inputs, format, &settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,
         Box::new(Cursor::new(Vec::new())),
