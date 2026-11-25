@@ -229,8 +229,33 @@ pub fn plain(what: &str) -> String {
     out
 }
 
+/// An engine note as the sheet shows it: codecs by the names the sheet uses and the command
+/// line's `--sample-format` as the Format row. A note it does not know stays as written.
 pub fn plain_note(note: &str) -> String {
-    note.to_owned()
+    const NAMES: [(&str, &str); 6] = [
+        ("vorbis", "Vorbis"),
+        ("opus", "Opus"),
+        ("alac", "Apple Lossless"),
+        ("flac", "FLAC"),
+        ("mp3", "MP3"),
+        ("aac", "AAC"),
+    ];
+    let mut text = note.replacen(
+        "; choose --sample-format to change",
+        "; choose a Format to change it",
+        1,
+    );
+    for (codec, name) in NAMES {
+        // Where the engine puts a codec's name: first, after a colon, or as an owner.
+        if let Some(rest) = text.strip_prefix(&format!("{codec} ")) {
+            text = format!("{name} {rest}");
+        }
+        text = text
+            .replace(&format!(": {codec} "), &format!(": {name} "))
+            .replace(&format!(": {codec}'s"), &format!(": {name}'s"))
+            .replace(&format!(" as {codec}'s"), &format!(" as {name}'s"));
+    }
+    text
 }
 
 #[derive(Debug, Clone)]
@@ -805,9 +830,9 @@ impl ConvertSheet {
     }
 
     /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1" or "mp3
-    /// has no bit depth: writing 16-bit": the same notes the command line prints.
+    /// has no bit depth: writing 16-bit": the notes the command line prints, in the sheet's words.
     pub fn notes(&self) -> Vec<String> {
-        self.engine_notes()
+        self.engine_notes().iter().map(|n| plain_note(n)).collect()
     }
 
     /// The plan's notes exactly as the engine wrote them.
