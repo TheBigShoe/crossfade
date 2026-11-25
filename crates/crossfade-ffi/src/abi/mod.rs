@@ -3,7 +3,11 @@
 #![allow(unsafe_code)]
 
 use crate::{about, inspect};
+
+mod sheet;
+
 use crate::error::{Failure, guard, last_error};
+pub use sheet::*;
 use std::ffi::{CStr, CString, c_char};
 
 /// Bumped only when an existing function changes meaning or shape; new functions keep it.
@@ -28,7 +32,7 @@ pub(crate) fn owned_string(text: String) -> *mut c_char {
 /// # Safety
 /// `out` is null or valid for one write of `T`.
 #[allow(dead_code)]
-unsafe fn write_out<T>(out: *mut T, value: T, what: &str) -> Result<(), Failure> {
+pub(crate) unsafe fn write_out<T>(out: *mut T, value: T, what: &str) -> Result<(), Failure> {
     if out.is_null() {
         return Err(Failure::null(what));
     }
@@ -41,7 +45,7 @@ unsafe fn write_out<T>(out: *mut T, value: T, what: &str) -> Result<(), Failure>
 ///
 /// # Safety
 /// As [`write_out`].
-unsafe fn string_out(out: *mut *mut c_char, text: String) -> Result<(), Failure> {
+pub(crate) unsafe fn string_out(out: *mut *mut c_char, text: String) -> Result<(), Failure> {
     if out.is_null() {
         return Err(Failure::null("the out pointer"));
     }
@@ -50,12 +54,46 @@ unsafe fn string_out(out: *mut *mut c_char, text: String) -> Result<(), Failure>
     Ok(())
 }
 
+/// Borrows the object behind a handle.
+///
+/// # Safety
+/// `ptr` is null or a live handle of this type that outlives the call.
+pub(crate) unsafe fn handle<'a, T>(ptr: *const T, what: &str) -> Result<&'a T, Failure> {
+    // SAFETY: the caller's promise: null or a live handle.
+    unsafe { ptr.as_ref() }.ok_or_else(|| Failure::null(what))
+}
+
+/// Hands a new object to the caller as a handle through `out`, or drops it when `out` is
+/// null.
+///
+/// # Safety
+/// As [`write_out`].
+pub(crate) unsafe fn handle_out<T>(out: *mut *mut T, value: T) -> Result<(), Failure> {
+    if out.is_null() {
+        return Err(Failure::null("the out pointer"));
+    }
+    let ptr = Box::into_raw(Box::new(value));
+    // SAFETY: checked above; the caller promises it is valid for a write.
+    unsafe { out.write(ptr) };
+    Ok(())
+}
+
+/// Takes back and drops a handle. Null does nothing.
+///
+/// # Safety
+/// `ptr` is null or a handle of this type made by this library and not yet destroyed.
+pub(crate) unsafe fn destroy<T>(ptr: *mut T) {
+    if !ptr.is_null() {
+        // SAFETY: the caller's promise: it came from `Box::into_raw` here, destroyed once.
+        drop(unsafe { Box::from_raw(ptr) });
+    }
+}
+
 /// Reads a caller's NUL-terminated UTF-8 string.
 ///
 /// # Safety
 /// `ptr` is null or points at a NUL-terminated string that outlives the call.
-
-unsafe fn str_arg<'a>(ptr: *const c_char, what: &str) -> Result<&'a str, Failure> {
+pub(crate) unsafe fn str_arg<'a>(ptr: *const c_char, what: &str) -> Result<&'a str, Failure> {
     if ptr.is_null() {
         return Err(Failure::null(what));
     }

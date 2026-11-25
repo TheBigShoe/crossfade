@@ -6,10 +6,11 @@
 //! at or to take and give back a box; the logic is in safe modules it calls.
 #![deny(unsafe_code)]
 
-mod about;
 mod abi;
+mod about;
 mod error;
 mod inspect;
+mod sheet;
 
 pub use abi::*;
 pub use error::*;

@@ -159,11 +159,9 @@ fn place(v: &Value, dir: &str) -> Value {
     match v {
         Value::String(s) => Value::String(s.replace('@', dir)),
         Value::Array(a) => Value::Array(a.iter().map(|x| place(x, dir)).collect()),
-        Value::Object(o) => Value::Object(
-            o.iter()
-                .map(|(k, x)| (k.clone(), place(x, dir)))
-                .collect(),
-        ),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, x)| (k.clone(), place(x, dir))).collect())
+        }
         other => other.clone(),
     }
 }
@@ -192,7 +190,11 @@ fn json_changes_build_the_command_lines_request_and_notes() {
         args.extend(intent.cli.iter().map(|a| (*a).to_owned()));
         let typed = request_from_args(&args).unwrap().unwrap();
         assert_eq!(request_of(&state), typed, "{:?}", intent.cli);
-        assert_eq!(state["can_queue"], true, "{:?}: {}", intent.cli, state["problems"]);
+        assert_eq!(
+            state["can_queue"], true,
+            "{:?}: {}",
+            intent.cli, state["problems"]
+        );
         assert_eq!(
             state["command_line"],
             crossfade_app::command_line(&typed).unwrap(),
@@ -200,6 +202,7 @@ fn json_changes_build_the_command_lines_request_and_notes() {
 
         let mut run_args = args.clone();
         run_args[3] = cli_dir.path(intent.output);
+        let _ = std::fs::remove_file(&run_args[3]);
         let notes: Vec<String> = serde_json::from_value(state["notes"].clone()).unwrap();
         assert_eq!(notes, cli_notes(&run_args), "{:?}", intent.cli);
     }
@@ -236,9 +239,11 @@ fn a_refused_combination_names_its_problem_and_cannot_be_queued() {
     let problems = state["problems"].as_array().unwrap();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0]["kind"], "source");
-    let message = problems[0]["message"].as_str().unwrap();
-    assert!(message.contains("48"), "{message}");
-    assert!(!message.contains("--"), "{message}");
+    // The engine's refusal names only flags, which the sheet has none of.
+    assert_eq!(
+        problems[0]["message"],
+        "Crossfade cannot save this combination of choices."
+    );
     // The command line refuses the same choice when it runs.
     let args = ["convert", &input, "-o", &out, "--sample-rate", "44100"];
     let outcome = run_command(args, &mut FsIo::new(), &CancelToken::new(), &mut |_| {}).unwrap();
@@ -252,8 +257,13 @@ fn a_refused_combination_names_its_problem_and_cannot_be_queued() {
     assert_eq!(state["can_queue"], false);
     assert_eq!(state["problems"][0]["kind"], "adjust");
     assert_eq!(state["problems"][0]["row"], "trim");
-    assert_eq!(state["adjust"]["problems"]["trim"], state["problems"][0]["message"]);
-    let args = ["convert", &input, "-o", "t.wav", "--start", "30s", "--end", "10s"];
+    assert_eq!(
+        state["adjust"]["problems"]["trim"],
+        state["problems"][0]["message"]
+    );
+    let args = [
+        "convert", &input, "-o", "t.wav", "--start", "30s", "--end", "10s",
+    ];
     assert!(request_from_args(args).is_err());
 }
 
@@ -280,9 +290,15 @@ fn the_state_offers_what_the_sheet_offers() {
     let state = sheet.state();
     assert_eq!(state["format"]["visible"], false);
     assert_eq!(state["bitrate"]["visible"], true);
-    assert_eq!(state["bitrate"]["options"][0]["label"], "Default (128 kb/s)");
+    assert_eq!(
+        state["bitrate"]["options"][0]["label"],
+        "Default (128 kb/s)"
+    );
     assert_eq!(state["sample_rate"]["value"], 48000);
-    assert_eq!(state["sample_rate"]["options"], json!([{"value": 48000, "label": "48 kHz"}]));
+    assert_eq!(
+        state["sample_rate"]["options"],
+        json!([{"value": 48000, "label": "48 kHz"}])
+    );
     assert_eq!(state["output"], dir.path("in48.opus"));
 }
 

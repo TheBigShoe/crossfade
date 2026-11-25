@@ -31,14 +31,20 @@ fn freeing_null_does_nothing() {
 
 #[test]
 fn a_null_out_pointer_is_an_error_with_a_message() {
-    assert_eq!(unsafe { cf_about(std::ptr::null_mut()) }, CF_ERR_NULL_ARGUMENT);
+    assert_eq!(
+        unsafe { cf_about(std::ptr::null_mut()) },
+        CF_ERR_NULL_ARGUMENT
+    );
     let message = last_error().unwrap();
     assert!(message.contains("null"), "{message}");
 }
 
 #[test]
 fn a_successful_call_clears_the_last_error() {
-    assert_eq!(unsafe { cf_about(std::ptr::null_mut()) }, CF_ERR_NULL_ARGUMENT);
+    assert_eq!(
+        unsafe { cf_about(std::ptr::null_mut()) },
+        CF_ERR_NULL_ARGUMENT
+    );
     let mut out: *mut c_char = std::ptr::null_mut();
     assert_eq!(unsafe { cf_about(&mut out) }, CF_OK);
     take(out);
@@ -47,7 +53,10 @@ fn a_successful_call_clears_the_last_error() {
 
 #[test]
 fn the_last_error_belongs_to_its_thread() {
-    assert_eq!(unsafe { cf_about(std::ptr::null_mut()) }, CF_ERR_NULL_ARGUMENT);
+    assert_eq!(
+        unsafe { cf_about(std::ptr::null_mut()) },
+        CF_ERR_NULL_ARGUMENT
+    );
     let other = std::thread::spawn(last_error).join().unwrap();
     assert_eq!(other, None);
     assert!(last_error().is_some());
