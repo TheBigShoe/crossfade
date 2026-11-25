@@ -9,7 +9,7 @@ fn spec(channels: u16) -> AudioSpec {
     let layout = match channels {
         1 => ChannelLayout::mono(),
         2 => ChannelLayout::stereo(),
-        n => ChannelLayout::from_name(if n == 6 { "5.1" } else { "quad" }).unwrap(),
+        n => ChannelLayout::vorbis_order(n as u8).unwrap(),
     };
     AudioSpec::new(48_000, SampleFormat::F32, layout).unwrap()
 }
@@ -79,15 +79,28 @@ fn only_48_khz_float_mono_and_stereo_are_encoded_and_the_refusals_say_why() {
     let s = AudioSpec::new(44_100, SampleFormat::F32, ChannelLayout::stereo()).unwrap();
     let w = what(encoder(&s, &EncodeOptions::default()));
     assert!(w.contains("48000 Hz") && w.contains("44100"), "{w}");
-    for n in [4, 6] {
-        let w = what(encoder(&spec(n), &EncodeOptions::default()));
-        assert!(
-            w.contains("surround")
-                && w.contains("not written yet")
-                && w.contains("--channels stereo"),
-            "{w}"
-        );
+    // Vorbis's layout per count is the one a surround stream has; another is refused with it.
+    for n in 3..=8 {
+        assert!(encoder(&spec(n), &EncodeOptions::default()).is_ok(), "{n}");
     }
+    let side = AudioSpec::new(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::from_name("5.1").unwrap(),
+    )
+    .unwrap();
+    let w = what(encoder(&side, &EncodeOptions::default()));
+    assert!(
+        w.contains("opus stores 6 channels in one layout only (5.1-back)") && w.contains("5.1"),
+        "{w}"
+    );
+    let nine = AudioSpec::new(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::unpositioned(9).unwrap(),
+    )
+    .unwrap();
+    assert!(what(encoder(&nine, &EncodeOptions::default())).contains("at most 8 channels"));
     assert!(encoder(&spec(1), &EncodeOptions::default()).is_ok());
     assert!(encoder(&spec(2), &EncodeOptions::default()).is_ok());
 }
@@ -142,6 +155,10 @@ fn no_input_makes_no_packet() {
 
 /// Encodes `pcm`, decodes it through the decoder adapter and trims what the timeline would.
 fn round_trip(channels: u16, options: &EncodeOptions, pcm: &[f32]) -> Vec<f32> {
+    round_trip_n(channels, options, pcm)
+}
+
+fn round_trip_n(channels: u16, options: &EncodeOptions, pcm: &[f32]) -> Vec<f32> {
     let spec = spec(channels);
     let (packets, extradata) = encode_with(&spec, options, pcm, 1000);
     let mut stream = StreamInfo::new(
@@ -264,4 +281,61 @@ fn a_frame_that_is_not_what_the_encoder_was_built_for_is_refused() {
         e.send_frame(&late),
         Err(Error::Unsupported { .. })
     ));
+}
+
+#[test]
+fn a_surround_header_is_family_1_with_its_streams_and_mapping() {
+    let e = encoder(&spec(6), &EncodeOptions::default()).unwrap();
+    let h = OpusHead::parse(e.extradata()).unwrap();
+    assert_eq!((h.channels, h.pre_skip, h.mapping.family), (6, 312, 1));
+    assert_eq!((h.mapping.streams, h.mapping.coupled), (4, 2));
+    assert_eq!(h.mapping.table.len(), 6);
+    assert_eq!(head(6, 44_100), e.extradata().to_vec().as_slice().to_vec());
+    assert_eq!(default_bitrate(3), 160_000);
+    assert_eq!(default_bitrate(6), 320_000);
+    assert_eq!(default_bitrate(8), 416_000);
+}
+
+/// How much of `x` (one channel of `ch`) lies at `hz`, by the Goertzel recurrence.
+fn at(x: &[f32], ch: usize, c: usize, hz: f64) -> f64 {
+    let w = 2.0 * std::f64::consts::PI * hz / 48_000.0;
+    let (mut s1, mut s2) = (0.0f64, 0.0f64);
+    for f in x.chunks_exact(ch) {
+        let s = f64::from(f[c]) + 2.0 * w.cos() * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    (s1 * s1 + s2 * s2 - 2.0 * w.cos() * s1 * s2)
+        .max(0.0)
+        .sqrt()
+        / (x.len() / ch) as f64
+}
+
+#[test]
+fn every_channel_comes_back_in_its_place_with_its_own_tone() {
+    for n in 3..=8usize {
+        // A different tone on each channel, none a harmonic of another.
+        let tones: Vec<f64> = (0..n).map(|c| 700.0 + 530.0 * c as f64).collect();
+        let frames = 14_400;
+        let pcm: Vec<f32> = (0..frames)
+            .flat_map(|i| {
+                tones.iter().map(move |hz| {
+                    (0.3 * (2.0 * std::f64::consts::PI * hz * i as f64 / 48_000.0).sin()) as f32
+                })
+            })
+            .collect();
+        let got = round_trip_n(n as u16, &EncodeOptions::default(), &pcm);
+        assert_eq!(got.len(), pcm.len(), "{n} ch");
+        for c in 0..n {
+            let own = at(&got, n, c, tones[c]);
+            assert!(own > 0.05, "{n} ch: channel {c} lost its tone ({own})");
+            for (d, hz) in tones.iter().enumerate().filter(|(d, _)| *d != c) {
+                let other = at(&got, n, c, *hz);
+                assert!(
+                    other * 10.0 < own,
+                    "{n} ch: channel {c} carries channel {d}'s tone ({other} vs {own})"
+                );
+            }
+        }
+    }
 }
