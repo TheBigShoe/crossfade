@@ -76,7 +76,7 @@ pub(crate) fn speech(channels: usize, seconds: f32) -> Vec<f32> {
 }
 
 /// The mode and bandwidth of each packet.
-fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
+pub(super) fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
     packets
         .iter()
         .map(|p| {
@@ -87,7 +87,7 @@ fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
 }
 
 /// The mode and bandwidth most packets of the last half second have.
-fn steady(cfg: &EncoderConfig, pcm: &[f32]) -> (Mode, Bandwidth) {
+pub(super) fn steady(cfg: &EncoderConfig, pcm: &[f32]) -> (Mode, Bandwidth) {
     let (packets, _) = encode_and_decode(cfg, pcm);
     let per_second = 48_000 / cfg.frame_duration.samples();
     let tail = modes(&packets[packets.len() - per_second / 2..]);

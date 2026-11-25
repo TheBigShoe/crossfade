@@ -457,6 +457,8 @@ pub struct Encoder {
     celt: CeltEncoder,
     silk: SilkEncoder,
     silk_mode: EncControl,
+    /// The voice estimate of the last packet (for tests).
+    pub(crate) last_voice_est: i32,
     // From here on, what OPUS_RESET_STATE clears.
     bitrate: i32,
     stream_channels: usize,
@@ -507,6 +509,7 @@ impl Encoder {
             celt: CeltEncoder::new(channels),
             silk: SilkEncoder::new(),
             silk_mode: EncControl::default(),
+            last_voice_est: 0,
             bitrate: user_bitrate,
             stream_channels: channels,
             hybrid_stereo_width_q14: 1 << 14,
@@ -728,6 +731,7 @@ impl Encoder {
             (Signal::Auto, Application::Voip) => 115,
             (Signal::Auto, Application::Audio) => 48,
         };
+        self.last_voice_est = voice_est;
 
         if let (Some(forced), 2) = (self.force_channels, ch) {
             self.stream_channels = forced;
@@ -1504,3 +1508,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 #[path = "encoder_modes_tests.rs"]
 mod modes_tests;
+
+#[cfg(test)]
+#[path = "encoder_analysis_tests.rs"]
+mod analysis_tests;
