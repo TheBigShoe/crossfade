@@ -438,9 +438,8 @@ fn dtx_sends_silence_as_toc_bytes() {
 
 #[test]
 fn speech_quality_at_low_rates() {
-    // The segmental SNR of mono speech at SILK and hybrid rates, measured less 0.5 dB. Through
-    // opusdec on 6 s, libopus 1.4's opusenc at complexity 9 with --speech gives the same
-    // within 0.1 dB (README).
+    // The segmental SNR of mono speech at SILK and hybrid rates, measured less 0.5 dB.
+    // libopus 1.5.2's float build gives the same within 0.1 dB on speech (README).
     let pcm = speech(1, 2.0);
     let mut got = vec![];
     for bitrate in [8_000, 12_000, 16_000, 24_000, 32_000] {
@@ -449,7 +448,7 @@ fn speech_quality_at_low_rates() {
         let (_, out) = encode_and_decode(&cfg, &pcm);
         got.push((bitrate, seg_snr(&pcm, &out, 1, 312)));
     }
-    // Measured: 8.95 (SILK NB), 8.40 (SILK WB), 8.43, 8.68 and 8.85 (hybrid FB) dB.
+    // Measured: 8.95 (SILK NB), 8.32 (SILK WB), 8.42, 8.69 and 8.80 (hybrid FB) dB.
     for ((bitrate, snr), min) in got.iter().zip([8.4, 7.9, 7.9, 8.1, 8.3]) {
         assert!(*snr > min, "{bitrate}: {snr} dB");
     }
