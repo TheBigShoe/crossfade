@@ -10,7 +10,9 @@ mod abi;
 mod about;
 mod error;
 mod inspect;
+mod queue;
 mod sheet;
+mod signal;
 
 pub use abi::*;
 pub use error::*;

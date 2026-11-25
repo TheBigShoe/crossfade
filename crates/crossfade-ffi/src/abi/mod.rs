@@ -2,12 +2,14 @@
 //! safe function and writes the result back. Every `unsafe` block of the crate is here.
 #![allow(unsafe_code)]
 
-use crate::{about, inspect};
-
+mod queue;
 mod sheet;
 
-use crate::error::{Failure, guard, last_error};
+pub use queue::*;
 pub use sheet::*;
+
+use crate::error::{Failure, guard, last_error};
+use crate::{about, inspect};
 use std::ffi::{CStr, CString, c_char};
 
 /// Bumped only when an existing function changes meaning or shape; new functions keep it.
@@ -31,7 +33,6 @@ pub(crate) fn owned_string(text: String) -> *mut c_char {
 ///
 /// # Safety
 /// `out` is null or valid for one write of `T`.
-#[allow(dead_code)]
 pub(crate) unsafe fn write_out<T>(out: *mut T, value: T, what: &str) -> Result<(), Failure> {
     if out.is_null() {
         return Err(Failure::null(what));

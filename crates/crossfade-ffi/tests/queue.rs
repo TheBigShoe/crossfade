@@ -128,7 +128,10 @@ fn a_queued_job_writes_what_the_command_line_writes_with_progress_that_only_grow
     ];
     let outcome = run_command(args, &mut FsIo::new(), &CancelToken::new(), &mut |_| {}).unwrap();
     assert!(matches!(outcome, Outcome::Done(_)));
-    assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&cli_out).unwrap());
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        std::fs::read(&cli_out).unwrap()
+    );
     let state = q.state();
     assert_eq!(state["idle"], true);
     assert_eq!(state["summary"]["finished"], 1);
@@ -158,9 +161,14 @@ fn a_waiting_job_cancels_at_once() {
     let input = write_wav(&dir, "in.wav", 48_000, 2, 48_000 * 10);
     let q = Queue::new();
     let first = q
-        .add(&input, json!([{"output": dir.path("a.flac")}, {"compression_level": 8}]))
+        .add(
+            &input,
+            json!([{"output": dir.path("a.flac")}, {"compression_level": 8}]),
+        )
         .unwrap();
-    let second = q.add(&input, json!({"output": dir.path("b.flac")})).unwrap();
+    let second = q
+        .add(&input, json!({"output": dir.path("b.flac")}))
+        .unwrap();
     assert_eq!(q.job(second)["state"], "pending");
     assert_eq!(unsafe { cf_queue_cancel(q.0, second) }, CF_OK);
     assert_eq!(q.job(second)["state"], "cancelled");
@@ -200,7 +208,10 @@ fn a_failing_job_reports_its_message_and_a_retry_runs_it_again() {
         unsafe { cf_queue_retry(q.0, again, &mut none) },
         CF_ERR_REFUSED
     );
-    assert_eq!(unsafe { cf_queue_retry(q.0, id, &mut none) }, CF_ERR_NOT_FOUND);
+    assert_eq!(
+        unsafe { cf_queue_retry(q.0, id, &mut none) },
+        CF_ERR_NOT_FOUND
+    );
 }
 
 #[test]
@@ -209,7 +220,10 @@ fn remove_and_clear_take_rows_away_but_never_a_running_one() {
     let input = write_wav(&dir, "in.wav", 48_000, 2, 48_000 * 10);
     let q = Queue::new();
     let running = q
-        .add(&input, json!([{"output": dir.path("a.flac")}, {"compression_level": 8}]))
+        .add(
+            &input,
+            json!([{"output": dir.path("a.flac")}, {"compression_level": 8}]),
+        )
         .unwrap();
     let waiting = q.add(&input, json!({"output": dir.path("b.wav")})).unwrap();
     assert_eq!(unsafe { cf_queue_remove(q.0, running) }, CF_ERR_REFUSED);
@@ -277,7 +291,10 @@ fn null_handles_are_errors() {
         unsafe { cf_queue_state(std::ptr::null(), &mut out) },
         CF_ERR_NULL_ARGUMENT
     );
-    assert_eq!(unsafe { cf_queue_new(std::ptr::null_mut()) }, CF_ERR_NULL_ARGUMENT);
+    assert_eq!(
+        unsafe { cf_queue_new(std::ptr::null_mut()) },
+        CF_ERR_NULL_ARGUMENT
+    );
     let q = Queue::new();
     let mut id = 0;
     assert_eq!(
