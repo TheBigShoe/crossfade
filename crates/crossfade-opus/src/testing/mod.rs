@@ -5,6 +5,7 @@
 //! - [`compare`]: a port of `opus_compare.c` (2-clause BSD, its notice kept), the vectors'
 //!   quality figure Q.
 //! - [`ogg`]: Ogg Opus files (RFC 7845) made in code: headers, seeded packets, pages.
+//! - [`probe`]: what an encoder's tonality analysis told its last frame.
 //! - [`packet_writer`]: Opus packets from their parts (RFC 6716 section 3, Appendix B).
 //! - [`silk_encoder`]: SILK-only Opus packets from the SILK encoder.
 //! - [`range_encoder`]: range-coded test streams as lists of operations (the encoder itself is
@@ -16,6 +17,7 @@ pub mod bitfile;
 pub mod compare;
 pub mod ogg;
 pub mod packet_writer;
+pub mod probe;
 pub mod range_encoder;
 pub mod vectors;
 

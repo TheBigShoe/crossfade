@@ -1,8 +1,11 @@
-//! `celt_encode_with_ec` (`celt/celt_encoder.c`, the float build at complexity 9, without the
-//! tonality analysis: the reference's "analysis not valid" paths): pre-emphasis, the
-//! pitch pre-filter, transient analysis, the MDCTs, band energies and their quantisation,
-//! time-frequency resolution, spreading, dynamic allocation, the trim, stereo decisions, the
-//! allocator, the band shapes and the anti-collapse flag, under CBR or (constrained) VBR.
+//! `celt_encode_with_ec` (`celt/celt_encoder.c`, the float build at complexity 9):
+//! pre-emphasis, the pitch pre-filter, transient analysis, the MDCTs, band energies and their
+//! quantisation, time-frequency resolution, spreading, dynamic allocation, the trim, stereo
+//! decisions, the allocator, the band shapes and the anti-collapse flag, under CBR or
+//! (constrained) VBR; with the tonality analysis the top level hands it
+//! ([`CeltEncoder::set_analysis`]): the pitch gain against the pitch ratio, the leakage
+//! boosts, the trim's tonality slope, the VBR target's activity, tonality and pitch change,
+//! and the signal's bandwidth.
 //!
 //! # The contract with the top level
 //!
@@ -28,6 +31,7 @@ use super::tables::{
     COMB_GAINS, E_MEANS, EBANDS, LOG_N, MAX_LM, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT_SIZE,
     SPREAD_ICDF, TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF, WINDOW,
 };
+use crate::analysis::{AnalysisInfo, LEAK_BANDS};
 use crate::error::{Error, Result};
 use crate::range_enc::RangeEncoder;
 
@@ -97,6 +101,8 @@ pub(crate) struct CeltEncoder {
     prefilter_gain: f32,
     prefilter_tapset: usize,
     consec_transient: i32,
+    /// The tonality analysis of the frame (`CELT_SET_ANALYSIS`; a reset forgets it).
+    analysis: AnalysisInfo,
     preemph_mem: [f32; 2],
     vbr_reservoir: i32,
     vbr_drift: i32,
@@ -650,6 +656,7 @@ fn dynalloc_analysis(
     lm: usize,
     effective_bytes: i32,
     lfe: bool,
+    analysis: &AnalysisInfo,
 ) -> Dynalloc {
     let mut d = Dynalloc {
         offsets: [0; NB_EBANDS],
@@ -767,6 +774,11 @@ fn dynalloc_analysis(
             }
             if i >= 12 {
                 follower[i] *= 0.5;
+            }
+        }
+        if analysis.valid {
+            for i in start..end.min(LEAK_BANDS) {
+                follower[i] += (1.0 / 64.0) * f32::from(analysis.leak_boost[i]);
             }
         }
         for i in start..end {
@@ -907,6 +919,7 @@ fn alloc_trim_analysis(
     tf_estimate: f32,
     intensity: usize,
     equiv_rate: i32,
+    analysis: &AnalysisInfo,
 ) -> i32 {
     // At low rates a lower trim seems to help; above, it is kept as it was.
     let mut trim = 5.0f32;
@@ -954,6 +967,9 @@ fn alloc_trim_analysis(
     diff /= (c * (end - 1)) as f32;
     trim -= ((diff + 1.0) / 6.0).clamp(-2.0, 2.0);
     trim -= 2.0 * tf_estimate;
+    if analysis.valid {
+        trim -= (2.0 * (analysis.tonality_slope + 0.05)).clamp(-2.0, 2.0);
+    }
     (libm::floorf(0.5 + trim) as i32).clamp(0, 10)
 }
 
@@ -980,10 +996,10 @@ fn stereo_analysis(x: &[f32], lm: usize, n0: usize) -> bool {
     (base + thetas) as f32 * sum_ms > base as f32 * sum_lr
 }
 
-/// `compute_vbr` without the tonality analysis or surround masking: the frame's target in
-/// 1/8 bit.
+/// `compute_vbr` without surround masking: the frame's target in 1/8 bit.
 #[allow(clippy::too_many_arguments)]
 fn compute_vbr(
+    analysis: &AnalysisInfo,
     base_target: i32,
     lm: usize,
     bitrate: i32,
@@ -996,6 +1012,8 @@ fn compute_vbr(
     tf_estimate: f32,
     max_depth: f32,
     temporal_vbr: f32,
+    pitch_change: bool,
+    lfe: bool,
 ) -> i32 {
     let coded_bands = if last_coded_bands != 0 {
         last_coded_bands
@@ -1007,6 +1025,9 @@ fn compute_vbr(
         coded_bins += (eb(intensity.min(coded_bands)) << lm) as i32;
     }
     let mut target = base_target;
+    if analysis.valid && f64::from(analysis.activity) < 0.4 {
+        target -= (((coded_bins << BITRES) as f32) * (0.4 - analysis.activity)) as i32;
+    }
     if c == 2 {
         // The most a mono signal could save.
         let coded_stereo_bands = intensity.min(coded_bands);
@@ -1021,6 +1042,15 @@ fn compute_vbr(
     // The transient boost, less its average.
     let tf_calibration = 0.044f32;
     target += ((tf_estimate - tf_calibration) * target as f32) as i32;
+    if analysis.valid && !lfe {
+        // The tonality boost, less its average.
+        let tonal = (analysis.tonality - 0.15).max(0.0) - 0.12;
+        let mut tonal_target = target + (((coded_bins << BITRES) as f32) * 1.2 * tonal) as i32;
+        if pitch_change {
+            tonal_target += (((coded_bins << BITRES) as f32) * 0.8) as i32;
+        }
+        target = tonal_target;
+    }
     {
         let bins = (eb(NB_EBANDS - 2) << lm) as i32;
         let floor_depth = ((((c as i32 * bins) << BITRES) as f32) * max_depth) as i32;
@@ -1059,6 +1089,7 @@ impl CeltEncoder {
             prefilter_gain: 0.0,
             prefilter_tapset: 0,
             consec_transient: 0,
+            analysis: AnalysisInfo::default(),
             preemph_mem: [0.0; 2],
             vbr_reservoir: 0,
             vbr_drift: 0,
@@ -1092,6 +1123,11 @@ impl CeltEncoder {
     pub(crate) fn set_prediction(&mut self, prediction: u8) {
         self.disable_pf = prediction <= 1;
         self.force_intra = prediction == 0;
+    }
+
+    /// `CELT_SET_ANALYSIS`: what the tonality analysis says of the next frames.
+    pub(crate) fn set_analysis(&mut self, info: &AnalysisInfo) {
+        self.analysis = *info;
     }
 
     /// `OPUS_SET_LFE`.
@@ -1128,6 +1164,9 @@ impl CeltEncoder {
         } else {
             (0.0, COMBFILTER_MINPERIOD)
         };
+        if self.analysis.valid {
+            gain1 *= self.analysis.max_pitch_ratio;
+        }
         // The gain threshold, from the rate and the continuity.
         let mut pf_threshold = 0.2f32;
         if (pitch_index - self.prefilter_period).abs() * 10 > pitch_index {
@@ -1349,6 +1388,10 @@ impl CeltEncoder {
         let prefilter_tapset = self.tapset_decision;
         let (pf_on, pitch_index, gain1, qg) =
             self.run_prefilter(&mut input, n, prefilter_tapset, enabled, nb_available_bytes);
+        let period = f64::from(self.prefilter_period);
+        let pitch_change = (gain1 > 0.4 || self.prefilter_gain > 0.4)
+            && (!self.analysis.valid || f64::from(self.analysis.tonality) > 0.3)
+            && (f64::from(pitch_index) > 1.26 * period || f64::from(pitch_index) < 0.79 * period);
         if !pf_on {
             if !hybrid && tell + 16 <= total_bits {
                 enc.enc_bit_logp(false, 1);
@@ -1479,6 +1522,7 @@ impl CeltEncoder {
             lm,
             effective_bytes,
             self.lfe,
+            &self.analysis,
         );
         let mut offsets = dyn_.offsets;
         let mut tf_res = [0i32; NB_EBANDS];
@@ -1657,6 +1701,7 @@ impl CeltEncoder {
                     tf_estimate,
                     self.intensity,
                     equiv_rate,
+                    &self.analysis,
                 );
             }
             enc.enc_icdf(alloc_trim as usize, &TRIM_ICDF, 7);
@@ -1692,6 +1737,7 @@ impl CeltEncoder {
                 t
             } else {
                 compute_vbr(
+                    &self.analysis,
                     base_target,
                     lm,
                     equiv_rate,
@@ -1704,6 +1750,8 @@ impl CeltEncoder {
                     tf_estimate,
                     dyn_.max_depth,
                     temporal_vbr,
+                    pitch_change,
+                    self.lfe,
                 )
             };
             // Less the offset, plus what was spent so far.
@@ -1765,7 +1813,25 @@ impl CeltEncoder {
             0
         };
         bits -= anti_collapse_rsv;
-        let signal_bandwidth = if self.lfe { 1 } else { end - 1 };
+        let mut signal_bandwidth = end - 1;
+        if self.analysis.valid {
+            let ci = c as i32;
+            let min_bandwidth = if equiv_rate < 32_000 * ci {
+                13
+            } else if equiv_rate < 48_000 * ci {
+                16
+            } else if equiv_rate < 60_000 * ci {
+                18
+            } else if equiv_rate < 80_000 * ci {
+                19
+            } else {
+                20
+            };
+            signal_bandwidth = (self.analysis.bandwidth.max(0) as usize).max(min_bandwidth);
+        }
+        if self.lfe {
+            signal_bandwidth = 1;
+        }
         let alloc = compute_allocation(
             start,
             end,

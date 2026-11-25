@@ -1,3 +1,5 @@
+#![allow(clippy::excessive_precision)] // libopus's outputs as it printed them
+
 use super::*;
 
 /// The vowel resonators of the speech-like signal: per vowel, three formants' recursion
@@ -94,7 +96,7 @@ impl Signal {
                     let e1 = pos as f32 / 960.0;
                     let e2 = (8160 - pos) as f32 / 960.0;
                     let env = e1.min(1.0) * e2.min(1.0);
-                    let x = if pos % period == 0 { env } else { 0.0 };
+                    let x = if pos.is_multiple_of(period) { env } else { 0.0 };
                     for k in 0..3 {
                         let [a1, a2] = FORMANTS[syl % 5][k];
                         let y = x + a1 * self.y1[k] + a2 * self.y2[k];

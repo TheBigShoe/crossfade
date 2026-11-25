@@ -50,7 +50,7 @@ fn the_voice_estimate_follows_the_analysis() {
         let mut enc = Encoder::new(&cfg).expect("valid");
         let mut packet = vec![];
         let mut sum = 0;
-        let frames: Vec<&[f32]> = pcm.chunks_exact(960).collect();
+        let frames = pcm.as_chunks::<960>().0;
         for (i, f) in frames.iter().enumerate() {
             enc.encode(f, &mut packet).expect("encodes");
             if i >= frames.len() / 2 {

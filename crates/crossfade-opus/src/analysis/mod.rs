@@ -11,7 +11,10 @@
 //! takes them in double (through `libm`), its approximations of `atan2` and `tanh`, no
 //! `mul_add`; so the analysis is the same bits on every platform, and within rounding of
 //! libopus's (whose FFT differs from ours in its last bits).
-#![allow(clippy::needless_range_loop)] // index loops as the reference writes them
+#![allow(clippy::needless_range_loop)]
+// index loops as the reference writes them
+// 1.442695 is the reference's rounded log2(e), not LOG2_E.
+#![allow(clippy::approx_constant)]
 
 mod mlp;
 mod mlp_data;
@@ -75,6 +78,7 @@ fn max16(a: f32, b: f32) -> f32 {
 }
 
 /// `fast_atan2f`: within about 1e-5 rad, 0 for a vanishing vector.
+#[allow(clippy::excessive_precision)] // the reference's literals
 fn fast_atan2f(y: f32, x: f32) -> f32 {
     const CA: f32 = 0.431_579_74;
     const CB: f32 = 0.678_484_03;
@@ -96,7 +100,7 @@ fn fast_atan2f(y: f32, x: f32) -> f32 {
 }
 
 /// `celt_maxabs16`, NaNs and all.
-fn maxabs(x: &[f32]) -> f32 {
+pub(crate) fn maxabs(x: &[f32]) -> f32 {
     let (mut maxval, mut minval) = (0.0f32, 0.0f32);
     for &v in x {
         maxval = max16(maxval, v);
@@ -214,11 +218,6 @@ impl TonalityAnalysis {
     /// Forgets everything (`tonality_analysis_reset`).
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
-    }
-
-    /// Whether anything was analysed since the last reset.
-    pub(crate) fn initialized(&self) -> bool {
-        self.initialized
     }
 
     /// Where [`get_info`](Self::get_info) reads next, to read a packet's frames one by one.
@@ -436,7 +435,7 @@ impl TonalityAnalysis {
                 n_e += be * 2.0 * (0.5 - noisiness[i]);
             }
             // Extreme energies would make NaNs further on.
-            if !(e < 1e9) || e.is_nan() {
+            if e.partial_cmp(&1e9) != Some(std::cmp::Ordering::Less) {
                 self.info[pos].valid = false;
                 return;
             }

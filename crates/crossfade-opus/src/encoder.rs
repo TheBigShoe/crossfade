@@ -1,8 +1,10 @@
 //! The Opus encoder: a port of libopus 1.5.2's `src/opus_encoder.c` (`opus_encode_native`,
 //! `opus_encode_frame_native`) for `OPUS_APPLICATION_AUDIO` and `OPUS_APPLICATION_VOIP`,
-//! without the tonality analysis (the reference's "analysis not valid" paths): the input
-//! filter (the 3 Hz DC filter, or for VoIP the high-pass following SILK's pitch), the 4 ms
-//! delay that keeps SILK, hybrid and CELT aligned, the voice estimate, the rate-driven
+//! with the tonality and speech/music analysis (`crate::analysis`, at the reference's
+//! complexity 9 always on): the input filter (the 3 Hz DC filter, or for VoIP the high-pass
+//! following SILK's pitch), the 4 ms delay that keeps SILK, hybrid and CELT aligned, the voice
+//! estimate (from the analysis's music probability, or the hint), activity for SILK and DTX,
+//! the detected bandwidth at low rates, the analysis handed to CELT, the rate-driven
 //! decisions with their hysteresis (mono or stereo, SILK/hybrid or CELT, the bandwidth from
 //! narrowband to fullband), SILK-only, hybrid (SILK then CELT from band 17 in one range
 //! coder, the rate split between them, the high band's gain and the stereo width) and
@@ -15,6 +17,7 @@
 //! switch in such a packet downmixes in its last frame and goes mono in the next packet (the
 //! reference sets `force_channels` for good).
 
+use crate::analysis::{AnalysisInfo, TonalityAnalysis, maxabs};
 use crate::celt::{
     CELT_DELAY, CeltEncodeFrame, CeltEncoder, OVERLAP, SilkInfo, WINDOW, exp2 as celt_exp2,
 };
@@ -40,6 +43,10 @@ const MAX_PACKET: usize = 3 * 1275 + 7;
 /// `NB_SPEECH_FRAMES_BEFORE_DTX` and `MAX_CONSECUTIVE_DTX` (20 ms frames).
 const NB_SPEECH_FRAMES_BEFORE_DTX: i32 = 10;
 const MAX_CONSECUTIVE_DTX: i32 = 20;
+/// The analysis's activity probability below which a frame may be inactive (`silk/define.h`).
+const DTX_ACTIVITY_THRESHOLD: f32 = 0.1;
+/// An inactive frame this much louder than the loudest active one so far (25 dB) is active.
+const PSEUDO_SNR_THRESHOLD: f32 = 316.23;
 
 /// The duration of each packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -78,7 +85,7 @@ impl FrameDuration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Signal {
-    /// No hint: the encoder assumes a little voice (libopus without its analysis).
+    /// No hint: the tonality analysis tells speech from music, as in libopus.
     #[default]
     Auto,
     /// Speech: SILK and hybrid up to higher rates.
@@ -391,6 +398,15 @@ impl StereoWidth {
     }
 }
 
+/// `compute_frame_energy`: the mean square of the frame, summed in order.
+fn frame_energy(pcm: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    for &v in pcm {
+        sum += v * v;
+    }
+    sum / pcm.len().max(1) as f32
+}
+
 /// `FLOAT2INT16`: full scale 1.0 to 16 bits, rounded to nearest even and saturated.
 fn float2int16(x: f32) -> i16 {
     (x * 32768.0).clamp(-32768.0, 32767.0).round_ties_even() as i16
@@ -438,10 +454,12 @@ struct FramePlan {
     equiv_rate: i32,
     to_celt: bool,
     is_silence: bool,
+    /// What the tonality analysis says of the frame.
+    analysis: AnalysisInfo,
 }
 
 /// An Opus encoder: 48 kHz PCM in, one standard Opus packet per call out. A port of libopus
-/// 1.5.2's float encoder at complexity 9 without the tonality analysis (its SILK layer the
+/// 1.5.2's float encoder at complexity 9, its tonality analysis included (its SILK layer the
 /// fixed-point build's); see the crate's `COPYING`.
 #[derive(Debug, Clone)]
 pub struct Encoder {
@@ -457,7 +475,14 @@ pub struct Encoder {
     celt: CeltEncoder,
     silk: SilkEncoder,
     silk_mode: EncControl,
-    /// The voice estimate of the last packet (for tests).
+    /// The tonality and speech/music analysis (`run_analysis`), at the reference's
+    /// complexity 9 always on.
+    analysis: Box<TonalityAnalysis>,
+    /// The analysis's percentage of voice, -1 when there is none (a reset keeps it, as in
+    /// libopus).
+    voice_ratio: i32,
+    /// What the last frame was told by the analysis, and the voice estimate (for tests).
+    pub(crate) last_analysis: AnalysisInfo,
     pub(crate) last_voice_est: i32,
     // From here on, what OPUS_RESET_STATE clears.
     bitrate: i32,
@@ -479,6 +504,8 @@ pub struct Encoder {
     /// The last [`ENCODER_BUFFER`] samples per channel, interleaved (`delay_buffer`).
     delay_buffer: [f32; ENCODER_BUFFER * 2],
     nb_no_activity_ms_q1: i32,
+    /// The energy of the loudest active frame, decaying.
+    peak_signal_energy: f32,
     nonfinal_frame: bool,
     final_range: u32,
 }
@@ -509,6 +536,9 @@ impl Encoder {
             celt: CeltEncoder::new(channels),
             silk: SilkEncoder::new(),
             silk_mode: EncControl::default(),
+            analysis: Box::default(),
+            voice_ratio: -1,
+            last_analysis: AnalysisInfo::default(),
             last_voice_est: 0,
             bitrate: user_bitrate,
             stream_channels: channels,
@@ -526,6 +556,7 @@ impl Encoder {
             width_mem: StereoWidth::default(),
             delay_buffer: [0.0; ENCODER_BUFFER * 2],
             nb_no_activity_ms_q1: 0,
+            peak_signal_energy: 0.0,
             nonfinal_frame: false,
             final_range: 0,
         };
@@ -553,6 +584,7 @@ impl Encoder {
     /// Forgets the stream, as if new (`OPUS_RESET_STATE`, which also starts SILK's controls
     /// afresh here).
     pub fn reset(&mut self) {
+        self.analysis.reset();
         self.celt.reset();
         self.silk = SilkEncoder::new();
         self.silk_mode = EncControl {
@@ -577,6 +609,7 @@ impl Encoder {
         self.width_mem = StereoWidth::default();
         self.delay_buffer = [0.0; ENCODER_BUFFER * 2];
         self.nb_no_activity_ms_q1 = 0;
+        self.peak_signal_energy = 0.0;
         self.nonfinal_frame = false;
         self.final_range = 0;
     }
@@ -658,8 +691,35 @@ impl Encoder {
         let mut max_data_bytes = out_data_bytes.min(MAX_FRAME_PACKET) as i32;
         self.final_range = 0;
 
-        // The analysis is not run, but digital silence is still seen.
-        let is_silence = pcm.iter().all(|v| v.abs() <= 1.0 / (1 << 24) as f32);
+        let is_silence = maxabs(pcm) <= 1.0 / (1 << 24) as f32;
+        let analysis_read_bak = self.analysis.read_position();
+        let analysis_info = self.analysis.run(pcm, ch, frame_size);
+        // The loudest active frame so far, for the activity of noisy ones.
+        if !is_silence && analysis_info.activity_probability > DTX_ACTIVITY_THRESHOLD {
+            self.peak_signal_energy = (0.999 * self.peak_signal_energy).max(frame_energy(pcm));
+        }
+        // The voice ratio of the last frame that was not silent.
+        if !is_silence {
+            self.voice_ratio = -1;
+        }
+        let mut detected_bandwidth = None;
+        if analysis_info.valid {
+            if self.config.signal == Signal::Auto {
+                let prob = match self.prev_mode {
+                    None => analysis_info.music_prob,
+                    Some(Mode::Celt) => analysis_info.music_prob_max,
+                    Some(_) => analysis_info.music_prob_min,
+                };
+                self.voice_ratio = libm::floor(0.5 + 100.0 * f64::from(1.0 - prob)) as i32;
+            }
+            detected_bandwidth = Some(match analysis_info.bandwidth {
+                ..=12 => Bandwidth::Narrow,
+                13..=14 => Bandwidth::Medium,
+                15..=16 => Bandwidth::Wide,
+                17..=18 => Bandwidth::SuperWide,
+                _ => Bandwidth::Full,
+            });
+        }
         let stereo_width = if ch == 2 && self.force_channels != Some(1) {
             self.width_mem.update(pcm, frame_size)
         } else {
@@ -728,6 +788,13 @@ impl Encoder {
         let voice_est: i32 = match (self.config.signal, self.config.application) {
             (Signal::Voice, _) => 127,
             (Signal::Music, _) => 0,
+            // At most 90% sure of speech for audio.
+            (Signal::Auto, Application::Audio) if self.voice_ratio >= 0 => {
+                ((self.voice_ratio * 327) >> 8).min(115)
+            }
+            (Signal::Auto, Application::Voip) if self.voice_ratio >= 0 => {
+                (self.voice_ratio * 327) >> 8
+            }
             (Signal::Auto, Application::Voip) => 115,
             (Signal::Auto, Application::Audio) => 48,
         };
@@ -756,8 +823,9 @@ impl Encoder {
             loss,
         );
 
-        // SILK's DTX where the general one (digital silence) does not apply.
-        self.silk_mode.use_dtx = self.config.dtx && !is_silence;
+        // SILK's DTX where the general one (the analysis's activity, or digital silence) does
+        // not apply.
+        self.silk_mode.use_dtx = self.config.dtx && !(analysis_info.valid || is_silence);
 
         if let Some(forced) = self.config.mode {
             self.mode = forced;
@@ -862,6 +930,24 @@ impl Encoder {
         if self.mode != Mode::Celt && max_rate < 15_000 {
             self.bandwidth = self.bandwidth.min(Bandwidth::Wide);
         }
+        // No bits above the bandwidth the analysis found, conservatively: never below
+        // wideband in SILK or hybrid (whose switches need redundancy), and only at low rates.
+        if let (Some(detected), None) = (detected_bandwidth, self.config.bandwidth) {
+            let sc = self.stream_channels as i32;
+            let celt = self.mode == Mode::Celt;
+            let min_detected = if equiv <= 18_000 * sc && celt {
+                Bandwidth::Narrow
+            } else if equiv <= 24_000 * sc && celt {
+                Bandwidth::Medium
+            } else if equiv <= 30_000 * sc {
+                Bandwidth::Wide
+            } else if equiv <= 44_000 * sc {
+                Bandwidth::SuperWide
+            } else {
+                Bandwidth::Full
+            };
+            self.bandwidth = self.bandwidth.min(detected.max(min_detected));
+        }
         let mut bandwidth = self.bandwidth;
         self.silk_mode.lbrr_coded = decide_fec(
             self.config.inband_fec,
@@ -894,6 +980,7 @@ impl Encoder {
             equiv_rate: equiv,
             to_celt,
             is_silence,
+            analysis: analysis_info,
         };
         if frame_size > 960 && self.mode != Mode::Silk {
             // CELT and hybrid frames are at most 20 ms: several in one packet.
@@ -913,6 +1000,8 @@ impl Encoder {
             if !to_mono {
                 self.prev_channels = self.stream_channels;
             }
+            // Each frame reads its own analysis from the start of the packet.
+            self.analysis.set_read_position(analysis_read_bak);
             let mut frames: Vec<Vec<u8>> = Vec::with_capacity(nb_frames);
             let mut tot_size = 0;
             let mut dtx_count = 0;
@@ -927,6 +1016,7 @@ impl Encoder {
                 curr_max = curr_max.min(max_len_sum / nb_frames);
                 curr_max = curr_max.min(max_len_sum - tot_size);
                 let mut frame = vec![];
+                let frame_analysis = self.analysis.get_info(960);
                 self.encode_frame_native(
                     &pcm[i * ch * 960..(i + 1) * ch * 960],
                     960,
@@ -935,6 +1025,7 @@ impl Encoder {
                         redundancy: frame_redundancy,
                         prefill: prefill && i == 0,
                         to_celt: frame_to_celt,
+                        analysis: frame_analysis,
                         ..plan
                     },
                     &mut frame,
@@ -1028,8 +1119,17 @@ impl Encoder {
         let total_buffer = DELAY_COMPENSATION;
         let frame_rate = (48_000 / frame_size) as i32;
         let max_data_bytes = max_data_bytes.max(1);
-        // Without the analysis, SILK decides activity itself, except on digital silence.
-        let activity = plan.is_silence.then_some(false);
+        // Activity from the analysis (a noisy frame much louder than the loudest active one
+        // is active too); without it SILK decides.
+        let activity = if plan.is_silence {
+            Some(false)
+        } else if plan.analysis.valid {
+            let active = plan.analysis.activity_probability >= DTX_ACTIVITY_THRESHOLD;
+            Some(active || self.peak_signal_energy < PSEUDO_SNR_THRESHOLD * frame_energy(pcm))
+        } else {
+            None
+        };
+        self.last_analysis = plan.analysis;
         let mut redundancy = plan.redundancy;
         let mut celt_to_silk = plan.celt_to_silk;
         let mut prefill = plan.prefill.then_some(Prefill::Reset);
@@ -1320,6 +1420,9 @@ impl Encoder {
                 constrained_vbr: cvbr,
                 silk_info,
             };
+        if redundancy || self.mode != Mode::Silk {
+            self.celt.set_analysis(&plan.analysis);
+        }
         let mut redundant: Vec<u8> = vec![];
         let mut redundant_rng = 0u32;
         // The 5 ms redundant frame of a switch from CELT, first: CELT starts afresh after it.
@@ -1411,8 +1514,9 @@ impl Encoder {
         self.prev_channels = self.stream_channels;
         self.first = false;
 
-        // The general DTX: digital silence after 200 ms of it is sent as TOC bytes.
-        if self.config.dtx && plan.is_silence {
+        // The general DTX: inactivity (or digital silence) after 200 ms of it is sent as TOC
+        // bytes.
+        if self.config.dtx && (plan.analysis.valid || plan.is_silence) && activity == Some(false) {
             self.nb_no_activity_ms_q1 += (2 * 1000 * frame_size / 48_000) as i32;
             let q1 = self.nb_no_activity_ms_q1;
             if q1 > NB_SPEECH_FRAMES_BEFORE_DTX * 20 * 2 {

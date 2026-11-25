@@ -19,6 +19,7 @@ pub(super) struct Mlp {
 }
 
 /// `tansig_approx`: a rational approximation of `tanh`, clamped to [-1, 1].
+#[allow(clippy::excessive_precision)] // the reference's literals
 fn tansig(x: f32) -> f32 {
     const N0: f32 = 952.528_015_14;
     const N1: f32 = 96.392_356_87;
@@ -49,7 +50,8 @@ fn gemm_accum(out: &mut [f32], weights: &[i8], stride: usize, x: &[f32]) {
 }
 
 impl Mlp {
-    /// Forgets the recurrent state.
+    /// Forgets the recurrent state (the analyser starts afresh whole).
+    #[cfg(test)]
     pub(super) fn reset(&mut self) {
         self.state = [0.0; GRU];
     }

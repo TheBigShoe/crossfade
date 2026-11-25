@@ -1,3 +1,5 @@
+#![allow(clippy::excessive_precision)] // libopus's outputs as it printed them
+
 use super::*;
 
 #[test]
