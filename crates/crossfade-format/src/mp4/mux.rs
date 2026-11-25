@@ -22,7 +22,8 @@ struct Mp4Muxer {
     sink: Box<dyn MediaSink>,
     stream: StreamInfo,
     ilst: Vec<u8>,
-    cookie: Vec<u8>,
+    /// The codec's header, checked against the stream; the encoder may give it late.
+    cookie: Option<Vec<u8>>,
     /// Where the next byte goes.
     pos: u64,
     sizes: Vec<u32>,
@@ -47,8 +48,18 @@ pub fn create(
     stream: &StreamInfo,
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
-    // Checked before a byte is written: the entry is the codec's to refuse.
-    sample_entry::entry(stream, &stream.extradata)?;
+    // All of this is checked before a byte is written.
+    sample_entry::supports(stream.codec)?;
+    let cookie = (!stream.extradata.is_empty()).then(|| stream.extradata.clone());
+    if let Some(cookie) = &cookie {
+        sample_entry::entry(stream, cookie)?;
+    }
+    sink.seek(SeekFrom::Current(0)).map_err(|e| Error::Unsupported {
+        what: format!(
+            "mp4: writing needs an output that can seek, to fill in the size of mdat at the \
+             end ({e})"
+        ),
+    })?;
     let ilst = ilst::write(tags)?;
     let mut head = FTYP.to_vec();
     head.extend_from_slice(&mdat_header(0));
@@ -57,7 +68,7 @@ pub fn create(
         sink,
         stream: stream.clone(),
         ilst,
-        cookie: stream.extradata.clone(),
+        cookie,
         pos: DATA_AT,
         sizes: Vec::new(),
         durations: Vec::new(),
@@ -136,12 +147,7 @@ impl Mp4Muxer {
             sizes.extend_from_slice(&s.to_be_bytes());
         }
         let stsz = full(b"stsz", 0, 0, &[&sizes])?;
-        let stco = full(
-            b"stco",
-            0,
-            0,
-            &[&table(1, &(DATA_AT as u32).to_be_bytes())],
-        )?;
+        let stco = full(b"stco", 0, 0, &[&table(1, &(DATA_AT as u32).to_be_bytes())])?;
         boxed(b"stbl", &[&stsd, &stts, &stsc, &stsz, &stco])
     }
 
@@ -214,7 +220,12 @@ impl Mp4Muxer {
         let url = full(b"url ", 0, 1, &[])?;
         let dref = full(b"dref", 0, 0, &[&table(1, &url)])?;
         let dinf = boxed(b"dinf", &[&dref])?;
-        let entry = sample_entry::entry(&self.stream, &self.cookie)?;
+        let cookie = self.cookie.as_deref().ok_or_else(|| Error::Malformed {
+            what: "mp4: the alac track has no cookie: it comes with the stream's extradata or \
+                   with set_extradata before finish"
+                .into(),
+        })?;
+        let entry = sample_entry::entry(&self.stream, cookie)?;
         let minf = boxed(b"minf", &[&smhd, &dinf, &self.stbl(&entry)?])?;
         let mdia = boxed(b"mdia", &[&mdhd, &hdlr, &minf])?;
         let edts = if t.priming > 0 || t.audible < t.total {
@@ -242,7 +253,10 @@ impl Muxer for Mp4Muxer {
     fn write_packet(&mut self, packet: &Packet) -> Result<(), Error> {
         if packet.stream != 0 {
             return Err(Error::Unsupported {
-                what: format!("mp4: the writer holds one track, not stream {}", packet.stream),
+                what: format!(
+                    "mp4: the writer holds one track, not stream {}",
+                    packet.stream
+                ),
             });
         }
         match self.start {
@@ -283,12 +297,19 @@ impl Muxer for Mp4Muxer {
         Ok(())
     }
 
+    fn set_extradata(&mut self, extradata: &[u8]) -> Result<(), Error> {
+        sample_entry::entry(&self.stream, extradata)?;
+        self.cookie = Some(extradata.to_vec());
+        Ok(())
+    }
+
     fn finish(&mut self) -> Result<(), Error> {
         let moov = self.moov(self.timeline()?)?;
         self.sink.write_all(&moov)?;
         self.sink.seek(SeekFrom::Start(MDAT_AT))?;
         self.sink.write_all(&mdat_header(self.pos - DATA_AT))?;
-        self.sink.seek(SeekFrom::Start(self.pos + moov.len() as u64))?;
+        self.sink
+            .seek(SeekFrom::Start(self.pos + moov.len() as u64))?;
         self.sink.finish()?;
         Ok(())
     }

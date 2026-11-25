@@ -1,8 +1,9 @@
 //! The sample description a codec needs in an MP4 track, the writer's side of `entry.rs`. A
-//! codec is added by giving `entry` another arm.
+//! codec is added by giving `supports` and `entry` another arm.
 
 use super::build::{boxed, full};
-use crossfade_core::{CodecId, Error, StreamInfo};
+use crossfade_alac::Config;
+use crossfade_core::{ChannelLayout, CodecId, Error, SampleFormat, StreamInfo};
 
 pub(super) fn refused(codec: CodecId) -> Error {
     Error::Unsupported {
@@ -10,8 +11,16 @@ pub(super) fn refused(codec: CodecId) -> Error {
     }
 }
 
-/// The track's `stsd` entry for `stream`; `cookie` is the codec's header as `extradata`
-/// carries it.
+/// Whether a track of `codec` can be written.
+pub(super) fn supports(codec: CodecId) -> Result<(), Error> {
+    match codec {
+        CodecId::Alac => Ok(()),
+        other => Err(refused(other)),
+    }
+}
+
+/// The track's `stsd` entry for `stream`, from the codec's header as `extradata` carries it;
+/// a header that does not describe the stream is an error, since a reader trusts the header.
 pub(super) fn entry(stream: &StreamInfo, cookie: &[u8]) -> Result<Vec<u8>, Error> {
     match stream.codec {
         CodecId::Alac => alac(stream, cookie),
@@ -55,21 +64,92 @@ fn alac_layout_tag(channels: u8) -> Option<u32> {
     Some(layout << 16 | u32::from(channels))
 }
 
+fn mismatch(what: &str) -> Error {
+    Error::Unsupported {
+        what: format!("mp4: the alac cookie and the stream disagree: {what}"),
+    }
+}
+
+/// A cookie is the 24-byte config, then optionally the 24-byte `chan` atom (its size, `chan`,
+/// version and flags, the layout tag, two reserved words).
+const COOKIE_WITH_CHAN: usize = Config::LEN + 24;
+
 fn alac(stream: &StreamInfo, cookie: &[u8]) -> Result<Vec<u8>, Error> {
-    let config = crossfade_alac::Config::parse(cookie).map_err(|e| Error::Unsupported {
+    let chan_atom = match cookie.len() {
+        Config::LEN => None,
+        COOKIE_WITH_CHAN if cookie[Config::LEN + 4..Config::LEN + 8] == *b"chan" => {
+            Some(&cookie[Config::LEN..])
+        }
+        n => {
+            return Err(Error::Unsupported {
+                what: format!(
+                    "mp4: an alac cookie is {} bytes, or {COOKIE_WITH_CHAN} with a chan atom, \
+                     not {n}",
+                    Config::LEN
+                ),
+            });
+        }
+    };
+    let config = Config::parse(&cookie[..Config::LEN]).map_err(|e| Error::Unsupported {
         what: format!("mp4: {e}"),
     })?;
-    let inner = full(b"alac", 0, 0, &[&cookie[..crossfade_alac::Config::LEN]])?;
+    let audio = &stream.audio;
+    let channels = u16::from(config.channels);
+    if channels != audio.layout().channels() {
+        return Err(mismatch(&format!(
+            "it says {channels} channels, the stream has {}",
+            audio.layout().channels()
+        )));
+    }
+    if config.sample_rate != audio.sample_rate() {
+        return Err(mismatch(&format!(
+            "it says a rate of {} Hz, the stream has {}",
+            config.sample_rate,
+            audio.sample_rate()
+        )));
+    }
+    // What the reader will make of the depth; the stream must be that, or it comes back changed.
+    let (format, raw) = match config.bit_depth {
+        16 => (SampleFormat::S16, None),
+        20 => (SampleFormat::S24, Some(20)),
+        24 => (SampleFormat::S24, None),
+        _ => (SampleFormat::S32, None),
+    };
+    let stream_raw = stream
+        .bits_per_raw_sample
+        .filter(|&b| usize::from(b) != audio.format().bits());
+    if audio.format() != format || stream_raw != raw {
+        return Err(mismatch(&format!(
+            "it says a bit depth of {}, the stream is {:?} with {:?} significant bits",
+            config.bit_depth,
+            audio.format(),
+            stream.bits_per_raw_sample
+        )));
+    }
+    // The reader gives ALAC's own layout for the count, so no other layout can come back.
+    let alac = crossfade_alac::wave_layout(config.channels)
+        .and_then(|w| ChannelLayout::from_mask(w.mask, channels));
+    if alac.as_ref() != Some(audio.layout()) {
+        return Err(Error::Unsupported {
+            what: format!(
+                "mp4: alac stores only its own channel layout for {channels} channels, \
+                 not {:?}",
+                audio.layout()
+            ),
+        });
+    }
+    let inner = full(b"alac", 0, 0, &[&cookie[..Config::LEN]])?;
     // Mono and stereo are what a reader assumes; more channels need their layout said.
-    let chan = match alac_layout_tag(config.channels) {
-        Some(tag) => full(b"chan", 0, 0, &[&tag.to_be_bytes(), &[0; 8]])?,
-        None => Vec::new(),
+    let chan = match (chan_atom, alac_layout_tag(config.channels)) {
+        (Some(atom), _) => atom.to_vec(),
+        (None, Some(tag)) => full(b"chan", 0, 0, &[&tag.to_be_bytes(), &[0; 8]])?,
+        (None, None) => Vec::new(),
     };
     sound(
         b"alac",
-        u16::from(config.channels),
+        channels,
         u16::from(config.bit_depth),
-        stream.audio.sample_rate(),
+        audio.sample_rate(),
         &[inner, chan].concat(),
     )
 }

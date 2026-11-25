@@ -730,7 +730,12 @@ fn ilst_writing_keeps_what_the_reader_would_misread_as_free_form_items() {
 #[test]
 fn ilst_writing_drops_what_the_reader_could_not_give_back() {
     // Empty values and names are not items; `iTunSMPB` is the timeline's, not a tag's.
-    let tags = tags_of(&[("TITLE", ""), ("", "x"), ("iTunSMPB", " 0 0 0 0"), ("A", "b")]);
+    let tags = tags_of(&[
+        ("TITLE", ""),
+        ("", "x"),
+        ("iTunSMPB", " 0 0 0 0"),
+        ("A", "b"),
+    ]);
     let got = ilst::parse(&ilst::write(&tags).unwrap()).tags;
     assert_eq!(got, tags_of(&[("A", "b")]));
     assert!(ilst::write(&Tags::new()).unwrap().is_empty());

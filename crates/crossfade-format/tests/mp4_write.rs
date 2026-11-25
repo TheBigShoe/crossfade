@@ -328,11 +328,15 @@ fn a_cookie_may_come_only_with_set_extradata_but_must_come() {
     let mut stream = original.stream.clone();
     stream.extradata.clear();
     let (mut muxer, _) = open_muxer(&stream, &Tags::new()).unwrap();
-    muxer.write_packet(&original.packets[0]).unwrap();
+    for p in &original.packets {
+        muxer.write_packet(p).unwrap();
+    }
     let e = message(muxer.finish().unwrap_err());
     assert!(e.contains("cookie"), "{e}");
     let (mut muxer, sink) = open_muxer(&stream, &Tags::new()).unwrap();
-    muxer.write_packet(&original.packets[0]).unwrap();
+    for p in &original.packets {
+        muxer.write_packet(p).unwrap();
+    }
     muxer.set_extradata(&original.stream.extradata).unwrap();
     muxer.finish().unwrap();
     assert_eq!(
