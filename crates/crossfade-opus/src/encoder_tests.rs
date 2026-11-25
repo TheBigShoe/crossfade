@@ -360,3 +360,73 @@ fn unconstrained_vbr_averages_near_the_bitrate() {
         );
     }
 }
+
+/// A frame-sized piece of signal from a recipe: a tone at `freq`, noise, an impulse, at an
+/// amplitude, with some samples replaced by raw bit patterns (NaN, infinities included).
+fn recipe_frame(
+    n: usize,
+    channels: usize,
+    (freq, noise, impulse, amp): (f32, f32, bool, f32),
+    raw: &[(usize, u32)],
+    seed: &mut u32,
+) -> Vec<f32> {
+    let tau = 2.0 * std::f32::consts::PI;
+    let mut out: Vec<f32> = (0..n * channels)
+        .map(|k| {
+            *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let r = ((*seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
+            let t = (k / channels) as f32 / 48_000.0;
+            let imp = if impulse && k / channels == n / 3 {
+                1.0
+            } else {
+                0.0
+            };
+            amp * (libm::sinf(tau * freq * t) + noise * r + imp)
+        })
+        .collect();
+    for &(at, bits) in raw {
+        let i = at % out.len();
+        out[i] = f32::from_bits(bits);
+    }
+    out
+}
+
+fn duration() -> impl proptest::strategy::Strategy<Value = FrameDuration> {
+    proptest::sample::select(vec![
+        FrameDuration::Ms2_5,
+        FrameDuration::Ms5,
+        FrameDuration::Ms10,
+        FrameDuration::Ms20,
+    ])
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+    #[test]
+    fn any_config_and_signal_decodes_with_the_final_range(
+        channels in 1u8..=2,
+        bitrate in 500u32..700_000,
+        vbr in proptest::bool::ANY,
+        constrained in proptest::bool::ANY,
+        d in duration(),
+        frames in proptest::collection::vec(
+            (
+                (10.0f32..20_000.0, 0.0f32..1.0, proptest::bool::ANY, 0.0f32..4.0),
+                proptest::collection::vec((0usize..2000, proptest::num::u32::ANY), 0..3),
+            ),
+            1..6,
+        ),
+    ) {
+        let mut cfg = config(channels, bitrate, vbr, d);
+        cfg.constrained_vbr = constrained;
+        let n = d.samples();
+        let mut seed = bitrate;
+        let pcm: Vec<f32> = frames
+            .iter()
+            .flat_map(|(r, raw)| recipe_frame(n, usize::from(channels), *r, raw, &mut seed))
+            .collect();
+        let (_, out) = encode_and_decode(&cfg, &pcm);
+        proptest::prop_assert!(out.iter().all(|v| v.is_finite()));
+    }
+}
