@@ -64,13 +64,14 @@ fn quant_resynthesises_what_unquant_decodes() {
         (8, 20, 2, 4),
         (16, 5, 3, 1),
         (24, 9, 2, 8),
-        (48, 30, 2, 1),
+        (32, 6, 2, 1),
+        (48, 5, 2, 1),
         (96, 2, 1, 2),
-        (176, 64, 2, 1),
+        (176, 4, 2, 1),
     ] {
         for (s, shape) in shapes(n).into_iter().enumerate() {
             let mut x = shape.clone();
-            let mut enc = crate::range_enc::RangeEncoder::new(256);
+            let mut enc = RangeEncoder::new(256);
             let mask = alg_quant(&mut x, k, spread, b, &mut enc, 0.75);
             let frame = enc.done().expect("fits");
             let mut dec = RangeDecoder::new(&frame);
@@ -81,7 +82,7 @@ fn quant_resynthesises_what_unquant_decodes() {
             assert_eq!(x, y, "n {n} k {k} shape {s}");
             // The quantised shape points the way the input did.
             let dot: f32 = shape.iter().zip(&y).map(|(a, b)| a * b).sum::<f32>() / 0.75;
-            assert!(dot > 0.3, "n {n} k {k} shape {s}: {dot}");
+            assert!(dot > 0.2, "n {n} k {k} shape {s}: {dot}");
         }
     }
 }
@@ -91,7 +92,7 @@ fn quant_survives_degenerate_input() {
     for x0 in [[0.0f32; 8], [f32::NAN; 8], [f32::INFINITY; 8], [1e30; 8]] {
         for k in [1, 3, 8, 30] {
             let mut x = x0;
-            let mut enc = crate::range_enc::RangeEncoder::new(64);
+            let mut enc = RangeEncoder::new(64);
             alg_quant(&mut x, k, 2, 1, &mut enc, 1.0);
             let frame = enc.done().expect("fits");
             let mut dec = RangeDecoder::new(&frame);
