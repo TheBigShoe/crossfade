@@ -238,7 +238,9 @@ fn alac_refuses_another_layout_and_says_what_would_work() {
     let mut io = MemoryIo::new();
     let positioned =
         |positions: Vec<crossfade_core::Channel>| ChannelLayout::from_positions(positions).unwrap();
-    for (name, layout) in [
+    // A plain WAV header carries no layout, so the probed stream is given the one under test.
+    let limits = Limits::default();
+    let streams: std::collections::HashMap<&str, _> = [
         ("four.wav", ChannelLayout::unpositioned(4).unwrap()),
         (
             "quad.wav",
@@ -247,22 +249,26 @@ fn alac_refuses_another_layout_and_says_what_would_work() {
         ("eight.wav", ChannelLayout::unpositioned(8).unwrap()),
         ("seven1.wav", ChannelLayout::from_name("7.1").unwrap()),
         ("five1.wav", ChannelLayout::from_name("5.1").unwrap()),
-    ] {
-        io.insert(
-            name,
-            sine_wav(&spec(8000, SampleFormat::S16, layout), 3000).1,
-        );
-    }
-    let limits = Limits::default();
-    let streams: std::collections::HashMap<&str, _> = [
-        "four.wav",
-        "quad.wav",
-        "eight.wav",
-        "seven1.wav",
-        "five1.wav",
     ]
     .into_iter()
-    .map(|n| (n, probe(n, &mut io, &limits).unwrap().streams[0].clone()))
+    .map(|(name, layout)| {
+        let n = usize::from(layout.channels());
+        io.insert(
+            name,
+            sine_wav(
+                &spec(
+                    8000,
+                    SampleFormat::S16,
+                    ChannelLayout::unpositioned(n as u16).unwrap(),
+                ),
+                3000,
+            )
+            .1,
+        );
+        let mut stream = probe(name, &mut io, &limits).unwrap().streams[0].clone();
+        stream.audio = spec(8000, SampleFormat::S16, layout);
+        (name, stream)
+    })
     .collect();
     let text = |input: &str, settings: &AudioSettings| {
         validate(&streams[input], "o.m4a", settings).map(|p| p.output.audio.layout().clone())
@@ -300,7 +306,7 @@ fn alac_refuses_another_layout_and_says_what_would_work() {
         ChannelLayout::from_name("4.0").unwrap()
     );
     assert!(text("five1.wav", &none).is_ok());
-    assert!(text("seven1.wav", &channels("5.1")).is_ok());
+    assert!(text("seven1.wav", &channels("stereo")).is_ok());
 }
 
 #[test]
