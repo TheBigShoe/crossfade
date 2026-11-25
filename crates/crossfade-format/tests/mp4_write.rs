@@ -165,6 +165,78 @@ fn every_alac_fixture_reads_back_the_same_after_a_rewrite() {
     }
 }
 
+fn total_frames(packets: &[Packet]) -> u64 {
+    packets.iter().map(|p| p.duration).sum()
+}
+
+fn message(e: Error) -> String {
+    match e {
+        Error::Unsupported { what } | Error::Malformed { what } => what,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn a_stream_shorter_than_its_packets_is_cut_by_an_edit_list() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    let total = total_frames(&original.packets);
+    let mut stream = original.stream.clone();
+    stream.frames = Some(total - 100);
+    let again = read(write(&stream, &original.packets, &original.tags));
+    assert_eq!(again.stream.frames, Some(total - 100));
+    assert_eq!(again.packets, original.packets);
+}
+
+#[test]
+fn a_stream_with_no_length_plays_whole() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    let mut stream = original.stream.clone();
+    stream.frames = None;
+    let again = read(write(&stream, &original.packets, &original.tags));
+    assert_eq!(again.stream.frames, Some(total_frames(&original.packets)));
+}
+
+#[test]
+fn priming_frames_before_pts_zero_come_back_as_negative_pts() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    let mut packets = original.packets.clone();
+    for p in &mut packets {
+        p.pts -= 1000;
+    }
+    let mut stream = original.stream.clone();
+    stream.frames = Some(total_frames(&packets) - 1000);
+    let again = read(write(&stream, &packets, &original.tags));
+    assert_eq!(again.packets, packets);
+    assert_eq!(again.stream.frames, stream.frames);
+}
+
+#[test]
+fn a_length_the_packets_cannot_back_is_refused_not_written_short() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    let mut stream = original.stream.clone();
+    stream.frames = Some(total_frames(&original.packets) + 1);
+    let (mut muxer, _) = open_muxer(&stream, &original.tags).unwrap();
+    for p in &original.packets {
+        muxer.write_packet(p).unwrap();
+    }
+    let e = message(muxer.finish().unwrap_err());
+    assert!(e.contains("10008 frames") && e.contains("10007"), "{e}");
+}
+
+#[test]
+fn packets_must_follow_one_another_on_the_timeline() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    let (mut muxer, _) = open_muxer(&original.stream, &original.tags).unwrap();
+    muxer.write_packet(&original.packets[0]).unwrap();
+    let e = message(muxer.write_packet(&original.packets[2]).unwrap_err());
+    assert!(e.contains("follow"), "{e}");
+    let (mut muxer, _) = open_muxer(&original.stream, &original.tags).unwrap();
+    let mut late = original.packets[0].clone();
+    late.pts = 5;
+    let e = message(muxer.write_packet(&late).unwrap_err());
+    assert!(e.contains("starts after 0"), "{e}");
+}
+
 #[test]
 fn layouts_above_stereo_are_stored_as_afconvert_stores_them() {
     for name in ALAC_FIXTURES {
