@@ -130,6 +130,33 @@ fn cancel_asks_the_token_and_shows_cancelling_until_the_runner_reports(cx: &mut 
 }
 
 #[gpui_test]
+fn a_long_failure_message_wraps_inside_the_dock_instead_of_being_cut_off(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    enqueue(cx, &rig, "a.wav", "a-out.wav");
+    let message =
+        "i/o error: /proc/crossfade-nope/long.wav: No such file or directory (os error 2)";
+    send(
+        cx,
+        &rig,
+        0,
+        RunnerEvent::Failed {
+            message: message.into(),
+        },
+    );
+    let (line, dock) = cx
+        .update_window(rig.window, |_, window, _| {
+            (
+                window.find("queue-state-0").bounds(),
+                window.find("queue-dock").bounds(),
+            )
+        })
+        .unwrap();
+    assert!(line.right() <= dock.right(), "{line:?} vs {dock:?}");
+    // Too long for one line of the dock: all of it shows on the lines below.
+    assert!(line.size.height > px(30.), "one line: {line:?}");
+}
+
+#[gpui_test]
 fn a_failure_shows_its_message_and_retry_queues_the_same_request_again(cx: &mut TestAppContext) {
     let rig = rig_with_input(cx);
     enqueue(cx, &rig, "a.wav", "a-out.wav");

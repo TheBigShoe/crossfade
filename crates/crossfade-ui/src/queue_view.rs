@@ -383,8 +383,17 @@ impl Workspace {
                     .text_size(LABEL_SIZE)
                     .child(
                         div()
+                            .id(SharedString::from(format!("queue-state-{n}")))
+                            .test_support()
                             .min_w_0()
-                            .truncate()
+                            // A failure is read once and has nowhere else to be read: it wraps.
+                            .map(|line| {
+                                if failed {
+                                    line.flex_1()
+                                } else {
+                                    line.truncate()
+                                }
+                            })
                             .text_color(if failed { danger } else { muted })
                             .child(SharedString::from(item_line(item))),
                     )

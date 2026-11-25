@@ -129,7 +129,15 @@ impl Workspace {
             .child(
                 h_flex()
                     .size_full()
-                    .child(div().flex_1().min_w_0().h_full().child(content))
+                    // Clips: at the narrowest window the dock leaves the inspector no width.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(content),
+                    )
                     .children(dock),
             )
             .on_drag_move::<ExternalPaths>(cx.listener(|this, _, _, cx| {

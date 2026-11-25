@@ -8,6 +8,7 @@ use crossfade_app::analysis::{Analyzer, State};
 use crossfade_core::Limits;
 use crossfade_graph::CancelToken;
 
+use crate::actions::{WaveformFit, WaveformPanRight, WaveformZoomIn};
 use crate::config_test_support::TempDir as ConfigDir;
 use crate::prelude::*;
 use crate::test_support::{Rig, add_paths, click, draw, has, open_rig, open_rig_in, press};
@@ -203,6 +204,94 @@ fn double_click_fits_the_whole_file(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     assert_eq!(fpp(cx, &strip), fit);
+}
+
+/// One frame as the platform draws it: no refresh first, so a cached view is reused unless it
+/// was notified before the frame began.
+fn one_frame(cx: &mut TestAppContext, window: AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    cx.run_until_parked();
+}
+
+fn lanes_show_the_view(cx: &mut TestAppContext, strip: &Entity<WaveformStrip>) -> bool {
+    strip.read_with(cx, |s, cx| {
+        let v = s.view();
+        s.lanes_painted(cx) == Some((v.start(), v.frames_per_pixel(), v.width()))
+    })
+}
+
+#[gpui_test]
+fn the_frame_after_a_zoom_pan_or_fit_paints_the_new_range(cx: &mut TestAppContext) {
+    let (rig, _) = one_file(cx);
+    finish(cx, &rig);
+    let strip = strip(cx, &rig);
+    click(cx, rig.window, "waveform-strip");
+    // Dispatched straight to the focus: `press` draws a refreshed frame of its own afterwards.
+    let actions: [Box<dyn Action>; 3] = [
+        Box::new(WaveformZoomIn),
+        Box::new(WaveformPanRight),
+        Box::new(WaveformFit),
+    ];
+    for action in actions {
+        let name = action.name();
+        cx.update_window(rig.window, |_, window, cx| {
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        one_frame(cx, rig.window);
+        assert!(lanes_show_the_view(cx, &strip), "after {name}");
+    }
+}
+
+#[gpui_test]
+fn a_resize_asks_for_the_frame_that_paints_the_new_width(cx: &mut TestAppContext) {
+    let (rig, _) = one_file(cx);
+    finish(cx, &rig);
+    let strip = strip(cx, &rig);
+    let before = strip.read_with(cx, |s, _| s.view().width());
+    VisualTestContext::from_window(rig.window, cx).simulate_resize(size(px(800.), px(500.)));
+    // The resize's own frame lays the strip out and only then learns its new width.
+    one_frame(cx, rig.window);
+    assert_ne!(strip.read_with(cx, |s, _| s.view().width()), before);
+    let asked = cx
+        .update_window(rig.window, |_, window, cx| window.simulate_next_frame(cx))
+        .unwrap();
+    assert!(asked > 0, "no frame was asked for after the width changed");
+    cx.run_until_parked();
+    one_frame(cx, rig.window);
+    assert!(lanes_show_the_view(cx, &strip));
+}
+
+#[gpui_test]
+fn a_narrow_strip_never_cuts_a_readout_figure_from_the_left(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    // Long enough for a loudness range: the readout's three figures.
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480_000);
+    add_paths(cx, &rig, &[&a]);
+    finish(cx, &rig);
+    // The narrowest window: the readout no longer fits beside the transport.
+    VisualTestContext::from_window(rig.window, cx).simulate_resize(size(px(640.), px(400.)));
+    draw(cx, rig.window);
+    let (line, segments) = cx
+        .update_window(rig.window, |_, window, _| {
+            let line = window.find("waveform-readout").bounds();
+            let segments: Vec<Bounds<Pixels>> = (0..5usize)
+                .filter_map(|n| window.try_find(("waveform-readout-segment", n)))
+                .map(|s| s.bounds())
+                .collect();
+            (line, segments)
+        })
+        .unwrap();
+    assert_eq!(segments.len(), 5, "three figures and two separators");
+    for s in segments {
+        // A figure cut at its left reads as another number ("12.7" for "−12.7").
+        assert!(
+            s.left() >= line.left() && s.right() <= line.right(),
+            "{s:?} outside {line:?}"
+        );
+    }
 }
 
 fn secondary() -> Modifiers {

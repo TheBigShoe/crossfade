@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crossfade_app::analysis::{Analyzer, Snapshot, State};
 use crossfade_app::player::{Follow, Player, State as PlayState, transport_text};
 use crossfade_app::strip::{Strip, Wake};
-use crossfade_app::waveview::{Lane, LanePlan, WaveView, readout};
+use crossfade_app::waveview::{Lane, LanePlan, Segment, WaveView, readout};
 use crossfade_core::Limits;
 
 use crate::actions::{
@@ -60,10 +60,13 @@ struct Lanes {
     planned: usize,
     known: bool,
     columns: usize,
+    /// The key of the last render: a frame that reused the cache left it behind `key`.
+    rendered: Option<LanesKey>,
 }
 
 impl Render for Lanes {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.rendered = self.key.clone();
         let Some(key) = self.key.clone() else {
             return div().into_any_element();
         };
@@ -184,6 +187,7 @@ impl WaveformStrip {
                 planned: 1,
                 known: false,
                 columns: 0,
+                rendered: None,
             }),
             player,
             audio_note,
@@ -200,6 +204,13 @@ impl WaveformStrip {
 
     pub fn view(&self) -> &WaveView {
         self.strip.view()
+    }
+
+    /// The range and width the painted lanes were last rendered for: (start, frames per
+    /// pixel, width).
+    pub fn lanes_painted(&self, cx: &App) -> Option<(u64, u64, u32)> {
+        let key = self.lanes.read(cx).rendered.as_ref()?;
+        Some((key.start, key.fpp, key.width))
     }
 
     pub fn has_analysis(&self) -> bool {
@@ -541,6 +552,7 @@ impl WaveformStrip {
                 planned,
                 known,
                 columns,
+                rendered: l.rendered.take(),
             };
             cx.notify();
         });
@@ -585,15 +597,19 @@ impl WaveformStrip {
         // Measures the lanes' place without painting: the pointer maths and the width.
         let measure = canvas(
             |bounds, _, _| bounds,
-            move |_, bounds, _, cx| {
+            move |_, bounds, window, cx| {
                 left.set(f32::from(bounds.origin.x));
                 let w = f32::from(bounds.size.width).floor() as u32;
-                entity.update(cx, |this, cx| {
-                    if this.strip.view().width() != w {
-                        this.strip.view_mut().set_width(w);
-                        cx.notify();
-                    }
+                let changed = entity.update(cx, |this, _| {
+                    let changed = this.strip.view().width() != w;
+                    this.strip.view_mut().set_width(w);
+                    changed
                 });
+                // This frame drew the old width, and a notify made while drawing schedules
+                // no frame (it showed on Linux as blank lanes until the pointer moved).
+                if changed {
+                    window.request_animation_frame();
+                }
             },
         )
         .absolute()
@@ -748,21 +764,41 @@ impl WaveformStrip {
             }));
 
         let line = readout(snapshot);
+        // A figure keeps the separator before it, so the line breaks between figures. Right
+        // aligned but never clipped at its left, where "−12.7" would read as "12.7": it wraps,
+        // and a figure wider than the whole line truncates at its right.
+        let mut groups: Vec<Vec<(usize, Segment)>> = Vec::new();
+        for (n, segment) in line.segments.into_iter().enumerate() {
+            if n % 2 == 1 || groups.is_empty() {
+                groups.push(Vec::new());
+            }
+            if let Some(group) = groups.last_mut() {
+                group.push((n, segment));
+            }
+        }
         let readout_line = h_flex()
             .id("waveform-readout")
             .test_support()
             .flex_1()
             .min_w_0()
+            .flex_wrap()
             .justify_end()
-            .overflow_hidden()
-            .h(LINE_HEIGHT)
             .line_height(LINE_HEIGHT)
             .text_size(LABEL_SIZE)
-            .children(line.segments.into_iter().map(|segment| {
-                div()
-                    .whitespace_nowrap()
-                    .text_color(if segment.warn { warning } else { muted })
-                    .child(SharedString::from(segment.text))
+            .children(groups.into_iter().map(|group| {
+                h_flex()
+                    .flex_none()
+                    .max_w_full()
+                    .overflow_hidden()
+                    .children(group.into_iter().map(|(n, segment)| {
+                        div()
+                            .id(("waveform-readout-segment", n))
+                            .test_support()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if segment.warn { warning } else { muted })
+                            .child(SharedString::from(segment.text))
+                    }))
             }));
         let under = h_flex()
             .w_full()
