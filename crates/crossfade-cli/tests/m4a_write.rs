@@ -412,6 +412,16 @@ fn an_opus_name_takes_a_stream_copy_only() {
 }
 
 #[test]
+fn the_thread_count_never_changes_the_m4a_bytes() {
+    let dir = Dir::new("threads");
+    let (input, one, many) = (dir.path("in.wav"), dir.path("1.m4a"), dir.path("4.m4a"));
+    std::fs::write(&input, mp4_signals::signal("stereo24").wav()).unwrap();
+    ok(&["convert", &input, "--threads", "1", "-o", &one]);
+    ok(&["convert", &input, "--threads", "4", "-o", &many]);
+    assert!(read(&one) == read(&many));
+}
+
+#[test]
 fn help_lists_m4a_and_alac() {
     let help = ok(&["convert", "--help"]);
     assert!(help.contains(".m4a/.mp4/.m4b"), "{help}");
