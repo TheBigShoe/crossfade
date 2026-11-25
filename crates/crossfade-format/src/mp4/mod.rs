@@ -12,6 +12,7 @@
 
 mod asc;
 mod boxes;
+mod build;
 mod demux;
 mod entry;
 mod ilst;
