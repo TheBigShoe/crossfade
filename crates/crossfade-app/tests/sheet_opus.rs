@@ -169,7 +169,10 @@ fn only_48_khz_is_offered_and_another_rate_is_dropped() {
     // A source already at 48 kHz shows the same row.
     let mut s = wav_sheet(48_000, ChannelLayout::stereo());
     s.set_container(Container::Opus);
-    assert_eq!((s.rate_options(), s.sample_rate()), (vec![Some(48_000)], Some(48_000)));
+    assert_eq!(
+        (s.rate_options(), s.sample_rate()),
+        (vec![Some(48_000)], Some(48_000))
+    );
     s.set_container(Container::Wav);
     assert!(s.rate_options().len() > 2);
     assert_eq!(s.sample_rate(), None);

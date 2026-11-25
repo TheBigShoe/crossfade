@@ -192,11 +192,15 @@ fn copying_into_opus_says_what_an_opus_file_holds() {
     let joined = "unsupported: --codec copy cannot join inputs (joining decodes them)";
     let two = [flac.clone(), flac];
     assert_eq!(
-        validate_concat(&two, "o.opus", &copy).unwrap_err().to_string(),
+        validate_concat(&two, "o.opus", &copy)
+            .unwrap_err()
+            .to_string(),
         joined
     );
     assert_eq!(
-        describe_concat(&two, "o.opus", &copy).unwrap_err().to_string(),
+        describe_concat(&two, "o.opus", &copy)
+            .unwrap_err()
+            .to_string(),
         joined
     );
 }
