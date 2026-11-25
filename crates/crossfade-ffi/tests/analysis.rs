@@ -80,7 +80,12 @@ impl Drop for Analyser {
 }
 
 fn direct(path: &str) -> Analysis {
-    analyze(path, &mut FsIo::new(), &Limits::default(), &CancelToken::new())
+    analyze(
+        path,
+        &mut FsIo::new(),
+        &Limits::default(),
+        &CancelToken::new(),
+    )
 }
 
 fn same_as_direct(path: &str, width: u32) {
@@ -89,10 +94,21 @@ fn same_as_direct(path: &str, width: u32) {
     let want = direct(path);
     assert_eq!(state["state"], "done", "{path}");
     let l = &want.loudness;
-    assert_eq!(state["loudness"]["integrated"].as_f64(), l.integrated, "{path}");
+    assert_eq!(
+        state["loudness"]["integrated"].as_f64(),
+        l.integrated,
+        "{path}"
+    );
     assert_eq!(state["loudness"]["range"].as_f64(), l.range, "{path}");
-    assert_eq!(state["loudness"]["true_peak"].as_f64(), l.true_peak, "{path}");
-    assert_eq!(state["loudness"]["sample_peak"].as_f64(), Some(l.sample_peak));
+    assert_eq!(
+        state["loudness"]["true_peak"].as_f64(),
+        l.true_peak,
+        "{path}"
+    );
+    assert_eq!(
+        state["loudness"]["sample_peak"].as_f64(),
+        Some(l.sample_peak)
+    );
     let snapshot = crossfade_app::analysis::Snapshot {
         version: want.version,
         stream: want.stream.clone(),
@@ -204,7 +220,16 @@ fn buffers_are_checked() {
     // A lane the file does not have.
     let (mut lo, mut hi) = ([0.0f32], [0.0f32]);
     let status = unsafe {
-        cf_analysis_columns(a.0, 1, 0, 256, lo.as_mut_ptr(), hi.as_mut_ptr(), 1, &mut written)
+        cf_analysis_columns(
+            a.0,
+            1,
+            0,
+            256,
+            lo.as_mut_ptr(),
+            hi.as_mut_ptr(),
+            1,
+            &mut written,
+        )
     };
     assert_eq!(status, CF_ERR_REFUSED);
     // Zero frames per column reads as one, as the pyramid takes it.

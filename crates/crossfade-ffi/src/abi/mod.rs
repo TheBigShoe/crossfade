@@ -2,9 +2,11 @@
 //! safe function and writes the result back. Every `unsafe` block of the crate is here.
 #![allow(unsafe_code)]
 
+mod analysis;
 mod queue;
 mod sheet;
 
+pub use analysis::*;
 pub use queue::*;
 pub use sheet::*;
 

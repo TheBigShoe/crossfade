@@ -8,6 +8,7 @@
 
 mod abi;
 mod about;
+mod analysis;
 mod error;
 mod inspect;
 mod queue;
