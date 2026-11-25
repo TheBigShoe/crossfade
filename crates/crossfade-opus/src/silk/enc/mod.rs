@@ -613,6 +613,40 @@ impl SilkEncoder {
     }
 }
 
+/// `variable_HP_smth2_Q15`'s start (`opus_encoder_init`) and its value in CELT-only mode: the
+/// lowest cutoff, 60 Hz, as a log in Q15.
+pub(crate) fn hp_min_cutoff_smth_q15() -> i32 {
+    fix::lshift(lin2log(VARIABLE_HP_MIN_CUTOFF_HZ), 8)
+}
+
+/// The Opus layer's second smoothing of SILK's high-pass cutoff (`variable_HP_smth2_Q15`
+/// following `smth1`); returns the new state and its cutoff in Hz.
+pub(crate) fn hp_smooth_cutoff(smth2_q15: i32, smth1_q15: i32) -> (i32, i32) {
+    const VARIABLE_HP_SMTH_COEF2: f32 = 0.015;
+    let smth2 = smlawb(
+        smth2_q15,
+        smth1_q15 - smth2_q15,
+        fix_f32(VARIABLE_HP_SMTH_COEF2, 16),
+    );
+    (smth2, crate::silk::macros::log2lin(smth2 >> 8))
+}
+
+/// `hp_cutoff`'s biquad (`opus_encoder.c`) in Q28: the numerator and the denominator's last
+/// two taps of a second-order high-pass at `cutoff_hz` for 48 kHz.
+#[allow(clippy::approx_constant)] // the reference's 3.14159
+pub(crate) fn hp_cutoff_coefs(cutoff_hz: i32) -> ([i32; 3], [i32; 2]) {
+    let fc_q19 = fix::div32_16(smulbb(fix_f64(1.5 * 3.14159 / 1000.0, 19), cutoff_hz), 48);
+    let r_q28 = fix_f64(1.0, 28) - fix_f64(0.92, 9) * fc_q19;
+    let b = [r_q28, -r_q28 << 1, r_q28];
+    let r_q22 = r_q28 >> 6;
+    let smulww = |a: i32, b: i32| ((i64::from(a) * i64::from(b)) >> 16) as i32;
+    let a = [
+        smulww(r_q22, smulww(fc_q19, fc_q19) - fix_f64(2.0, 22)),
+        smulww(r_q22, r_q22),
+    ];
+    (b, a)
+}
+
 /// `silk_HP_variable_cutoff`: the Opus layer's high-pass cutoff follows the low end of the
 /// pitch range.
 fn hp_variable_cutoff(st: &mut ChannelEncoder) {

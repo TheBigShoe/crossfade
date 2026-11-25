@@ -63,6 +63,15 @@ pub(crate) struct CeltEncodeFrame {
     pub(crate) bitrate: Option<i32>,
     pub(crate) vbr: bool,
     pub(crate) constrained_vbr: bool,
+    /// What SILK reported for the frame (`CELT_SET_SILK_INFO`); read in hybrid mode only.
+    pub(crate) silk_info: SilkInfo,
+}
+
+/// `SILKInfo`: the SILK layer's signal type (2 is voiced) and quantisation offset (Q10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct SilkInfo {
+    pub(crate) signal_type: i32,
+    pub(crate) offset: i32,
 }
 
 /// The CELT encoder's state for one stream (libopus `CELTEncoder`, from `rng` on: what
@@ -74,6 +83,8 @@ pub(crate) struct CeltEncoder {
     /// `CELT_SET_PREDICTION` below 2: no pitch pre-filter; at 0, intra energy too.
     disable_pf: bool,
     force_intra: bool,
+    /// `OPUS_SET_LFE`: a low-frequency effects channel, everything in the first bands.
+    lfe: bool,
     // From here on, what OPUS_RESET_STATE clears.
     rng: u32,
     spread_decision: i32,
@@ -199,7 +210,14 @@ fn comb_filter(
 /// `transient_analysis`: whether the frame (`len` samples per channel, channel `c` at
 /// `c * len`) needs short blocks, with the estimate of how strongly (`tf_estimate`) and the
 /// channel that decided it.
-fn transient_analysis(input: &[f32], len: usize, channels: usize) -> (bool, f32, usize) {
+/// Returns whether the frame is transient, `tf_estimate`, the channel that decided and, with
+/// `allow_weak_transients`, whether it is a weak transient coded as a long block.
+fn transient_analysis(
+    input: &[f32],
+    len: usize,
+    channels: usize,
+    allow_weak_transients: bool,
+) -> (bool, f32, usize, bool) {
     // 6 * 64 / x, trained on real data to minimise the average error.
     const INV_TABLE: [u8; 128] = [
         255, 255, 156, 110, 86, 70, 59, 51, 45, 40, 37, 33, 31, 28, 26, 25, 23, 22, 21, 20, 19, 18,
@@ -208,8 +226,13 @@ fn transient_analysis(input: &[f32], len: usize, channels: usize) -> (bool, f32,
         5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
         4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2,
     ];
-    // Forward masking: 6.7 dB/ms.
-    let forward_decay = 0.0625f32;
+    // Forward masking: 6.7 dB/ms; 3.3 dB/ms at low rates, so as not to code transients that
+    // would leave the energy unstable or partly collapsed (mostly hybrid).
+    let forward_decay = if allow_weak_transients {
+        0.03125
+    } else {
+        0.0625f32
+    };
     let len2 = len / 2;
     let mut tmp = vec![0.0f32; len];
     let mut mask_metric = 0i32;
@@ -271,10 +294,15 @@ fn transient_analysis(input: &[f32], len: usize, channels: usize) -> (bool, f32,
             mask_metric = unmask;
         }
     }
-    let is_transient = mask_metric > 200;
+    let mut is_transient = mask_metric > 200;
+    // At low rates a weak transient is coded with a long block and TF instead.
+    let weak = allow_weak_transients && is_transient && mask_metric < 600;
+    if weak {
+        is_transient = false;
+    }
     let tf_max = ((27.0 * f64::from(mask_metric)).sqrt() as f32 - 42.0).max(0.0);
     let tf_estimate = (0.0069 * tf_max.min(163.0) - 0.139).max(0.0).sqrt();
-    (is_transient, tf_estimate, tf_chan)
+    (is_transient, tf_estimate, tf_chan, weak)
 }
 
 /// `patch_transient_decision`: a sudden rise of energy the time analysis missed.
@@ -621,6 +649,7 @@ fn dynalloc_analysis(
     constrained_vbr: bool,
     lm: usize,
     effective_bytes: i32,
+    lfe: bool,
 ) -> Dynalloc {
     let mut d = Dynalloc {
         offsets: [0; NB_EBANDS],
@@ -669,7 +698,7 @@ fn dynalloc_analysis(
         }
     }
     // From 24 kb/s at 20 ms (96 at 2.5 ms): dynalloc can then not bust the budget.
-    if effective_bytes >= 30 + 5 * lm as i32 {
+    if effective_bytes >= 30 + 5 * lm as i32 && !lfe {
         let mut follower = [0.0f32; 2 * NB_EBANDS];
         let mut last = 0;
         for ch in 0..c {
@@ -1018,6 +1047,7 @@ impl CeltEncoder {
             channels: channels.clamp(1, 2),
             disable_pf: false,
             force_intra: false,
+            lfe: false,
             rng: 0,
             spread_decision: SPREAD_NORMAL,
             delayed_intra: 1.0,
@@ -1052,16 +1082,21 @@ impl CeltEncoder {
         *self = Self {
             disable_pf: self.disable_pf,
             force_intra: self.force_intra,
+            lfe: self.lfe,
             ..Self::new(self.channels)
         };
     }
 
     /// `CELT_SET_PREDICTION`: 2 (the default) predicts freely; 1 turns the pitch pre-filter
     /// off; 0 also codes every frame's energy intra, so that each frame decodes alone.
-    #[cfg_attr(not(test), allow(dead_code))] // for the hybrid encoder's mode switches
     pub(crate) fn set_prediction(&mut self, prediction: u8) {
         self.disable_pf = prediction <= 1;
         self.force_intra = prediction == 0;
+    }
+
+    /// `OPUS_SET_LFE`.
+    pub(crate) fn set_lfe(&mut self, lfe: bool) {
+        self.lfe = lfe;
     }
 
     /// `OPUS_GET_FINAL_RANGE`: the range coder's state after the last frame.
@@ -1306,7 +1341,7 @@ impl CeltEncoder {
             self.preemph_mem[ch] = mem;
         }
 
-        let enabled = nb_available_bytes > 12 * ci
+        let enabled = ((self.lfe && nb_available_bytes > 3) || nb_available_bytes > 12 * ci)
             && !hybrid
             && !silence
             && !self.disable_pf
@@ -1332,11 +1367,16 @@ impl CeltEncoder {
         let mut is_transient = false;
         let mut short_blocks = false;
         let mut tf_chan = 0;
-        if COMPLEXITY >= 1 {
-            let (t, est, chan) = transient_analysis(&input, len, cc);
+        let mut weak_transient = false;
+        if COMPLEXITY >= 1 && !self.lfe {
+            // Steadier energy on fricatives at low hybrid rates; vowels (voiced, a small
+            // SILK offset) keep their real transients.
+            let allow_weak = hybrid && effective_bytes < 15 && frame.silk_info.signal_type != 2;
+            let (t, est, chan, weak) = transient_analysis(&input, len, cc, allow_weak);
             is_transient = t;
             tf_estimate = est;
             tf_chan = chan;
+            weak_transient = weak;
         }
         let mut transient_got_disabled = false;
         if lm > 0 && enc.tell() + 3 <= total_bits {
@@ -1366,11 +1406,17 @@ impl CeltEncoder {
             tf_chan = 0;
         }
         compute_band_energies(&freq, &mut band_e, eff_end, c, lm);
+        if self.lfe {
+            // Past the second band, at most 40 dB under the first.
+            for i in 2..end {
+                band_e[i] = band_e[i].min(1e-4 * band_e[0]).max(EPSILON);
+            }
+        }
         amp2_log2(&band_e, &mut band_log_e, eff_end, end, c);
 
-        // Temporal VBR.
-        let temporal_vbr;
-        {
+        // Temporal VBR, not for the LFE.
+        let mut temporal_vbr = 0.0;
+        if !self.lfe {
             let mut follow = -10.0f32;
             let mut frame_avg = 0.0f32;
             let offset = if short_blocks { 0.5 * lm as f32 } else { 0.0 };
@@ -1382,7 +1428,7 @@ impl CeltEncoder {
                 frame_avg += follow;
             }
             frame_avg /= (end - start) as f32;
-            temporal_vbr = (frame_avg - self.spec_avg).clamp(-1.5, 3.0);
+            temporal_vbr = (frame_avg - self.spec_avg).clamp(-1.5, 3.0f32);
             self.spec_avg += 0.02 * temporal_vbr;
         }
         if !second_mdct {
@@ -1394,6 +1440,7 @@ impl CeltEncoder {
             && enc.tell() + 3 <= total_bits
             && !is_transient
             && COMPLEXITY >= 5
+            && !self.lfe
             && !hybrid
             && patch_transient_decision(&band_log_e, &self.old_band_e, start, end, c)
         {
@@ -1417,7 +1464,8 @@ impl CeltEncoder {
         let mut x = vec![0.0f32; c * n];
         normalise_bands(&freq, &mut x, &band_e, eff_end, c, m);
 
-        let enable_tf_analysis = effective_bytes >= 15 * ci && !hybrid && COMPLEXITY >= 2;
+        let enable_tf_analysis =
+            effective_bytes >= 15 * ci && !hybrid && COMPLEXITY >= 2 && !self.lfe;
         let dyn_ = dynalloc_analysis(
             &band_log_e,
             &band_log_e2,
@@ -1430,6 +1478,7 @@ impl CeltEncoder {
             frame.constrained_vbr,
             lm,
             effective_bytes,
+            self.lfe,
         );
         let mut offsets = dyn_.offsets;
         let mut tf_res = [0i32; NB_EBANDS];
@@ -1451,6 +1500,15 @@ impl CeltEncoder {
             for i in eff_end..end {
                 tf_res[i] = tf_res[eff_end - 1];
             }
+        } else if hybrid && weak_transient {
+            // TF on a long window improves time resolution imperfectly, which at low rates
+            // keeps the energy from collapsing.
+            tf_res[..end].fill(1);
+            tf_select = 0;
+        } else if hybrid && effective_bytes < 15 && frame.silk_info.signal_type != 2 {
+            // Low-rate hybrid: 5 ms time resolution rather than 2.5 ms.
+            tf_res[..end].fill(0);
+            tf_select = usize::from(is_transient);
         } else {
             for r in tf_res.iter_mut().take(end) {
                 *r = i32::from(is_transient);
@@ -1485,6 +1543,7 @@ impl CeltEncoder {
                 nb_available_bytes,
                 force_intra: self.force_intra,
                 two_pass: COMPLEXITY >= 4,
+                lfe: self.lfe,
             },
             &band_log_e,
             &mut self.old_band_e,
@@ -1496,7 +1555,10 @@ impl CeltEncoder {
         tf_encode(start, end, is_transient, &mut tf_res, lm, tf_select, enc);
 
         if enc.tell() + 4 <= total_bits {
-            if hybrid {
+            if self.lfe {
+                self.tapset_decision = 0;
+                self.spread_decision = SPREAD_NORMAL;
+            } else if hybrid {
                 self.spread_decision = if is_transient {
                     SPREAD_NORMAL
                 } else {
@@ -1521,6 +1583,10 @@ impl CeltEncoder {
             enc.enc_icdf(self.spread_decision as usize, &SPREAD_ICDF, 5);
         }
 
+        // For the LFE, everything interesting is in the first band.
+        if self.lfe {
+            offsets[0] = 8.min(effective_bytes / 3);
+        }
         let cap = init_caps(lm, c);
         let mut dynalloc_logp = 6;
         total_bits <<= BITRES;
@@ -1577,7 +1643,7 @@ impl CeltEncoder {
 
         let mut alloc_trim = 5;
         if tell_frac + (6 << BITRES) <= total_bits - total_boost {
-            if hybrid {
+            if hybrid || self.lfe {
                 self.stereo_saving = 0.0;
             } else {
                 alloc_trim = alloc_trim_analysis(
@@ -1610,9 +1676,15 @@ impl CeltEncoder {
                 base_target += self.vbr_offset >> lm_diff;
             }
             let mut target = if hybrid {
-                // Not yet the reference's whole: it also moves the target by SILK's
-                // quantisation offset (tonal frames up, noisy ones down).
-                let mut t = base_target + ((tf_estimate - 0.25) * (50 << BITRES) as f32) as i32;
+                let mut t = base_target;
+                // Tonal frames (a SILK offset under 100) need more bits than noisy ones.
+                if frame.silk_info.offset < 100 {
+                    t += 12 << BITRES >> (3 - lm);
+                }
+                if frame.silk_info.offset > 100 {
+                    t -= 18 << BITRES >> (3 - lm);
+                }
+                t += ((tf_estimate - 0.25) * (50 << BITRES) as f32) as i32;
                 // A strong transient gets enough to fold rather than fill the first bands.
                 if tf_estimate > 0.7 {
                     t = t.max(50 << BITRES);
@@ -1693,7 +1765,7 @@ impl CeltEncoder {
             0
         };
         bits -= anti_collapse_rsv;
-        let signal_bandwidth = end - 1;
+        let signal_bandwidth = if self.lfe { 1 } else { end - 1 };
         let alloc = compute_allocation(
             start,
             end,

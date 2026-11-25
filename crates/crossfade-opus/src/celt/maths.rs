@@ -6,7 +6,7 @@
 const PI: f32 = std::f32::consts::PI;
 
 /// `celt_exp2`: `exp(ln 2 * x)` in double.
-pub(super) fn exp2(x: f32) -> f32 {
+pub(crate) fn exp2(x: f32) -> f32 {
     libm::exp(std::f64::consts::LN_2 * f64::from(x)) as f32
 }
 
