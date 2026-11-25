@@ -217,11 +217,21 @@ impl Queue {
             .any(|i| matches!(i.state, JobState::Pending | JobState::Running { .. }))
     }
 
+    /// Queues a failed or cancelled job again in its own row's place, so retries never pile
+    /// up rows.
     pub fn retry(&mut self, id: JobId) -> Option<JobId> {
-        let item = self.get(id)?;
-        matches!(item.state, JobState::Failed { .. } | JobState::Cancelled)
-            .then(|| item.request.clone())
-            .map(|request| self.enqueue(request))
+        let at = self.items.iter().position(|i| i.id == id)?;
+        if !matches!(
+            self.items[at].state,
+            JobState::Failed { .. } | JobState::Cancelled
+        ) {
+            return None;
+        }
+        let request = self.items[at].request.clone();
+        let again = self.enqueue(request);
+        let item = self.items.pop().expect("just queued");
+        self.items[at] = item;
+        Some(again)
     }
 
     pub fn remove(&mut self, id: JobId) -> bool {
