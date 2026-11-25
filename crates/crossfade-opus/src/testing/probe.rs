@@ -39,3 +39,8 @@ pub fn last_analysis(enc: &Encoder) -> AnalysisProbe {
         voice_est: enc.last_voice_est,
     }
 }
+
+/// The surround masks behind `enc`'s last packet: 21 bands per channel, in the input's order.
+pub fn surround_masks(enc: &crate::MultistreamEncoder) -> Vec<f32> {
+    enc.band_smr.clone()
+}

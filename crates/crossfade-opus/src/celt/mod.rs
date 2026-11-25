@@ -107,7 +107,6 @@ pub(crate) use encoder::{CeltEncodeFrame, CeltEncoder, DELAY as CELT_DELAY, Silk
 pub(crate) use fft::{Cpx, fft};
 /// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
 pub(crate) use maths::exp2;
-#[allow(unused_imports)] // the multistream encoder's, next
 pub(crate) use surround::SurroundAnalysis;
 pub(crate) use tables::{OVERLAP, WINDOW};
 

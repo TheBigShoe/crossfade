@@ -103,6 +103,9 @@ pub(crate) struct CeltEncoder {
     consec_transient: i32,
     /// The tonality analysis of the frame (`CELT_SET_ANALYSIS`; a reset forgets it).
     analysis: AnalysisInfo,
+    /// The surround masks of the stream's channels, 21 bands each (`OPUS_SET_ENERGY_MASK`;
+    /// a reset forgets them).
+    energy_mask: Option<[f32; 2 * NB_EBANDS]>,
     preemph_mem: [f32; 2],
     vbr_reservoir: i32,
     vbr_drift: i32,
@@ -656,6 +659,7 @@ fn dynalloc_analysis(
     lm: usize,
     effective_bytes: i32,
     lfe: bool,
+    surround_dynalloc: &[f32; NB_EBANDS],
     analysis: &AnalysisInfo,
 ) -> Dynalloc {
     let mut d = Dynalloc {
@@ -758,6 +762,9 @@ fn dynalloc_analysis(
             for i in start..end {
                 follower[i] = (band_log_e[i] - follower[i]).max(0.0);
             }
+        }
+        for i in start..end {
+            follower[i] = follower[i].max(surround_dynalloc[i]);
         }
         for i in start..end {
             d.importance[i] = libm::floorf(0.5 + 13.0 * exp2(follower[i].min(4.0))) as i32;
@@ -919,6 +926,7 @@ fn alloc_trim_analysis(
     tf_estimate: f32,
     intensity: usize,
     equiv_rate: i32,
+    surround_trim: f32,
     analysis: &AnalysisInfo,
 ) -> i32 {
     // At low rates a lower trim seems to help; above, it is kept as it was.
@@ -966,6 +974,7 @@ fn alloc_trim_analysis(
     }
     diff /= (c * (end - 1)) as f32;
     trim -= ((diff + 1.0) / 6.0).clamp(-2.0, 2.0);
+    trim -= surround_trim;
     trim -= 2.0 * tf_estimate;
     if analysis.valid {
         trim -= (2.0 * (analysis.tonality_slope + 0.05)).clamp(-2.0, 2.0);
@@ -996,7 +1005,7 @@ fn stereo_analysis(x: &[f32], lm: usize, n0: usize) -> bool {
     (base + thetas) as f32 * sum_ms > base as f32 * sum_lr
 }
 
-/// `compute_vbr` without surround masking: the frame's target in 1/8 bit.
+/// `compute_vbr`: the frame's target in 1/8 bit.
 #[allow(clippy::too_many_arguments)]
 fn compute_vbr(
     analysis: &AnalysisInfo,
@@ -1014,6 +1023,7 @@ fn compute_vbr(
     temporal_vbr: f32,
     pitch_change: bool,
     lfe: bool,
+    surround_masking: Option<f32>,
 ) -> i32 {
     let coded_bands = if last_coded_bands != 0 {
         last_coded_bands
@@ -1051,6 +1061,10 @@ fn compute_vbr(
         }
         target = tonal_target;
     }
+    if let (Some(masking), false) = (surround_masking, lfe) {
+        let surround_target = target + (masking * (coded_bins << BITRES) as f32) as i32;
+        target = (target / 4).max(surround_target);
+    }
     {
         let bins = (eb(NB_EBANDS - 2) << lm) as i32;
         let floor_depth = ((((c as i32 * bins) << BITRES) as f32) * max_depth) as i32;
@@ -1058,10 +1072,10 @@ fn compute_vbr(
         target = target.min(floor_depth);
     }
     // Constrained VBR cannot keep a higher rate long: less aggressive.
-    if constrained_vbr {
+    if (surround_masking.is_none() || lfe) && constrained_vbr {
         target = base_target + (0.67 * (target - base_target) as f32) as i32;
     }
-    if tf_estimate < 0.2 {
+    if surround_masking.is_none() && tf_estimate < 0.2 {
         let amount = 0.000_003_1 * (96_000 - bitrate).clamp(0, 32_000) as f32;
         let tvbr_factor = temporal_vbr * amount;
         target += (tvbr_factor * target as f32) as i32;
@@ -1090,6 +1104,7 @@ impl CeltEncoder {
             prefilter_tapset: 0,
             consec_transient: 0,
             analysis: AnalysisInfo::default(),
+            energy_mask: None,
             preemph_mem: [0.0; 2],
             vbr_reservoir: 0,
             vbr_drift: 0,
@@ -1128,6 +1143,12 @@ impl CeltEncoder {
     /// `CELT_SET_ANALYSIS`: what the tonality analysis says of the next frames.
     pub(crate) fn set_analysis(&mut self, info: &AnalysisInfo) {
         self.analysis = *info;
+    }
+
+    /// `OPUS_SET_ENERGY_MASK`: how far each band of each channel stands above what the
+    /// other channels of a surround mix mask (log2 units).
+    pub(crate) fn set_energy_mask(&mut self, mask: Option<&[f32; 2 * NB_EBANDS]>) {
+        self.energy_mask = mask.copied();
     }
 
     /// `OPUS_SET_LFE`.
@@ -1457,6 +1478,71 @@ impl CeltEncoder {
         }
         amp2_log2(&band_e, &mut band_log_e, eff_end, end, c);
 
+        // How much the other channels of a surround mix mask this stream's.
+        let mut surround_dynalloc = [0.0f32; NB_EBANDS];
+        let mut surround_masking = 0.0f32;
+        let mut surround_trim = 0.0f32;
+        if let (false, Some(mask), false) = (hybrid, self.energy_mask.as_ref(), self.lfe) {
+            let mask_end = self.last_coded_bands.max(2);
+            let (mut mask_avg, mut diff, mut count) = (0.0f32, 0.0f32, 0i32);
+            for ch in 0..c {
+                for i in 0..mask_end {
+                    let mut m = mask[NB_EBANDS * ch + i].clamp(-2.0, 0.25);
+                    if m > 0.0 {
+                        m *= 0.5;
+                    }
+                    let width = (eb(i + 1) - eb(i)) as i32;
+                    mask_avg += m * width as f32;
+                    count += width;
+                    diff += m * (1 + 2 * i as i32 - mask_end as i32) as f32;
+                }
+            }
+            mask_avg /= count as f32;
+            mask_avg += 0.2;
+            let me = mask_end as i32;
+            diff = diff * 6.0 / (ci * (me - 1) * (me + 1) * me) as f32;
+            // Again, conservatively.
+            diff *= 0.5;
+            diff = diff.clamp(-0.031, 0.031);
+            // The band in the middle of the coded spectrum.
+            let mut midband = 0;
+            while eb(midband + 1) < eb(mask_end) / 2 {
+                midband += 1;
+            }
+            let mut count_dynalloc = 0;
+            for i in 0..mask_end {
+                let lin = mask_avg + diff * (i as i32 - midband as i32) as f32;
+                let unmask = if c == 2 {
+                    mask[i].max(mask[NB_EBANDS + i])
+                } else {
+                    mask[i]
+                };
+                let unmask = unmask.min(0.0) - lin;
+                if unmask > 0.25 {
+                    surround_dynalloc[i] = unmask - 0.25;
+                    count_dynalloc += 1;
+                }
+            }
+            if count_dynalloc >= 3 {
+                // Dynalloc in many bands: the masking rate was probably too low.
+                mask_avg += 0.25;
+                if mask_avg > 0.0 {
+                    // Something went really wrong: no masking.
+                    mask_avg = 0.0;
+                    diff = 0.0;
+                    surround_dynalloc[..mask_end].fill(0.0);
+                } else {
+                    for v in &mut surround_dynalloc[..mask_end] {
+                        *v = (*v - 0.25).max(0.0);
+                    }
+                }
+            }
+            mask_avg += 0.2;
+            // In the trim's 1/64 steps.
+            surround_trim = 64.0 * diff;
+            surround_masking = mask_avg;
+        }
+
         // Temporal VBR, not for the LFE.
         let mut temporal_vbr = 0.0;
         if !self.lfe {
@@ -1522,6 +1608,7 @@ impl CeltEncoder {
             lm,
             effective_bytes,
             self.lfe,
+            &surround_dynalloc,
             &self.analysis,
         );
         let mut offsets = dyn_.offsets;
@@ -1701,6 +1788,7 @@ impl CeltEncoder {
                     tf_estimate,
                     self.intensity,
                     equiv_rate,
+                    surround_trim,
                     &self.analysis,
                 );
             }
@@ -1752,6 +1840,7 @@ impl CeltEncoder {
                     temporal_vbr,
                     pitch_change,
                     self.lfe,
+                    self.energy_mask.map(|_| surround_masking),
                 )
             };
             // Less the offset, plus what was spent so far.

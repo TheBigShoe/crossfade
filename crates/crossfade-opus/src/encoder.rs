@@ -504,6 +504,9 @@ pub struct Encoder {
     /// The last [`ENCODER_BUFFER`] samples per channel, interleaved (`delay_buffer`).
     delay_buffer: [f32; ENCODER_BUFFER * 2],
     nb_no_activity_ms_q1: i32,
+    /// The surround masks of this stream's channels (`OPUS_SET_ENERGY_MASK`, from the
+    /// multistream encoder; a reset forgets them).
+    energy_masking: Option<[f32; 42]>,
     /// The energy of the loudest active frame, decaying.
     peak_signal_energy: f32,
     nonfinal_frame: bool,
@@ -556,6 +559,7 @@ impl Encoder {
             width_mem: StereoWidth::default(),
             delay_buffer: [0.0; ENCODER_BUFFER * 2],
             nb_no_activity_ms_q1: 0,
+            energy_masking: None,
             peak_signal_energy: 0.0,
             nonfinal_frame: false,
             final_range: 0,
@@ -609,6 +613,7 @@ impl Encoder {
         self.width_mem = StereoWidth::default();
         self.delay_buffer = [0.0; ENCODER_BUFFER * 2];
         self.nb_no_activity_ms_q1 = 0;
+        self.energy_masking = None;
         self.peak_signal_energy = 0.0;
         self.nonfinal_frame = false;
         self.final_range = 0;
@@ -639,6 +644,13 @@ impl Encoder {
     pub(crate) fn set_lfe(&mut self, lfe: bool) {
         self.lfe = lfe;
         self.celt.set_lfe(lfe);
+    }
+
+    /// `OPUS_SET_ENERGY_MASK` for the multistream encoder: the surround masks of this
+    /// stream's channels, 21 bands each, for the next packet.
+    pub(crate) fn set_energy_mask(&mut self, mask: Option<[f32; 42]>) {
+        self.energy_masking = mask;
+        self.celt.set_energy_mask(mask.as_ref());
     }
 
     /// `OPUS_SET_FORCE_CHANNELS` for the multistream encoder.
@@ -1204,11 +1216,39 @@ impl Encoder {
                     sm.lbrr_coded,
                     self.stream_channels as i32,
                 );
-                // The fewer bits the high band gets, the quieter it is made.
-                let celt_rate = total_bitrate - sm.bit_rate;
-                hb_gain = 1.0 - celt_exp2(-celt_rate as f32 * (1.0 / 1024.0));
+                if self.energy_masking.is_none() {
+                    // The fewer bits the high band gets, the quieter it is made.
+                    let celt_rate = total_bitrate - sm.bit_rate;
+                    hb_gain = 1.0 - celt_exp2(-celt_rate as f32 * (1.0 / 1024.0));
+                }
             } else {
                 sm.bit_rate = total_bitrate;
+            }
+            if let (Some(mask), true, false) = (self.energy_masking.as_ref(), vbr, self.lfe) {
+                // Surround masking for SILK: conservatively, half the masking.
+                let (end, srate) = match self.bandwidth {
+                    Bandwidth::Narrow => (13, 8000.0f32),
+                    Bandwidth::Medium => (15, 12000.0),
+                    _ => (17, 16000.0),
+                };
+                let mut mask_sum = 0.0f32;
+                for c in 0..ch {
+                    for &m in &mask[21 * c..21 * c + end] {
+                        let mut m = m.clamp(-2.0, 0.5);
+                        if m > 0.0 {
+                            m *= 0.5;
+                        }
+                        mask_sum += m;
+                    }
+                }
+                let masking_depth = mask_sum / end as f32 * ch as f32 + 0.2;
+                let rate_offset = ((srate * masking_depth) as i32).max(-2 * sm.bit_rate / 3);
+                // Hybrid splits the change between SILK and CELT.
+                if self.bandwidth >= Bandwidth::SuperWide {
+                    sm.bit_rate += 3 * rate_offset / 5;
+                } else {
+                    sm.bit_rate += rate_offset;
+                }
             }
             sm.payload_size_ms = (1000 * frame_size / 48_000) as i32;
             sm.n_channels_api = ch;
@@ -1364,7 +1404,8 @@ impl Encoder {
                 16384 - 2048 * (32_000 - e) / (e - 14_000)
             };
         }
-        if ch == 2
+        if self.energy_masking.is_none()
+            && ch == 2
             && (self.hybrid_stereo_width_q14 < 1 << 14 || self.silk_mode.stereo_width_q14 < 1 << 14)
         {
             // Narrower stereo at low rates.

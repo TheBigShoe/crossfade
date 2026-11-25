@@ -85,6 +85,7 @@ impl SurroundAnalysis {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn channels(&self) -> usize {
         self.channels
     }

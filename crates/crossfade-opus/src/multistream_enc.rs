@@ -4,10 +4,12 @@
 //! from the total rate, coupled streams forced to stereo CELT, the LFE stream in CELT's LFE
 //! mode, and every stream's packet but the last self-delimited (RFC 6716 Appendix B).
 //!
-//! Not ported: the surround masking analysis (`surround_analysis` and the energy masks it
-//! hands each stream), which in libopus lowers the bits of channels another masks; here each
-//! stream is coded on its own at its allocated rate.
+//! From 3 channels on (family 1) the surround masking analysis (`crate::celt`'s
+//! `SurroundAnalysis`, a port of `surround_analysis`) gives each stream the masks of its
+//! channels (`OPUS_SET_ENERGY_MASK`): CELT then spends fewer bits where the other channels
+//! mask a band, and more where nothing does; SILK's rate in VBR follows too.
 
+use crate::celt::SurroundAnalysis;
 use crate::encoder::{Encoder, EncoderConfig};
 use crate::error::{Error, Result};
 use crate::head::{ChannelMapping, OpusHead};
@@ -43,6 +45,10 @@ pub struct MultistreamEncoder {
     /// Per stream, its input channels (one or two).
     inputs: Vec<(usize, Option<usize>)>,
     buf: Vec<f32>,
+    /// The surround masking analysis, from 3 channels on.
+    surround_analysis: Option<SurroundAnalysis>,
+    /// Its masks for the current packet, 21 bands per channel (`bandSMR`).
+    pub(crate) band_smr: Vec<f32>,
 }
 
 impl MultistreamEncoder {
@@ -106,6 +112,9 @@ impl MultistreamEncoder {
             surround: family == 1 && channels > 2,
             inputs,
             buf: Vec::new(),
+            surround_analysis: (family == 1 && channels > 2)
+                .then(|| SurroundAnalysis::new(channels)),
+            band_smr: vec![0.0; 21 * channels],
         })
     }
 
@@ -155,6 +164,9 @@ impl MultistreamEncoder {
 
     /// Forgets the stream, as if new.
     pub fn reset(&mut self) {
+        if let Some(a) = &mut self.surround_analysis {
+            a.reset();
+        }
         for s in &mut self.streams {
             s.reset();
         }
@@ -217,6 +229,9 @@ impl MultistreamEncoder {
         let frame_rate = (48_000 / frame_size) as i32;
         let smallest_packet = nb_streams * 2 - 1;
         let mut max_data_bytes = nb_streams * MS_FRAME_TMP;
+        if let Some(a) = &mut self.surround_analysis {
+            a.analyse(pcm, frame_size, &mut self.band_smr);
+        }
         let rates = self.rate_allocation(frame_size);
         let vbr = self.config.vbr;
         let total = self.config.bitrate.min(i32::MAX as u32) as i32;
@@ -276,6 +291,14 @@ impl MultistreamEncoder {
                 curr_max = curr_max.saturating_sub(if curr_max > 253 { 2 } else { 1 });
             }
             let enc = &mut self.streams[s];
+            if self.surround_analysis.is_some() {
+                let mut mask = [0.0f32; 42];
+                mask[..21].copy_from_slice(&self.band_smr[21 * a..21 * a + 21]);
+                if let Some(b) = b {
+                    mask[21..].copy_from_slice(&self.band_smr[21 * b..21 * b + 21]);
+                }
+                enc.set_energy_mask(Some(mask));
+            }
             if !vbr && last {
                 enc.set_bitrate((curr_max as i64 * 8 * i64::from(frame_rate)).max(1) as u32)?;
             }
