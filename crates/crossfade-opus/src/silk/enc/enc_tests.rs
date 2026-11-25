@@ -572,3 +572,88 @@ fn packet_sizes_track_the_bitrate() {
         );
     }
 }
+
+/// FNV-1a over the packets, each preceded by its length.
+pub(super) fn digest(coded: &[Coded]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for c in coded {
+        for &b in (c.packet.len() as u32)
+            .to_le_bytes()
+            .iter()
+            .chain(&c.packet)
+        {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// The packets for a fixed input are frozen: any change to the encoder's arithmetic shows
+/// here. (They are also libopus 1.5.2's, built fixed-point, byte for byte.)
+#[test]
+fn packets_for_a_fixed_input_are_frozen() {
+    let len = 48_000;
+    let v = voiced(len, 120.0, 10000.0);
+    let n = noise(len, 1234, 3000);
+    let mono: Vec<i16> = v
+        .iter()
+        .zip(&n)
+        .map(|(&a, &b)| a.saturating_add(b / 4))
+        .collect();
+    let st = stereo(&mono, &voiced(len, 170.0, 7000.0));
+    let cases: [(Cfg, &[i16], u64); 4] = [
+        (
+            Cfg {
+                channels: 1,
+                khz: 16,
+                ms: 20,
+                bitrate: 24000,
+                complexity: 9,
+                cbr: false,
+            },
+            &mono,
+            0xabf5_45e9_a97d_ea72,
+        ),
+        (
+            Cfg {
+                channels: 1,
+                khz: 8,
+                ms: 40,
+                bitrate: 12000,
+                complexity: 2,
+                cbr: true,
+            },
+            &mono,
+            0xc754_dbb1_f17f_3489,
+        ),
+        (
+            Cfg {
+                channels: 1,
+                khz: 12,
+                ms: 60,
+                bitrate: 16000,
+                complexity: 0,
+                cbr: false,
+            },
+            &mono,
+            0x9ee4_6306_651c_1e63,
+        ),
+        (
+            Cfg {
+                channels: 2,
+                khz: 12,
+                ms: 10,
+                bitrate: 32000,
+                complexity: 5,
+                cbr: false,
+            },
+            &st,
+            0xb527_abe3_1377_41ae,
+        ),
+    ];
+    for (cfg, x, want) in cases {
+        let coded = encode(cfg, x);
+        assert_eq!(digest(&coded), want, "{cfg:?}: {:#018x}", digest(&coded));
+    }
+}
