@@ -68,3 +68,27 @@ fn any_bytes_decode_without_panic() {
         let _ = decode(&mut ec, 0, 0);
     }
 }
+
+#[test]
+fn encode_writes_the_reference_symbol_and_clamps_the_value() {
+    for (fs, decay) in [(72 << 7, 127 << 6), (24 << 7, 179 << 6), (192 << 7, 6 << 6)] {
+        let mut enc = crate::RangeEncoder::new(400);
+        let mut ops = vec![];
+        let mut want = vec![];
+        for val in (-40..40).chain([-20000, 20000]) {
+            let (fl, fh, v) = laplace_symbol(val, fs, decay);
+            ops.push(Op::Bin { fl, fh, bits: 15 });
+            let mut coded = val;
+            super::encode(&mut enc, &mut coded, fs, decay);
+            assert_eq!(coded, v, "{val} {fs} {decay}");
+            want.push(v);
+        }
+        let frame = enc.done().expect("fits");
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        let got: Vec<i32> = want.iter().map(|_| decode(&mut ec, fs, decay)).collect();
+        assert_eq!(got, want, "fs {fs} decay {decay}");
+        let reference = crate::testing::range_encoder::encode_into(&ops, 400).expect("fits");
+        assert_eq!(frame, reference.1);
+    }
+}
