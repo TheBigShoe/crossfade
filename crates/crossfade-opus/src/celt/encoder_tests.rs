@@ -178,3 +178,54 @@ fn what_comes_out_sounds_like_what_went_in() {
         assert_eq!(at, best, "{kind} {channels} ch");
     }
 }
+
+/// A buzz of period `period` samples through a resonance, full scale about 0.5.
+fn buzz(period: usize, channels: usize, len: usize) -> Vec<f32> {
+    let (mut y1, mut y2) = (0.0f32, 0.0f32);
+    let mut out = vec![];
+    for i in 0..len {
+        let x = if i % period == 0 { 0.08 } else { 0.0 };
+        let y = x + 1.8 * y1 - 0.9 * y2;
+        y2 = y1;
+        y1 = y;
+        out.extend(std::iter::repeat_n(y, channels));
+    }
+    out
+}
+
+/// Whether each frame of `pcm` codes the post-filter on.
+fn postfilter_flags(pcm: &[f32], channels: usize, n: usize, bytes: usize) -> Vec<bool> {
+    let mut enc = CeltEncoder::new(channels);
+    let f = frame(n, channels, 21);
+    pcm.chunks_exact(n * channels)
+        .map(|chunk| {
+            let mut rc = RangeEncoder::new(bytes);
+            enc.encode(chunk, &f, &mut rc).expect("encodes");
+            let data = rc.done().expect("fits");
+            let mut rd = RangeDecoder::new(&data);
+            !rd.dec_bit_logp(15) && rd.dec_bit_logp(1)
+        })
+        .collect()
+}
+
+#[test]
+fn a_periodic_signal_turns_the_post_filter_on() {
+    for (period, channels, n) in [(200, 1, 960), (97, 2, 480), (400, 1, 240)] {
+        let pcm = buzz(period, channels, 20 * 960);
+        let flags = postfilter_flags(&pcm, channels, n, 120 * n / 480);
+        let on = flags.iter().skip(4).filter(|&&f| f).count();
+        assert!(on * 4 >= (flags.len() - 4) * 3, "period {period}: {flags:?}");
+        let pcm = signal("noise", channels, 20 * 960);
+        let flags = postfilter_flags(&pcm, channels, n, 120 * n / 480);
+        assert!(flags.iter().all(|&f| !f), "noise: {flags:?}");
+    }
+}
+
+#[test]
+fn the_post_filter_codes_a_periodic_signal_better() {
+    let pcm = buzz(240, 1, 30 * 960);
+    let (out, _) = round_trip(&pcm, 1, &frame(960, 1, 21), 80);
+    // Measured: 13.7 dB without the pre-filter.
+    let got = snr(&pcm, &out, 1, DELAY);
+    assert!(got > 15.0, "{got} dB");
+}
