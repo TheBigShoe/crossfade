@@ -317,3 +317,46 @@ fn stereo_quality_rises_with_the_bitrate() {
         }
     }
 }
+
+/// The average rate, in b/s, of `cfg` on `pcm` (`seconds` long).
+fn average_rate(cfg: &EncoderConfig, pcm: &[f32], seconds: f64) -> f64 {
+    let (packets, _) = encode_and_decode(cfg, pcm);
+    packets.iter().map(Vec::len).sum::<usize>() as f64 * 8.0 / seconds
+}
+
+#[test]
+fn constrained_vbr_holds_the_bitrate_plus_the_toc_byte() {
+    // CELT's reservoir keeps its own bytes at the bitrate; the TOC byte comes on top, as in
+    // libopus (measured identical: +20% at 16 kb/s in 2.5 ms frames, +2.5% in 20 ms).
+    for (channels, kind, bitrate, d, fps) in [
+        (1u8, "noise", 48_000u32, FrameDuration::Ms10, 100.0),
+        (2, "music", 96_000, FrameDuration::Ms20, 50.0),
+        (2, "sweep", 24_000, FrameDuration::Ms5, 200.0),
+    ] {
+        let mut cfg = config(channels, bitrate, true, d);
+        cfg.constrained_vbr = true;
+        let pcm = signal(kind, usize::from(channels), 2.0);
+        let rate = average_rate(&cfg, &pcm, 2.0);
+        let want = f64::from(bitrate) + 8.0 * fps;
+        assert!(
+            (rate / want - 1.0).abs() < 0.02,
+            "{kind}: {rate} for {want}"
+        );
+    }
+}
+
+#[test]
+fn unconstrained_vbr_averages_near_the_bitrate() {
+    // Open loop: only the signal's demands move it. Measured over 20 s at 20 ms: -11% to
+    // +5% on music and noise from 16 to 256 kb/s (a sweep can go 45% over at 32 kb/s, as in
+    // libopus).
+    for (kind, bitrate) in [("music", 64_000u32), ("noise", 128_000)] {
+        let cfg = config(2, bitrate, true, FrameDuration::Ms20);
+        let pcm = signal(kind, 2, 2.0);
+        let rate = average_rate(&cfg, &pcm, 2.0);
+        assert!(
+            (rate / f64::from(bitrate) - 1.0).abs() < 0.15,
+            "{kind}: {rate}"
+        );
+    }
+}
