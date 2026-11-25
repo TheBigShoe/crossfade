@@ -95,6 +95,7 @@ mod mdct;
 mod pitch;
 mod quant_bands;
 mod rate;
+mod surround;
 mod tables;
 #[cfg(test)]
 mod test_util;
@@ -106,6 +107,8 @@ pub(crate) use encoder::{CeltEncodeFrame, CeltEncoder, DELAY as CELT_DELAY, Silk
 pub(crate) use fft::{Cpx, fft};
 /// CELT's MDCT window, which the top level's cross-fades use too (`celt_mode->window`).
 pub(crate) use maths::exp2;
+#[allow(unused_imports)] // the multistream encoder's, next
+pub(crate) use surround::SurroundAnalysis;
 pub(crate) use tables::{OVERLAP, WINDOW};
 
 /// What the top level tells CELT about one frame (the `celt_decoder_ctl`s `opus_decode_frame`
