@@ -392,3 +392,44 @@ fn low_rate_hybrid_codes_weak_transients_as_long_blocks_unless_voiced() {
     assert!(flags(2)[2], "voiced");
     assert!(!flags(1)[2], "unvoiced");
 }
+
+/// The amplitude of the `freq` Hz component of `x` (mono) past its first 4800 samples.
+fn component(x: &[f32], freq: f32) -> f64 {
+    let tau = 2.0 * std::f64::consts::PI;
+    let (mut s, mut c) = (0.0f64, 0.0f64);
+    for (i, v) in x.iter().enumerate().skip(4800) {
+        let ph = tau * f64::from(freq) * i as f64 / 48_000.0;
+        s += f64::from(*v) * libm::sin(ph);
+        c += f64::from(*v) * libm::cos(ph);
+    }
+    2.0 * (s * s + c * c).sqrt() / (x.len() - 4800) as f64
+}
+
+#[test]
+fn the_lfe_mode_keeps_the_first_bands_and_little_else() {
+    // libopus's LFE mode: energy past the second band capped 40 dB under the first, no
+    // transients, everything interesting in band 0.
+    let tau = 2.0 * std::f32::consts::PI;
+    let pcm: Vec<f32> = (0..30 * 960)
+        .map(|i| {
+            let t = i as f32 / 48_000.0;
+            0.4 * libm::sinf(tau * 60.0 * t) + 0.2 * libm::sinf(tau * 1500.0 * t)
+        })
+        .collect();
+    let f = CeltEncodeFrame {
+        bitrate: Some(16_000),
+        vbr: true,
+        constrained_vbr: false,
+        ..frame(960, 1, 13)
+    };
+    let mut lfe = CeltEncoder::new(1);
+    lfe.set_lfe(true);
+    let (with, sizes) = round_trip_with(lfe, &pcm, 1, &f, 200);
+    let (without, plain_sizes) = round_trip(&pcm, 1, &f, 200);
+    let (low, high) = (component(&with, 60.0), component(&with, 1500.0));
+    assert!(low > 0.3, "60 Hz: {low}");
+    assert!(high < 0.1 * component(&without, 1500.0), "1500 Hz: {high}");
+    let total: usize = sizes.iter().sum();
+    let plain: usize = plain_sizes.iter().sum();
+    assert!(total < plain, "{total} vs {plain} bytes");
+}
