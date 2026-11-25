@@ -164,7 +164,7 @@ impl AllocCoder for AllocEncoder<'_> {
         };
         let band_width = i32::from(EBANDS[coded_bands] - EBANDS[j]);
         let keep = coded_bands <= start + 2
-            || (band_bits > (depth_threshold * band_width << lm << BITRES) >> 4
+            || (band_bits > ((depth_threshold * band_width) << lm << BITRES) >> 4
                 && j <= self.signal_bandwidth);
         self.enc.enc_bit_logp(keep, 1);
         keep

@@ -71,7 +71,7 @@ fn energies(seed: u32, jump: usize) -> [f32; 2 * NB_EBANDS] {
         let band = (i % NB_EBANDS) as f32;
         *v = 8.0 - 0.4 * band + libm::sinf(seed as f32 + i as f32 * 1.7) * 3.0;
         if jump > 0 && i % jump == 0 {
-            *v += if seed % 2 == 0 { 25.0 } else { -30.0 };
+            *v += if seed.is_multiple_of(2) { 25.0 } else { -30.0 };
         }
     }
     e

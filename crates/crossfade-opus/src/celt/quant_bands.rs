@@ -1,6 +1,8 @@
-//! Band energy decoding (`celt/quant_bands.c`): coarse (Laplace, predicted across time and
-//! frequency), fine and final bits, and the log to linear conversion with RFC 8251's cap.
-//! Energies are log2 amplitudes, one row of [`NB_EBANDS`] per channel.
+//! Band energies (`celt/quant_bands.c`), decoded and encoded: coarse (Laplace, predicted
+//! across time and frequency; the encoder's two-pass intra/inter choice), fine and final bits,
+//! and the log to linear conversions (with RFC 8251's cap). Energies are log2 amplitudes, one
+//! row of [`NB_EBANDS`] per channel.
+#![allow(clippy::needless_range_loop)] // index loops as the reference writes them
 
 use super::ec::Ec;
 use super::laplace;

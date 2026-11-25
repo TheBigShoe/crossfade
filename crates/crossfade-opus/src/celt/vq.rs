@@ -181,6 +181,7 @@ pub(super) fn alg_quant(
 }
 
 /// `fast_atan2f` of `mathops.h`: a rational approximation, in float.
+#[allow(clippy::excessive_precision)] // the reference's constants as written
 fn fast_atan2f(y: f32, x: f32) -> f32 {
     const CA: f32 = 0.431_579_74;
     const CB: f32 = 0.678_484_03;
@@ -202,6 +203,7 @@ fn fast_atan2f(y: f32, x: f32) -> f32 {
     }
 }
 
+#[allow(clippy::approx_constant)] // the reference's 0.63662, not 2/pi
 /// `stereo_itheta`: the angle (0 to 16384 for 0 to pi/2) between mid and side, of the two
 /// halves `x` and `y` of a split (`stereo` false) or of the mid and side of two channels.
 pub(super) fn stereo_itheta(x: &[f32], y: &[f32], stereo: bool) -> i32 {

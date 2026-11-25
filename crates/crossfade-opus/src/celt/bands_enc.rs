@@ -61,7 +61,7 @@ fn intensity_stereo(x: &mut [f32], y: &[f32], band_e: &[f32; 2 * NB_EBANDS], ban
 
 /// `stereo_split`: left and right to mid and side.
 fn stereo_split(x: &mut [f32], y: &mut [f32]) {
-    const S: f32 = 0.707_106_78;
+    const S: f32 = std::f32::consts::FRAC_1_SQRT_2;
     for (a, b) in x.iter_mut().zip(y.iter_mut()) {
         let l = S * *a;
         let r = S * *b;
