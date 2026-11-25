@@ -236,7 +236,7 @@ fn the_frame_after_a_zoom_pan_or_fit_paints_the_new_range(cx: &mut TestAppContex
     for action in actions {
         let name = action.name();
         cx.update_window(rig.window, |_, window, cx| {
-            window.dispatch_action(action, cx)
+            window.dispatch_action(action, cx);
         })
         .unwrap();
         cx.run_until_parked();
