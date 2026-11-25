@@ -390,14 +390,15 @@ fn what_alac_cannot_take_is_refused_in_plain_words() {
         b
     };
     std::fs::write(&quad, quad_wav).unwrap();
-    let err = refused(&["convert", &quad, "-o", &o]);
+    let q = dir.path("q.m4a");
+    let err = refused(&["convert", &quad, "-o", &q]);
     assert!(
         err.contains("alac stores 4 channels in one layout only (4.0)"),
         "{err}"
     );
     assert!(err.contains("this stream is quad"), "{err}");
     assert!(err.contains("no standard mix reaches it"), "{err}");
-    assert!(!Path::new(&o).exists(), "nothing is created");
+    assert!(!Path::new(&q).exists(), "nothing is created");
 }
 
 #[test]
