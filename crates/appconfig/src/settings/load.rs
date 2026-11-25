@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use jsonc_parser::ParseOptions;
+use jsonc_parser::errors::ParseErrorKind;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -94,7 +95,23 @@ fn parse_options() -> ParseOptions {
     ParseOptions::default()
 }
 
-fn invalid(file: &Path, err: &jsonc_parser::errors::ParseError) -> SettingsError {
+fn invalid(file: &Path, text: &str, err: &jsonc_parser::errors::ParseError) -> SettingsError {
+    // Running out of text comes from the parser's serde layer with no position (1:1): the
+    // place to look is where the text ends.
+    if matches!(err.kind(), ParseErrorKind::Custom(m) if m == "unexpected end of input") {
+        let line = text.split('\n').count();
+        let column = text
+            .rsplit('\n')
+            .next()
+            .map_or(0, |last| last.chars().count())
+            + 1;
+        return SettingsError::Invalid {
+            file: file.to_path_buf(),
+            line,
+            column,
+            message: "the file ends in the middle of a value".to_string(),
+        };
+    }
     SettingsError::Invalid {
         file: file.to_path_buf(),
         line: err.line_display(),
@@ -107,7 +124,7 @@ fn invalid(file: &Path, err: &jsonc_parser::errors::ParseError) -> SettingsError
 /// Parses JSONC text to a JSON object. Empty text or comments only give `{}`.
 pub(crate) fn parse_object(text: &str, file: &Path) -> Result<Value, SettingsError> {
     let value: Value = jsonc_parser::parse_to_serde_value(text, &parse_options())
-        .map_err(|err| invalid(file, &err))?;
+        .map_err(|err| invalid(file, text, &err))?;
     match value {
         Value::Null => Ok(Value::Object(Map::new())),
         Value::Object(_) => Ok(value),
@@ -130,7 +147,7 @@ fn validate_layer<T: DeserializeOwned>(layer: &SettingsLayer) -> Result<(), Sett
     }
     jsonc_parser::parse_to_serde_value::<T>(&layer.text, &parse_options())
         .map(drop)
-        .map_err(|err| invalid(&layer.origin, &err))
+        .map_err(|err| invalid(&layer.origin, &layer.text, &err))
 }
 
 /// Whether `text` holds nothing but whitespace and comments.
