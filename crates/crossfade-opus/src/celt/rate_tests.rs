@@ -70,14 +70,16 @@ fn the_encoders_decisions_are_what_the_decoder_reads() {
     for lm in 0..4 {
         for c in 1..=2 {
             for (start, end) in [(0, 13), (0, 17), (0, 21), (17, 21)] {
-                for (trim, intensity, dual, prev, bw) in
-                    [(5, 21, false, 0, 20), (2, 12, true, 15, 16), (9, 3, true, 21, 12)]
-                {
+                for (trim, intensity, dual, prev, bw) in [
+                    (5, 21, false, 0, 20),
+                    (2, 12, true, 15, 16),
+                    (9, 3, true, 21, 12),
+                ] {
                     for total in (64..1275 * 64).step_by(1499) {
                         let mut offsets = [0; NB_EBANDS];
                         offsets[start + 1] = 48;
                         let cap = init_caps(lm, c);
-                        let mut enc = crate::range_enc::RangeEncoder::new(1275);
+                        let mut enc = RangeEncoder::new(1275);
                         let mut coder = AllocEncoder {
                             enc: &mut enc,
                             intensity: intensity.clamp(start, end),
