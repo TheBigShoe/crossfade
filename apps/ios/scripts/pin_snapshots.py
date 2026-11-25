@@ -17,8 +17,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 SNAPSHOTS = os.path.join(ROOT, "crates", "crossfade-ffi", "tests", "snapshots")
-OUT = os.path.join(HERE, "..", "CrossfadeKit", "Tests", "CrossfadeKitTests", "Snapshots")
-OUT = os.path.normpath(OUT)
+TESTS = os.path.normpath(os.path.join(HERE, "..", "CrossfadeKit", "Tests"))
+# The wrapper's tests decode them; the view models' tests drive fakes with them.
+OUTS = [os.path.join(TESTS, t, "Snapshots") for t in ("CrossfadeKitTests", "CrossfadeModelsTests")]
 
 PLACEHOLDERS = {"<revision>": 7, "<number>": -6.5}
 
@@ -60,35 +61,46 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if the copies drift")
     ap.add_argument("--snapshots", default=SNAPSHOTS)
-    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--out", action="append", help="an output folder (repeatable)")
     args = ap.parse_args(argv)
+    outs = args.out or OUTS
 
     want = expected(args.snapshots)
     if args.check:
-        have = set(os.listdir(args.out)) if os.path.isdir(args.out) else set()
         problems = []
-        for name, text in want.items():
-            path = os.path.join(args.out, name)
-            if name not in have:
-                problems.append(f"missing {name}")
-                continue
-            with open(path, encoding="utf-8") as f:
-                if f.read() != text:
-                    problems.append(f"drifted {name}")
-        problems += [f"extra {n}" for n in sorted(have - set(want)) if n.endswith(".json")]
+        for out in outs:
+            problems += [f"{out}: {p}" for p in drift(want, out)]
         for p in problems:
             print(f"pin_snapshots: {p} (run apps/ios/scripts/pin_snapshots.py)", file=sys.stderr)
         return 1 if problems else 0
 
-    os.makedirs(args.out, exist_ok=True)
-    for name in os.listdir(args.out):
-        if name.endswith(".json") and name not in want:
-            os.remove(os.path.join(args.out, name))
-    for name, text in want.items():
-        with open(os.path.join(args.out, name), "w", encoding="utf-8") as f:
-            f.write(text)
-    print(f"pin_snapshots: wrote {len(want)} files to {args.out}")
+    for out in outs:
+        write(want, out)
     return 0
+
+
+def drift(want, out):
+    have = set(os.listdir(out)) if os.path.isdir(out) else set()
+    problems = []
+    for name, text in want.items():
+        if name not in have:
+            problems.append(f"missing {name}")
+            continue
+        with open(os.path.join(out, name), encoding="utf-8") as f:
+            if f.read() != text:
+                problems.append(f"drifted {name}")
+    return problems + [f"extra {n}" for n in sorted(have - set(want)) if n.endswith(".json")]
+
+
+def write(want, out):
+    os.makedirs(out, exist_ok=True)
+    for name in os.listdir(out):
+        if name.endswith(".json") and name not in want:
+            os.remove(os.path.join(out, name))
+    for name, text in want.items():
+        with open(os.path.join(out, name), "w", encoding="utf-8") as f:
+            f.write(text)
+    print(f"pin_snapshots: wrote {len(want)} files to {out}")
 
 
 if __name__ == "__main__":

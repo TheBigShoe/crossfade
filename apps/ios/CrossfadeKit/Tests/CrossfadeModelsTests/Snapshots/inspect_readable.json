@@ -1,0 +1,115 @@
+{
+  "name": "tagged.flac",
+  "path": "<fixtures>/flac/tagged.flac",
+  "problem": null,
+  "readable": true,
+  "sections": [
+    {
+      "rows": [
+        {
+          "field": "format",
+          "id": "format",
+          "label": "Format",
+          "raw": "flac",
+          "value": "FLAC"
+        },
+        {
+          "field": "size_bytes",
+          "id": "size_bytes",
+          "label": "Size",
+          "raw": "12.7 kB",
+          "value": "12.7 kB"
+        }
+      ],
+      "title": "File"
+    },
+    {
+      "rows": [
+        {
+          "field": "index",
+          "id": "index",
+          "label": "Index",
+          "raw": "0",
+          "value": "0"
+        },
+        {
+          "field": "type",
+          "id": "type",
+          "label": "Type",
+          "raw": "audio",
+          "value": "audio"
+        },
+        {
+          "field": "codec",
+          "id": "codec",
+          "label": "Codec",
+          "raw": "flac",
+          "value": "FLAC"
+        },
+        {
+          "field": "sample_format",
+          "id": "sample_format",
+          "label": "Sample format",
+          "raw": "s16",
+          "value": "16-bit"
+        },
+        {
+          "field": "sample_rate",
+          "id": "sample_rate",
+          "label": "Sample rate",
+          "raw": "44.1 kHz",
+          "value": "44.1 kHz"
+        },
+        {
+          "field": "channels",
+          "id": "channels",
+          "label": "Channels",
+          "raw": "2",
+          "value": "2"
+        },
+        {
+          "field": "layout",
+          "id": "layout",
+          "label": "Layout",
+          "raw": "stereo",
+          "value": "stereo"
+        },
+        {
+          "field": "frames",
+          "id": "frames",
+          "label": "Frames",
+          "raw": "5,000",
+          "value": "5,000"
+        },
+        {
+          "field": "duration_seconds",
+          "id": "duration_seconds",
+          "label": "Duration",
+          "raw": "0:00.113",
+          "value": "0:00.113"
+        }
+      ],
+      "title": "Stream 0"
+    },
+    {
+      "rows": [
+        {
+          "field": "tags",
+          "id": "tags-0",
+          "label": "Title",
+          "raw": "Fixture",
+          "value": "Fixture"
+        },
+        {
+          "field": "tags",
+          "id": "tags-1",
+          "label": "Artist",
+          "raw": "Crossfade",
+          "value": "Crossfade"
+        }
+      ],
+      "title": "Tags"
+    }
+  ],
+  "summary": "FLAC · 44.1 kHz · stereo · 16-bit · 0:00.113"
+}

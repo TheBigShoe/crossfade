@@ -1,0 +1,18 @@
+{
+  "channels": 2,
+  "device_running": false,
+  "duration": 88200,
+  "failure": null,
+  "output": {
+    "channels": 2,
+    "sample_rate": 48000
+  },
+  "position": 0,
+  "pulled": 0,
+  "revision": 7,
+  "sample_rate": 44100,
+  "scrubbing": false,
+  "state": "ready",
+  "transport": "0:00.0 / 0:02.0",
+  "underruns": 0
+}
