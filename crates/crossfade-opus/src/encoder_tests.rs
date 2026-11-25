@@ -50,6 +50,25 @@ pub(crate) fn signal(kind: &str, channels: usize, seconds: f32) -> Vec<f32> {
     out
 }
 
+/// The `opus_compare` quality figure of `got` (decoded, `channels` interleaved, full scale
+/// 1.0) against `want`, which it lags by `delay` samples.
+pub(crate) fn quality(want: &[f32], got: &[f32], channels: usize, delay: usize) -> f32 {
+    let frames = got.len() / channels - delay;
+    let mut reference = Vec::with_capacity(2 * frames);
+    for i in 0..frames {
+        for c in 0..2 {
+            reference.push(want[i * channels + c.min(channels - 1)] * 32768.0);
+        }
+    }
+    let decoded: Vec<f32> = got[delay * channels..]
+        .iter()
+        .map(|v| v * 32768.0)
+        .collect();
+    crate::testing::compare::compare(&reference, &decoded, channels == 2, 48_000)
+        .expect("comparable")
+        .q
+}
+
 /// Encodes `pcm`, checking that each packet parses, is CELT and decodes with the encoder's
 /// final range; returns the packets and the decoded audio.
 pub(crate) fn encode_and_decode(cfg: &EncoderConfig, pcm: &[f32]) -> (Vec<Vec<u8>>, Vec<f32>) {

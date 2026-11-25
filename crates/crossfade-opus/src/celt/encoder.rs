@@ -19,6 +19,7 @@ use super::bands::haar1;
 use super::bands_enc::{EncodeBands, quant_all_bands_enc};
 use super::maths::exp2;
 use super::mdct;
+use super::pitch::{pitch_downsample, pitch_search, remove_doubling};
 use super::quant_bands::{
     Coarse, amp2_log2, quant_coarse_energy, quant_energy_finalise, quant_fine_energy,
 };
@@ -70,6 +71,10 @@ pub(crate) struct CeltEncodeFrame {
 pub(crate) struct CeltEncoder {
     /// Input channels, 1 or 2 (`CC`).
     channels: usize,
+    /// `CELT_SET_PREDICTION` below 2: no pitch pre-filter; at 0, intra energy too.
+    disable_pf: bool,
+    force_intra: bool,
+    // From here on, what OPUS_RESET_STATE clears.
     rng: u32,
     spread_decision: i32,
     delayed_intra: f32,
@@ -1011,6 +1016,8 @@ impl CeltEncoder {
     pub(crate) fn new(channels: usize) -> Self {
         Self {
             channels: channels.clamp(1, 2),
+            disable_pf: false,
+            force_intra: false,
             rng: 0,
             spread_decision: SPREAD_NORMAL,
             delayed_intra: 1.0,
@@ -1042,7 +1049,18 @@ impl CeltEncoder {
 
     /// Forgets the stream (`OPUS_RESET_STATE`).
     pub(crate) fn reset(&mut self) {
-        *self = Self::new(self.channels);
+        *self = Self {
+            disable_pf: self.disable_pf,
+            force_intra: self.force_intra,
+            ..Self::new(self.channels)
+        };
+    }
+
+    /// `CELT_SET_PREDICTION`: 2 (the default) predicts freely; 1 turns the pitch pre-filter
+    /// off; 0 also codes every frame's energy intra, so that each frame decodes alone.
+    pub(crate) fn set_prediction(&mut self, prediction: u8) {
+        self.disable_pf = prediction <= 1;
+        self.force_intra = prediction == 0;
     }
 
     /// `OPUS_GET_FINAL_RANGE`: the range coder's state after the last frame.
@@ -1134,8 +1152,33 @@ impl CeltEncoder {
     }
 
     /// The pitch search of `run_prefilter`: its gain and period.
-    fn find_pitch(&self, _pre: &[[f32; 960 + COMBFILTER_MAXPERIOD]; 2], _n: usize) -> (f32, i32) {
-        (0.0, COMBFILTER_MINPERIOD)
+    fn find_pitch(&self, pre: &[[f32; 960 + COMBFILTER_MAXPERIOD]; 2], n: usize) -> (f32, i32) {
+        let len = COMBFILTER_MAXPERIOD + n;
+        let mut pitch_buf = [0.0f32; (960 + COMBFILTER_MAXPERIOD) >> 1];
+        let pitch_buf = &mut pitch_buf[..len >> 1];
+        let cc = self.channels;
+        pitch_downsample([&pre[0][..len], &pre[cc - 1][..len]], cc, pitch_buf);
+        // Not the first 1.5 octave of the range: too many false positives from short-term
+        // correlation.
+        let max_pitch = COMBFILTER_MAXPERIOD - 3 * COMBFILTER_MINPERIOD as usize;
+        let found = pitch_search(
+            &pitch_buf[COMBFILTER_MAXPERIOD >> 1..],
+            pitch_buf,
+            n,
+            max_pitch,
+        );
+        let mut pitch_index = COMBFILTER_MAXPERIOD - found;
+        let gain = remove_doubling(
+            pitch_buf,
+            COMBFILTER_MAXPERIOD,
+            COMBFILTER_MINPERIOD as usize,
+            n,
+            &mut pitch_index,
+            self.prefilter_period.max(0) as usize,
+            self.prefilter_gain,
+        );
+        let pitch_index = pitch_index.min(COMBFILTER_MAXPERIOD - 2);
+        (0.7 * gain, pitch_index as i32)
     }
 
     /// Encodes one frame of `frame.frame_size * channels` interleaved samples (full scale 1.0)
@@ -1262,7 +1305,11 @@ impl CeltEncoder {
             self.preemph_mem[ch] = mem;
         }
 
-        let enabled = nb_available_bytes > 12 * ci && !hybrid && !silence && COMPLEXITY >= 5;
+        let enabled = nb_available_bytes > 12 * ci
+            && !hybrid
+            && !silence
+            && !self.disable_pf
+            && COMPLEXITY >= 5;
         let prefilter_tapset = self.tapset_decision;
         let (pf_on, pitch_index, gain1, qg) =
             self.run_prefilter(&mut input, n, prefilter_tapset, enabled, nb_available_bytes);
@@ -1435,7 +1482,7 @@ impl CeltEncoder {
                 c,
                 lm,
                 nb_available_bytes,
-                force_intra: false,
+                force_intra: self.force_intra,
                 two_pass: COMPLEXITY >= 4,
             },
             &band_log_e,

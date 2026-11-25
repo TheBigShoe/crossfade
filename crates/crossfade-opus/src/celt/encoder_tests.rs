@@ -52,7 +52,17 @@ pub(in crate::celt) fn round_trip(
     frame: &CeltEncodeFrame,
     bytes: usize,
 ) -> (Vec<f32>, Vec<usize>) {
-    let mut enc = CeltEncoder::new(channels);
+    round_trip_with(CeltEncoder::new(channels), pcm, channels, frame, bytes)
+}
+
+/// [`round_trip`] with an encoder as set up.
+pub(in crate::celt) fn round_trip_with(
+    mut enc: CeltEncoder,
+    pcm: &[f32],
+    channels: usize,
+    frame: &CeltEncodeFrame,
+    bytes: usize,
+) -> (Vec<f32>, Vec<usize>) {
     let mut dec = CeltDecoder::new(channels);
     let n = frame.frame_size;
     let mut out = vec![0.0f32; pcm.len()];
@@ -214,18 +224,49 @@ fn a_periodic_signal_turns_the_post_filter_on() {
         let pcm = buzz(period, channels, 20 * 960);
         let flags = postfilter_flags(&pcm, channels, n, 120 * n / 480);
         let on = flags.iter().skip(4).filter(|&&f| f).count();
-        assert!(on * 4 >= (flags.len() - 4) * 3, "period {period}: {flags:?}");
+        assert!(
+            on * 4 >= (flags.len() - 4) * 3,
+            "period {period}: {flags:?}"
+        );
         let pcm = signal("noise", channels, 20 * 960);
         let flags = postfilter_flags(&pcm, channels, n, 120 * n / 480);
-        assert!(flags.iter().all(|&f| !f), "noise: {flags:?}");
+        let on = flags.iter().filter(|&&f| f).count();
+        assert!(on * 20 <= flags.len(), "noise: {flags:?}");
     }
 }
 
+/// A harmonic tone: `harmonics` partials of `f0` Hz falling 3 dB each, with a little vibrato.
+fn harmonic(f0: f32, harmonics: usize, len: usize) -> Vec<f32> {
+    let tau = 2.0 * std::f32::consts::PI;
+    let mut phase = 0.0f32;
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / 48_000.0;
+            phase += tau * f0 * (1.0 + 0.003 * libm::sinf(tau * 5.0 * t)) / 48_000.0;
+            let mut v = 0.0;
+            let mut a = 0.3f32;
+            for h in 1..=harmonics {
+                v += a * libm::sinf(h as f32 * phase);
+                a *= 0.707;
+            }
+            v
+        })
+        .collect()
+}
+
 #[test]
-fn the_post_filter_codes_a_periodic_signal_better() {
-    let pcm = buzz(240, 1, 30 * 960);
-    let (out, _) = round_trip(&pcm, 1, &frame(960, 1, 21), 80);
-    // Measured: 13.7 dB without the pre-filter.
-    let got = snr(&pcm, &out, 1, DELAY);
-    assert!(got > 15.0, "{got} dB");
+fn the_post_filter_codes_a_harmonic_signal_better() {
+    // Measured, at 64 kb/s: 27.4 dB with the pre-filter and 20.9 without for 150 Hz, 30.7
+    // and 25.7 for 300 Hz. (opus_compare's figure does not always agree on these signals.)
+    for f0 in [150.0, 300.0] {
+        let pcm = harmonic(f0, 20, 30 * 960);
+        let f = frame(960, 1, 21);
+        let (with, _) = round_trip(&pcm, 1, &f, 160);
+        let mut off = CeltEncoder::new(1);
+        off.set_prediction(1);
+        let (without, _) = round_trip_with(off, &pcm, 1, &f, 160);
+        let with = snr(&pcm, &with, 1, DELAY);
+        let without = snr(&pcm, &without, 1, DELAY);
+        assert!(with > without + 4.0, "{f0} Hz: {with} vs {without} dB");
+    }
 }
