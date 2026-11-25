@@ -32,11 +32,39 @@ pub fn coded_depth(format: SampleFormat, true_depth: Option<u8>) -> Option<u8> {
     }
 }
 
-fn layout_words(layout: &ChannelLayout) -> String {
-    layout.name().map_or_else(
-        || format!("{} channels in another order", layout.channels()),
-        str::to_owned,
-    )
+/// The one layout ALAC has for `channels` channels (1 to 8), in WAVE order.
+pub fn layout_for(channels: u16) -> Option<ChannelLayout> {
+    let wave = u8::try_from(channels)
+        .ok()
+        .and_then(crossfade_alac::wave_layout)?;
+    ChannelLayout::from_mask(wave.mask, channels)
+}
+
+/// What is wrong with writing `layout` as ALAC, if anything: the layout it has for that many
+/// channels is the only one it stores (a count past 8 is the encoder's to refuse).
+pub fn layout_problem(layout: &ChannelLayout) -> Option<String> {
+    let wanted = layout_for(layout.channels()).filter(|w| w != layout)?;
+    let words = |l: &ChannelLayout| {
+        l.name().map_or_else(
+            || {
+                if l.positions().is_none() {
+                    format!("{} unlabelled channels", l.channels())
+                } else {
+                    format!("{} channels in another layout", l.channels())
+                }
+            },
+            str::to_owned,
+        )
+    };
+    Some(format!(
+        "alac stores {} channels in one layout only ({}) and this stream is {}",
+        layout.channels(),
+        wanted.name().map_or_else(
+            || format!("its own {}-channel order", layout.channels()),
+            str::to_owned
+        ),
+        words(layout)
+    ))
 }
 
 struct AlacEncoder {
@@ -77,21 +105,11 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         .ok()
         .filter(|n| (1..=8).contains(n))
         .ok_or_else(|| unsupported(format!("alac holds at most 8 channels, got {count}")))?;
+    if let Some(problem) = layout_problem(layout) {
+        return Err(unsupported(problem));
+    }
     let wave = crossfade_alac::wave_layout(channels)
         .ok_or_else(|| unsupported("alac has no layout for this channel count"))?;
-    let wanted = ChannelLayout::from_mask(wave.mask, count)
-        .ok_or_else(|| unsupported("alac has no layout for this channel count"))?;
-    if *layout != wanted {
-        let advice = match wanted.name() {
-            Some(name) => format!("use --channels {name} to convert"),
-            None => "no --channels name selects it".to_owned(),
-        };
-        return Err(unsupported(format!(
-            "alac stores {channels} channels in one layout only ({}) and this stream is {}; {advice}",
-            layout_words(&wanted),
-            layout_words(layout)
-        )));
-    }
     let mut to_alac = vec![0; usize::from(channels)];
     for (wave_channel, &alac_channel) in wave.from_alac.iter().enumerate() {
         to_alac[usize::from(alac_channel)] = wave_channel;

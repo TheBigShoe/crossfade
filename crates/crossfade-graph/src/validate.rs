@@ -7,17 +7,18 @@ use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
 use crossfade_dsp::filters::FilterPlan;
 use crossfade_dsp::filters::gain::GainPlan;
-use crossfade_dsp::filters::mix::assumption;
+use crossfade_dsp::filters::mix::{assumption, standard_matrix};
 
 /// Stands in for a normalising job's gain when only checking that the job builds.
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
-use crossfade_codec::alac_encode::coded_depth;
+use crossfade_codec::alac_encode::{coded_depth, layout_for, layout_problem};
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
     is_threaded_encoder,
 };
 use crossfade_core::{
-    AudioSpec, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
+    AudioSpec, ChannelLayout, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags,
+    TimeBase,
 };
 use crossfade_dsp::chain::Chain;
 use crossfade_dsp::dither::Dither;
@@ -247,6 +248,9 @@ fn output_plan(
     } else {
         depth
     };
+    if codec == CodecId::Alac {
+        check_alac_layout(out_spec.layout())?;
+    }
     let output = StreamInfo {
         frames,
         bits_per_raw_sample: depth,
@@ -259,6 +263,23 @@ fn output_plan(
         copy: false,
         notes: all,
     })
+}
+
+/// Refuses a layout ALAC cannot store, saying what would work: a `--channels` name when a
+/// standard mix reaches ALAC's layout, else that nothing short of a matrix does.
+fn check_alac_layout(layout: &ChannelLayout) -> Result<(), Error> {
+    let Some(problem) = layout_problem(layout) else {
+        return Ok(());
+    };
+    let wanted = layout_for(layout.channels());
+    let advice = match wanted.as_ref().and_then(|w| Some((w.name()?, w))) {
+        Some((name, w)) if standard_matrix(layout, w).is_ok() => {
+            format!("use --channels {name} to convert")
+        }
+        Some(_) => "no standard mix reaches it, so a mix filter with a matrix is the way".into(),
+        None => "no --channels name selects it".into(),
+    };
+    Err(unsupported(format!("{problem}; {advice}")))
 }
 
 /// The true depth an ALAC stream names for `true_depth` in `format`: 20 in `S24`, else the
