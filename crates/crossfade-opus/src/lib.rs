@@ -9,6 +9,7 @@
 //! for the notice and the royalty-free patent licences that cover Opus.
 #![forbid(unsafe_code)]
 
+mod analysis;
 mod celt;
 mod decoder;
 mod encoder;
