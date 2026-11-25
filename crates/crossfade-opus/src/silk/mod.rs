@@ -1,7 +1,8 @@
-//! The SILK layer (RFC 6716 section 4.2; libopus `silk/`, the decoder half): the
-//! linear-prediction codec used alone in SILK mode and below 8 kHz in hybrid mode: a port of
-//! libopus's decoder (the plain C paths, without the deep PLC, OSCE or DRED), its modules
-//! named after the C files they port.
+//! The SILK layer (RFC 6716 section 4.2; libopus `silk/`): the linear-prediction codec used
+//! alone in SILK mode and below 8 kHz in hybrid mode: a port of libopus's decoder (the plain C
+//! paths, without the deep PLC, OSCE or DRED), its modules named after the C files they port.
+//! The encoder, a port of libopus's fixed-point SILK encoder, is [`enc`], with its own
+//! contract; it shares this module's tables, state types and synthesis helpers.
 //!
 //! # The contract with the top level
 //!
@@ -70,7 +71,8 @@
 //!
 //! SILK's tables (the iCDFs of RFC 6716 4.2.7, the NLSF codebooks, the LTP and pitch tables,
 //! the resampler's coefficients and `delay_matrix_dec`, ...) go in `silk/tables*.rs`, private
-//! to this module. Nothing else in the crate shares them; the range decoder needs none.
+//! to this module and shared with the encoder, whose own tables are in `silk/enc/tables.rs`.
+//! Nothing else in the crate shares them; the range decoder needs none.
 //!
 //! # What the joining stage can rely on
 //!
@@ -100,6 +102,7 @@ mod decode_core;
 mod decode_indices;
 mod decode_parameters;
 mod decode_pulses;
+pub(crate) mod enc;
 mod macros;
 mod nlsf;
 mod plc;

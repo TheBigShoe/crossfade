@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 88165a39282ecf74c837e36050474e36e498cc09c3b195f25f9901c7402e5ef6 # shrinks to channels = 2, khz = 8, ms = 10, bitrate = 5000, complexity = 0, cbr = true, seed = 0, shape = 0, amp = 0
+cc a31a8721bd84e0e1f667b350e57d68fd8515bb077c1dba9bb85978ecfdf3a451 # shrinks to channels = 1, khz = 8, ms = 10, bitrate = 5000, complexity = 0, cbr = true, seed = 1219192200, shape = 146, amp = 241
+cc 4299e4797cce32be7d3da9a1981e786dd9a3b9f84fd2365f33c244e59e444f97 # shrinks to channels = 2, khz = 8, ms = 10, bitrate = 13000, complexity = 2, cbr = true, seed = 735001802, shape = 14, amp = 534
