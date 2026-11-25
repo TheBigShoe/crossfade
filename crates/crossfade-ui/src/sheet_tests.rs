@@ -590,7 +590,7 @@ fn an_unsaveable_extension_is_explained_in_plain_words(cx: &mut TestAppContext) 
     assert_eq!(
         problems,
         [
-            "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
+            "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .opus, .m4a, .mp4 and .m4b files."
         ]
     );
 }
@@ -616,6 +616,7 @@ enum Act {
     Level(usize),
     Preset(usize),
     Format(&'static str),
+    Bitrate(&'static str),
     Copy,
     Type(&'static str),
 }
@@ -774,6 +775,7 @@ fn run_intents(cx: &mut TestAppContext, input: &str, bytes: &[u8], intents: &[In
                 Act::Level(ix) => pick(cx, &rig, "sheet-level", &LEVEL_LABELS, ix),
                 Act::Preset(ix) => pick(cx, &rig, "sheet-preset", &PRESET_LABELS, ix),
                 Act::Format(label) => pick_label(cx, &rig, "sheet-format", label),
+                Act::Bitrate(label) => pick_label(cx, &rig, "sheet-bitrate", label),
                 Act::Copy => {
                     click(cx, rig.window, "sheet-copy");
                     draw(cx, rig.window);
@@ -1133,4 +1135,59 @@ fn a_plan_note_shows_in_the_hint_area_and_does_not_block(cx: &mut TestAppContext
     );
     assert!(!has(cx, rig.window, "sheet-problems"));
     assert!(!disabled(cx, rig.window, "dialog-ok"));
+}
+
+const OPUS_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Preset(9)],
+        cli: &["-o", "@in.opus"],
+    },
+    Intent2 {
+        steps: &[Act::Container("Opus"), Act::Bitrate("96 kb/s")],
+        cli: &["-o", "@in.opus", "--bitrate", "96k"],
+    },
+    Intent2 {
+        steps: &[Act::Type("typed.opus"), Act::Bitrate("256 kb/s")],
+        cli: &["-o", "@typed.opus", "--bitrate", "256000"],
+    },
+];
+
+#[gpui_test]
+fn opus_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
+    run_intents(cx, "in.wav", &wav, OPUS_INTENTS);
+}
+
+#[gpui_test]
+fn opus_has_a_bitrate_and_neither_a_format_nor_a_level(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-bitrate"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 5);
+    assert_eq!(sheet_output(cx, &rig), rig.dir.path("in.opus"));
+    assert!(has(cx, rig.window, "sheet-bitrate"));
+    assert!(!has(cx, rig.window, "sheet-format"));
+    assert!(!has(cx, rig.window, "sheet-level"));
+    let items = labels(cx, &rig, "sheet-bitrate");
+    assert_eq!(items[0], "Default (128 kb/s)");
+    assert!(items.contains(&"64 kb/s".to_owned()));
+    assert_eq!(labels(cx, &rig, "sheet-rate"), ["Same as source"]);
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+    type_output(cx, &rig, &rig.dir.path("again.flac"));
+    assert!(!has(cx, rig.window, "sheet-bitrate"));
+    assert!(has(cx, rig.window, "sheet-format"));
+}
+
+#[gpui_test]
+fn the_sheet_shows_the_note_for_the_rate_opus_forces(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(44_100, 2, SampleFormat::S16, 480);
+    let rig = rig_with_file(cx, "in.wav", &wav);
+    open_sheet(cx, &rig);
+    assert!(!has(cx, rig.window, "sheet-notes"));
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 5);
+    assert!(has(cx, rig.window, "sheet-notes"));
+    assert_eq!(
+        dialog(cx, &rig, |d, _| d.notes()),
+        ["opus is always 48 kHz: resampling from 44100 Hz"]
+    );
 }
