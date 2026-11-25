@@ -2,7 +2,7 @@
 //! float build at `OPUS_SET_LSB_DEPTH(16)` on the same kinds of signal).
 
 use super::modes_tests::modes;
-use super::tests::{config, encode_and_decode};
+use super::tests::{config, encode_and_decode, signal};
 use super::*;
 use crate::MultistreamEncoder;
 
@@ -72,4 +72,24 @@ fn a_high_band_under_the_input_depth_noise_floor_is_not_coded() {
             "{depth} bits: {got:?}"
         );
     }
+}
+
+#[test]
+fn celt_spends_less_on_a_quiet_signal_near_the_input_depth_noise_floor() {
+    // A sweep at -60 dB, fullband at 128 kb/s whatever the depth: CELT's VBR target is
+    // capped by how far the loudest band stands above the noise floor of the input's depth.
+    // libopus spends 20% less on it at 16 bits than at 24 (89.5 against 111.2 kb/s), and 24%
+    // less on a piece of real music at -60 dB (94.2 against 123.5 kb/s).
+    let pcm: Vec<f32> = signal("sweep", 2, 2.0).iter().map(|v| v * 1e-3).collect();
+    let mut totals = vec![];
+    for depth in [24, 16] {
+        let cfg = at_depth(depth, config(2, 128_000, true, FrameDuration::Ms20));
+        let (packets, _) = encode_and_decode(&cfg, &pcm);
+        assert!(modes(&packets)
+            .iter()
+            .all(|&m| m == (Mode::Celt, Bandwidth::Full)));
+        totals.push(packets.iter().map(Vec::len).sum::<usize>() as f64);
+    }
+    let saving = 1.0 - totals[1] / totals[0];
+    assert!(saving > 0.1, "{totals:?}");
 }
