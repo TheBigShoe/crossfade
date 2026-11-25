@@ -46,9 +46,11 @@ fn indices_decode_back_with_the_same_final_range() {
             CondCoding::Conditionally,
         ][(case / 6) % 3];
         let vad = case % 5 != 0;
-        let mut ix = SideInfoIndices::default();
-        ix.signal_type = if vad { 1 + r(2) as i8 } else { 0 };
-        ix.quant_offset_type = r(2) as i8;
+        let mut ix = SideInfoIndices {
+            signal_type: if vad { 1 + r(2) as i8 } else { 0 },
+            quant_offset_type: r(2) as i8,
+            ..SideInfoIndices::default()
+        };
         ix.gains_indices[0] = if cond == CondCoding::Conditionally {
             r(41) as i8
         } else {

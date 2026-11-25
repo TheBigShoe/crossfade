@@ -6,8 +6,8 @@
 
 pub(super) use crate::silk::macros::{
     clz_frac, clz32, div32, div32_varq, inverse32_varq, limit, log2lin, lshift, lshift_sat32,
-    rshift_round, rshift_round64, sat16, silk_rand, smlabb, smlawb, smlaww, smmul, smulbb, smulwb,
-    smulww, sqrt_approx,
+    rshift_round, sat16, silk_rand, smlabb, smlawb, smlaww, smmul, smulbb, smulwb, smulww,
+    sqrt_approx,
 };
 
 /// `SILK_FIX_CONST` for a C `float` constant (`0.94f`): the product is a float, then rounded
@@ -31,24 +31,6 @@ pub(super) fn smulwt(a: i32, b: i32) -> i32 {
 #[inline(always)]
 pub(super) fn smlawt(a: i32, b: i32, c: i32) -> i32 {
     a.wrapping_add(smulwt(b, c))
-}
-
-/// `silk_SMULBT`: `(i16)a * (b >> 16)`.
-#[inline(always)]
-pub(super) fn smulbt(a: i32, b: i32) -> i32 {
-    i32::from(a as i16) * (b >> 16)
-}
-
-/// `silk_SMLABT`, wrapping.
-#[inline(always)]
-pub(super) fn smlabt(a: i32, b: i32, c: i32) -> i32 {
-    a.wrapping_add(smulbt(b, c))
-}
-
-/// `silk_SMLATT`, wrapping.
-#[inline(always)]
-pub(super) fn smlatt(a: i32, b: i32, c: i32) -> i32 {
-    a.wrapping_add((b >> 16) * (c >> 16))
 }
 
 /// `silk_SMULL`.
@@ -108,12 +90,6 @@ pub(super) fn lshift64(a: i64, shift: u32) -> i64 {
 #[inline(always)]
 pub(super) fn clz64(a: i64) -> i32 {
     (a as u64).leading_zeros() as i32
-}
-
-/// `silk_CLZ16`.
-#[inline(always)]
-pub(super) fn clz16(a: i16) -> i32 {
-    (a as u16).leading_zeros() as i32
 }
 
 /// `silk_DIV32_16` with the C's results where it divides at all; see `div32`.

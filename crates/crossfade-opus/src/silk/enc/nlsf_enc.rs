@@ -280,7 +280,10 @@ fn nlsf_del_dec_quant(
         let rates_q5 = &ec_rates_q5[ec_ix[i] as usize..];
         let in_q10 = i32::from(x_q10[i]);
         for j in 0..n_states {
-            let pred_q10 = smulbb(i32::from(pred_coef_q8[i] as i16), prev_out_q10[j].into()) >> 8;
+            let pred_q10 = smulbb(
+                i32::from(i16::from(pred_coef_q8[i])),
+                prev_out_q10[j].into(),
+            ) >> 8;
             let res_q10 = i32::from((in_q10 - pred_q10) as i16);
             let ind_tmp = limit_i(smulbb(inv_quant_step_size_q6, res_q10) >> 16, -EXT, EXT - 1);
             ind[j][i] = ind_tmp as i8;

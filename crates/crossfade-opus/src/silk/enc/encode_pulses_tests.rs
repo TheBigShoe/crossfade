@@ -32,7 +32,7 @@ fn pulses_decode_back_with_the_same_final_range() {
         let mut pulses = [0i8; MAX_FRAME_LENGTH];
         for p in pulses.iter_mut().take(frame_length) {
             let r = next();
-            if r % 4 != 0 {
+            if !r.is_multiple_of(4) {
                 let mag = (r >> 8) % (amp + 1);
                 *p = if r & 0x80 != 0 {
                     -(mag as i8)

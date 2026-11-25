@@ -124,7 +124,7 @@ pub(super) mod signals {
                 )
             })
             .collect();
-        let mut state = vec![(0.0f64, 0.0f64); 3];
+        let mut state = [(0.0f64, 0.0f64); 3];
         let mut phase = 0.0;
         let mut out = Vec::with_capacity(len);
         let mut peak = 1e-9f64;
