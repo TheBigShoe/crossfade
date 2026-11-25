@@ -43,7 +43,10 @@ against whole process, best of 11 runs (milliseconds):
 
 Files are the same size as the reference's or smaller, and the thread count
 never changes a byte. MP3, AAC and ALAC decode faster than `mpg123` and macOS's
-`afconvert` too. [docs/performance.md](docs/performance.md) has every result on
+`afconvert` too. Opus decodes about twice as fast as `opusdec`. The Apple Lossless and
+Opus encoders are not faster than their references: on a Linux x86-64 machine
+`ffmpeg` encodes Apple Lossless 3.6 to 6 times faster, and `opusenc` encodes Opus 9 to
+23% faster, at about the same file size. [docs/performance.md](docs/performance.md) has every result on
 one page, what the reference tools are and how to get them, and the scripts
 that repeat the measurement; the full tables are in
 [docs/performance-details.md](docs/performance-details.md).
