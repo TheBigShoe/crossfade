@@ -38,8 +38,6 @@ const TRANSITION_PENALTY: f32 = 10.0;
 const NB_TONAL_SKIP_BANDS: usize = 9;
 const LEAKAGE_OFFSET: f32 = 2.5;
 const LEAKAGE_SLOPE: f32 = 2.0;
-/// The depth the float API claims for its input (`lsb_depth`).
-const LSB_DEPTH: i32 = 24;
 const TBANDS: [usize; NB_TBANDS + 1] = [
     4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 136, 160, 192, 240,
 ];
@@ -553,7 +551,7 @@ impl TonalityAnalysis {
         let mut bandwidth_mask = 0.0f32;
         let mut bandwidth = 0i32;
         let mut max_e = 0.0f32;
-        let mut noise_floor = 5.7e-4f32 / (1 << (LSB_DEPTH - 8).max(0)) as f32;
+        let mut noise_floor = 5.7e-4f32 / (1 << (lsb_depth - 8).max(0)) as f32;
         noise_floor *= noise_floor;
         let mut below_max_pitch = 0.0f32;
         let mut above_max_pitch = 0.0f32;
