@@ -708,10 +708,13 @@ impl WaveformStrip {
                 if event.modifiers.secondary(cx) {
                     this.edit(cx, |view| view.zoom_scroll(dy, anchor));
                     cx.stop_propagation();
-                } else if dx.abs() > dy.abs() {
-                    // Content follows the fingers: moving right shows earlier audio.
-                    this.edit(cx, |view| view.pan_px(-dx));
-                    cx.stop_propagation();
+                } else {
+                    // A wheel the strip does not take scrolls the inspector.
+                    if this.strip.view_mut().scroll(dx, dy) {
+                        this.follow.user_moved();
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
                 }
             }))
             .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
