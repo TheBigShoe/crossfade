@@ -207,9 +207,10 @@ fn cbr_totals_are_exact_and_vbr_totals_near_the_bitrate() {
             let (packets, _) = round_trip(&vbr, 1, &pcm);
             let rate = packets.iter().map(Vec::len).sum::<usize>() as f64 * 8.0;
             assert!(
-                // Measured: +12% (3 ch at 448 kb/s) to +69% (5.1 at 64 kb/s): CELT's open-loop
-                // VBR, whose target the tonality analysis raises on these steady notes.
-                (0.0..0.75).contains(&(rate / f64::from(bitrate) - 1.0)),
+                // Measured: +4% (8 ch at 64 kb/s) to +58% (5.1 at 64 kb/s): CELT's open-loop
+                // VBR, whose target the tonality analysis raises on these steady notes and the
+                // surround masks steer (libopus gives the same on other surround files).
+                (0.0..0.7).contains(&(rate / f64::from(bitrate) - 1.0)),
                 "{channels} ch {bitrate}: {rate}"
             );
         }
@@ -218,11 +219,11 @@ fn cbr_totals_are_exact_and_vbr_totals_near_the_bitrate() {
 
 #[test]
 fn surround_quality_rises_with_the_bitrate() {
-    // The mean SNR over 5.1's five full-range channels: measured 22.4, 28.5 and 30.6 dB,
+    // The mean SNR over 5.1's five full-range channels: measured 21.8, 28.3 and 30.6 dB,
     // less 1 dB.
     let pcm = surround(6, 1.0);
     let mut last = f64::MIN;
-    for (bitrate, min) in [(128_000u32, 21.4), (256_000, 27.5), (448_000, 29.6)] {
+    for (bitrate, min) in [(128_000u32, 20.8), (256_000, 27.3), (448_000, 29.6)] {
         let cfg = config(6, bitrate, true, FrameDuration::Ms20);
         let (_, out) = round_trip(&cfg, 1, &pcm);
         let mean = [0, 1, 2, 4, 5]
@@ -271,7 +272,7 @@ fn reset_starts_the_streams_afresh() {
 #[test]
 fn surround_gives_the_same_bytes_on_every_platform() {
     // Frozen: a change here changes the encoder's output, which must be on purpose (last:
-    // the tonality analysis).
+    // the surround masks).
     let mut cases = vec![];
     for (channels, bitrate, vbr) in [
         (6u8, 256_000u32, true),
@@ -302,9 +303,9 @@ fn surround_gives_the_same_bytes_on_every_platform() {
     assert_eq!(
         cases,
         [
-            (16708, 14602741918336303463),
-            (8000, 15415504256989509845),
-            (21642, 18015900949819515635)
+            (17221, 12284992326031008237),
+            (8000, 927794366396315995),
+            (20529, 6301685194127560904)
         ]
     );
 }
