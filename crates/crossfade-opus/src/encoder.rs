@@ -140,6 +140,11 @@ pub struct EncoderConfig {
     /// Discontinuous transmission (`OPUS_SET_DTX`): inactive frames (by the analysis's
     /// activity, or digital silence) are sent as TOC-only packets, one in every 400 ms.
     pub dtx: bool,
+    /// The depth of the input in bits, 8 to 24 (`OPUS_SET_LSB_DEPTH`; anything else is an
+    /// error, as libopus refuses it): what counts as digital silence and the noise floor
+    /// the bandwidth detection and CELT's band allocation assume. 16 for 16-bit sources,
+    /// as `opusenc` sets it.
+    pub lsb_depth: u8,
 }
 
 impl Default for EncoderConfig {
@@ -157,6 +162,7 @@ impl Default for EncoderConfig {
             inband_fec: false,
             packet_loss_percent: 0,
             dtx: false,
+            lsb_depth: 24,
         }
     }
 }
@@ -526,6 +532,9 @@ impl Encoder {
         }
         if config.packet_loss_percent > 100 {
             return Err(Error::BadArgument("a packet loss above 100%"));
+        }
+        if !(8..=24).contains(&config.lsb_depth) {
+            return Err(Error::BadArgument("an input depth outside 8 to 24 bits"));
         }
         let channels = usize::from(config.channels);
         let user_bitrate = i64::from(config.bitrate).clamp(500, 300_000 * channels as i64) as i32;
