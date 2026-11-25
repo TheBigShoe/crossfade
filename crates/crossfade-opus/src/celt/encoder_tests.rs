@@ -115,6 +115,7 @@ fn frame(n: usize, channels: usize, end: usize) -> CeltEncodeFrame {
         bitrate: None,
         vbr: false,
         constrained_vbr: true,
+        silk_info: SilkInfo::default(),
     }
 }
 
@@ -269,4 +270,121 @@ fn the_post_filter_codes_a_harmonic_signal_better() {
         let without = snr(&pcm, &without, 1, DELAY);
         assert!(with > without + 4.0, "{f0} Hz: {with} vs {without} dB");
     }
+}
+
+/// Bits standing for SILK's layer of a hybrid frame: what the test writes before CELT and
+/// reads back before decoding it.
+const SILK_STAND_IN: [(u32, u32); 4] = [(0x2b, 7), (0x1f3, 9), (0x5, 3), (0x3c, 8)];
+
+/// Codes each frame of `pcm` as the CELT half of a hybrid frame (SILK's bits first), decodes
+/// it with the final range checked; returns the frame sizes and the transient flags.
+fn hybrid_round_trip(
+    enc: &mut CeltEncoder,
+    pcm: &[f32],
+    channels: usize,
+    frame: &CeltEncodeFrame,
+    bytes: usize,
+) -> (Vec<usize>, Vec<bool>) {
+    let mut dec = CeltDecoder::new(channels);
+    let n = frame.frame_size;
+    let mut out = vec![0.0f32; n * channels];
+    let (mut sizes, mut transients) = (vec![], vec![]);
+    for chunk in pcm.chunks_exact(n * channels) {
+        let mut rc = RangeEncoder::new(bytes);
+        for (v, bits) in SILK_STAND_IN {
+            rc.encode_bin(v, v + 1, bits);
+        }
+        let len = enc.encode(chunk, frame, &mut rc).expect("encodes");
+        let rng = rc.rng();
+        let data = rc.done().expect("fits");
+        assert_eq!(data.len(), len);
+        let mut rd = RangeDecoder::new(&data);
+        for (v, bits) in SILK_STAND_IN {
+            assert_eq!(rd.decode_bin(bits), v);
+            rd.update(v, v + 1, 1 << bits);
+        }
+        transients.push(rd.clone().dec_bit_logp(3));
+        let celt = CeltFrame {
+            frame_size: n,
+            start_band: 17,
+            end_band: frame.end_band,
+            stream_channels: frame.stream_channels,
+            accumulate: false,
+        };
+        dec.decode(Some(&mut rd), &celt, &mut out).expect("decodes");
+        assert_eq!(dec.final_range(), rng);
+        sizes.push(len);
+    }
+    (sizes, transients)
+}
+
+fn hybrid(n: usize, channels: usize, end: usize, signal_type: i32, offset: i32) -> CeltEncodeFrame {
+    CeltEncodeFrame {
+        start_band: 17,
+        silk_info: SilkInfo {
+            signal_type,
+            offset,
+        },
+        ..frame(n, channels, end)
+    }
+}
+
+#[test]
+fn hybrid_frames_decode_with_the_final_range() {
+    for kind in ["silence", "tone", "noise", "clicks", "full"] {
+        for channels in [1, 2] {
+            for n in [480, 960] {
+                for end in [19, 21] {
+                    for (bytes, bitrate) in [(12, None), (60, None), (1275, Some(16_000))] {
+                        let pcm = signal(kind, channels, 6 * 960);
+                        let f = CeltEncodeFrame {
+                            bitrate,
+                            vbr: bitrate.is_some(),
+                            constrained_vbr: false,
+                            ..hybrid(n, channels, end, 1, 100)
+                        };
+                        let mut enc = CeltEncoder::new(channels);
+                        hybrid_round_trip(&mut enc, &pcm, channels, &f, bytes);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_tonal_silk_frame_gives_hybrid_vbr_more_bits_than_a_noisy_one() {
+    // libopus moves the target by +12 (offset under 100) or -18 bits (over 100) per 2.5 ms.
+    let pcm = signal("noise", 1, 10 * 960);
+    let mut sizes = vec![];
+    for offset in [60, 100, 140] {
+        let f = CeltEncodeFrame {
+            bitrate: Some(12_000),
+            vbr: true,
+            constrained_vbr: false,
+            ..hybrid(960, 1, 21, 1, offset)
+        };
+        let (s, _) = hybrid_round_trip(&mut CeltEncoder::new(1), &pcm, 1, &f, 1275);
+        sizes.push(s.iter().sum::<usize>());
+    }
+    assert!(sizes[0] > sizes[1] && sizes[1] > sizes[2], "{sizes:?}");
+}
+
+#[test]
+fn low_rate_hybrid_codes_weak_transients_as_long_blocks_unless_voiced() {
+    // Below 15 bytes, an onset that masks weakly is no transient in an unvoiced frame
+    // (libopus's weak transients); a voiced frame keeps it.
+    let mut pcm = vec![0.0f32; 4 * 960];
+    let mut seed = 7u32;
+    for (i, v) in pcm.iter_mut().enumerate() {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let r = ((seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
+        *v = if i >= 2 * 960 + 500 { 0.2 * r } else { 0.05 * r };
+    }
+    let flags = |signal_type| {
+        let f = hybrid(960, 1, 21, signal_type, 100);
+        hybrid_round_trip(&mut CeltEncoder::new(1), &pcm, 1, &f, 12).1
+    };
+    assert_eq!(flags(2)[2], true, "voiced");
+    assert_eq!(flags(1)[2], false, "unvoiced");
 }
