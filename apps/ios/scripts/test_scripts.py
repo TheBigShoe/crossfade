@@ -67,6 +67,17 @@ class PinSnapshots(unittest.TestCase):
         os.remove(os.path.join(out, "analysis_shape.json"))
         self.assertEqual(pin_snapshots.main(["--check", "--snapshots", snaps, "--out", out]), 1)
 
+    def test_every_output_folder_gets_the_copies_and_is_checked(self):
+        snaps, out = self._dirs()
+        second = out + "-models"
+        args = ["--snapshots", snaps, "--out", out, "--out", second]
+        self.assertEqual(pin_snapshots.main(args), 0)
+        self.assertTrue(os.path.exists(os.path.join(out, "analysis_shape.json")))
+        self.assertTrue(os.path.exists(os.path.join(second, "analysis_shape.json")))
+        self.assertEqual(pin_snapshots.main(["--check"] + args), 0)
+        os.remove(os.path.join(out, "analysis_shape.json"))
+        self.assertEqual(pin_snapshots.main(["--check"] + args), 1)
+
     def test_the_committed_copies_match_the_rust_snapshots(self):
         self.assertEqual(pin_snapshots.main(["--check"]), 0)
 
