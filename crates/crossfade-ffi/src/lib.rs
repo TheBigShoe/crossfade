@@ -5,3 +5,10 @@
 //! Only the `abi` module may hold `unsafe`, and only to read what a caller's pointer points
 //! at or to take and give back a box; the logic is in safe modules it calls.
 #![deny(unsafe_code)]
+
+mod about;
+mod abi;
+mod error;
+
+pub use abi::*;
+pub use error::*;
