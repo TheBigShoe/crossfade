@@ -426,6 +426,9 @@ fn the_summary_is_the_files_list_line() {
     );
     let mut odd = mono_u8_unknown_length();
     odd.streams[0].sample_rate = 44_100;
-    assert_eq!(summary(&odd), "WAV \u{b7} 44.1 kHz \u{b7} mono \u{b7} 8-bit");
+    assert_eq!(
+        summary(&odd),
+        "WAV \u{b7} 44.1 kHz \u{b7} mono \u{b7} 8-bit"
+    );
     assert_eq!(summary(&doc(None, vec![])), "no audio");
 }
