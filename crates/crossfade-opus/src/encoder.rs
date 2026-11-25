@@ -137,8 +137,8 @@ pub struct EncoderConfig {
     /// The packet loss to expect, 0 to 100 (`OPUS_SET_PACKET_LOSS_PERC`): FEC needs it above
     /// 0, and it makes SILK code more robustly.
     pub packet_loss_percent: u8,
-    /// Discontinuous transmission (`OPUS_SET_DTX`): silence (SILK's or digital silence) is
-    /// sent as TOC-only packets, one in every 400 ms.
+    /// Discontinuous transmission (`OPUS_SET_DTX`): inactive frames (by the analysis's
+    /// activity, or digital silence) are sent as TOC-only packets, one in every 400 ms.
     pub dtx: bool,
 }
 
