@@ -525,6 +525,29 @@ fn a_file_name_wider_than_the_inspector_truncates_instead_of_being_clipped(
 }
 
 #[gpui_test]
+fn the_inspector_never_paints_over_the_queue_dock(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);
+    add_paths(cx, &rig, &[&a]);
+    click(cx, rig.window, "toolbar-queue");
+    // The narrowest window: the files panel and the dock leave the inspector no width.
+    VisualTestContext::from_window(rig.window, cx).simulate_resize(size(px(640.), px(400.)));
+    draw(cx, rig.window);
+    let dock = bounds_of(cx, rig.window, "queue-dock");
+    for id in ["inspector", "inspector-path"] {
+        let el = cx
+            .update_window(rig.window, |_, window, _| window.find(id))
+            .unwrap();
+        // `visible` is what shows through the clip; laid out over the dock, it must not.
+        assert!(
+            !(el.visible() && el.bounds().intersects(&dock)),
+            "{id} shows over the dock: {:?} vs {dock:?}",
+            el.bounds()
+        );
+    }
+}
+
+#[gpui_test]
 fn a_short_name_leaves_the_directory_what_the_name_does_not_need(cx: &mut TestAppContext) {
     let rig = open_rig(cx);
     let short = rig.dir.write_wav("a.wav", 48_000, 2, 480);
