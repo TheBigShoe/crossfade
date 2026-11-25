@@ -268,7 +268,7 @@ pub(crate) fn open_sheet(cx: &mut TestAppContext, rig: &Rig) {
     draw(cx, rig.window);
 }
 
-pub(crate) const PRESET_LABELS: [&str; 8] = [
+pub(crate) const PRESET_LABELS: [&str; 9] = [
     "Same as source",
     "16-bit (CD)",
     "24-bit",
@@ -277,8 +277,10 @@ pub(crate) const PRESET_LABELS: [&str; 8] = [
     "FLAC 16-bit",
     "FLAC 24-bit",
     "AIFF",
+    "Apple Lossless",
 ];
-pub(crate) const CONTAINER_LABELS: [&str; 4] = ["WAV", "FLAC", "AIFF", "Ogg FLAC"];
+pub(crate) const CONTAINER_LABELS: [&str; 5] =
+    ["WAV", "FLAC", "AIFF", "Ogg FLAC", "Apple Lossless"];
 pub(crate) const LEVEL_LABELS: [&str; 10] = [
     "Default",
     "0 \u{b7} Fastest",

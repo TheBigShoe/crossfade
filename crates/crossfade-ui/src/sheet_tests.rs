@@ -589,7 +589,9 @@ fn an_unsaveable_extension_is_explained_in_plain_words(cx: &mut TestAppContext) 
     let problems = dialog(cx, &rig, |d, cx| d.problem_messages(cx));
     assert_eq!(
         problems,
-        ["Crossfade can save .wav, .flac, .oga, .ogg and .aiff files."]
+        [
+            "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
+        ]
     );
 }
 
@@ -694,6 +696,53 @@ const OGG_INTENTS: &[Intent2] = &[
 fn ogg_flac_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
     let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
     run_intents(cx, "in.wav", &wav, OGG_INTENTS);
+}
+
+const ALAC_INTENTS: &[Intent2] = &[
+    Intent2 {
+        steps: &[Act::Preset(8)],
+        cli: &["-o", "@in.m4a"],
+    },
+    Intent2 {
+        steps: &[Act::Container("Apple Lossless")],
+        cli: &["-o", "@in.m4a"],
+    },
+    Intent2 {
+        steps: &[
+            Act::Container("Apple Lossless"),
+            Act::Format("24-bit integer"),
+        ],
+        cli: &["-o", "@in-s24.m4a", "--sample-format", "s24"],
+    },
+    Intent2 {
+        steps: &[Act::Type("typed.m4a")],
+        cli: &["-o", "@typed.m4a"],
+    },
+];
+
+#[gpui_test]
+fn apple_lossless_sheet_intents_equal_the_cli_requests(cx: &mut TestAppContext) {
+    let wav = fixtures::wav(48_000, 2, SampleFormat::S16, 480);
+    run_intents(cx, "in.wav", &wav, ALAC_INTENTS);
+}
+
+#[gpui_test]
+fn apple_lossless_has_no_level_and_offers_whole_numbers(cx: &mut TestAppContext) {
+    let rig = rig_with_input(cx);
+    open_sheet(cx, &rig);
+    pick(cx, &rig, "sheet-container", &CONTAINER_LABELS, 4);
+    assert_eq!(sheet_output(cx, &rig), rig.dir.path("in.m4a"));
+    assert!(!has(cx, rig.window, "sheet-level"));
+    let whole: Vec<&str> = [&FORMAT_LABELS[..1], &FORMAT_LABELS[2..5]].concat();
+    assert_eq!(labels(cx, &rig, "sheet-format"), whole);
+    assert!(!disabled(cx, rig.window, "dialog-ok"));
+    type_output(cx, &rig, &rig.dir.path("again.flac"));
+    assert!(has(cx, rig.window, "sheet-level"));
+    type_output(cx, &rig, &rig.dir.path("again.m4b"));
+    assert_eq!(
+        dialog(cx, &rig, |d, cx| d.container_label(cx)),
+        "Apple Lossless"
+    );
 }
 
 const FLAC_INTENTS: &[Intent2] = &[

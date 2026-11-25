@@ -124,7 +124,7 @@ impl Pipeline {
                 job.outputs.len()
             )));
         };
-        let output_format = output_format_for(&output.path)?;
+        let output_format = output_format_for(&output.path, &output.audio)?;
         let make_muxer = |io: &mut dyn JobIo,
                           out_stream: &StreamInfo,
                           tags: &Tags|

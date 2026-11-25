@@ -5,6 +5,7 @@
 #[cfg(feature = "aac")]
 mod aac;
 pub mod alac;
+pub mod alac_encode;
 pub mod flac;
 pub mod mp3;
 pub mod opus;
@@ -28,9 +29,15 @@ pub fn auto_thread_count() -> usize {
     crossfade_flac::auto_thread_count()
 }
 
-/// Whether `codec`'s decoder or encoder can use more than the calling thread.
+/// Whether `codec`'s decoder can use more than the calling thread.
 pub fn is_threaded(codec: CodecId) -> bool {
     matches!(codec, CodecId::Flac | CodecId::Alac)
+}
+
+/// Whether `codec`'s encoder can use more than the calling thread (ALAC's carries state from
+/// packet to packet).
+pub fn is_threaded_encoder(codec: CodecId) -> bool {
+    codec == CodecId::Flac
 }
 
 /// `Error::Unsupported` for a codec with no decoder. Runs on the calling thread.
@@ -98,6 +105,9 @@ pub fn encoder_for_threads(
     }
     if codec == CodecId::Flac {
         return flac::encode::encoder_threads(spec, options, threads);
+    }
+    if codec == CodecId::Alac {
+        return alac_encode::encoder(spec, options);
     }
     Err(Error::Unsupported {
         what: format!("no encoder for {}", codec.name()),

@@ -7,6 +7,7 @@ use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{
     AudioSettings, CancelToken, Pipeline, probe, run, validate, writable_extensions,
 };
+use crossfade_opus::testing::ogg::{self as w, OggLayout};
 use crossfade_testkit::memory::MemoryIo;
 
 fn settings(format: Option<SampleFormat>, codec: Option<&str>, level: Option<u8>) -> AudioSettings {
@@ -45,6 +46,24 @@ fn io() -> MemoryIo {
         &mut |_| {},
     )
     .unwrap();
+    run(
+        &job("s16.wav", "s16.m4a", None),
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
+    let audio = w::packets(9, true, 10, 50, 1);
+    io.insert(
+        "in.opus",
+        w::ogg_file(
+            &w::opus_head(2, 312, 0, None),
+            &w::opus_tags("t", &[]),
+            &audio,
+            &OggLayout::default(),
+        ),
+    );
     io
 }
 
@@ -75,6 +94,14 @@ fn table() -> Vec<Case> {
         ),
         ("s16.flac", "o.wav", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("copy"), None)),
+        ("s16.wav", "o.m4a", settings(None, None, None)),
+        ("s24.wav", "o.mp4", settings(None, Some("alac"), None)),
+        ("s32.wav", "o.M4B", settings(None, None, None)),
+        ("s16.wav", "o.m4a", settings(Some(S24), None, None)),
+        ("s16.m4a", "o.m4a", settings(None, Some("copy"), None)),
+        ("s16.m4a", "o.flac", settings(None, None, None)),
+        ("in.opus", "o.opus", settings(None, Some("copy"), None)),
+        ("in.opus", "o.ogg", settings(None, Some("copy"), None)),
         // Refusals.
         ("f32.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.flac", settings(Some(F64), None, None)),
@@ -94,6 +121,17 @@ fn table() -> Vec<Case> {
         ("s16.wav", "o.mp3", settings(None, None, None)),
         ("s16.wav", "o", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("mp3"), None)),
+        ("s16.wav", "o.m4a", settings(None, Some("aac"), None)),
+        ("s16.wav", "o.m4a", settings(None, Some("flac"), None)),
+        ("f32.wav", "o.m4a", settings(None, None, None)),
+        ("s16.wav", "o.m4a", settings(Some(U8), None, None)),
+        ("s16.wav", "o.m4a", settings(None, None, Some(5))),
+        ("s16.wav", "o.m4a", settings(None, Some("copy"), None)),
+        ("s16.flac", "o.m4a", settings(None, Some("copy"), None)),
+        ("wide.wav", "o.m4a", settings(None, None, None)),
+        ("in.opus", "o.opus", settings(None, None, None)),
+        ("in.opus", "o.ogg", settings(None, Some("opus"), None)),
+        ("s16.m4a", "o.wav", settings(None, Some("copy"), None)),
     ]
 }
 
@@ -126,7 +164,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 17, "the table keeps its refusals");
+    assert_eq!(refused, 28, "the table keeps its refusals");
 }
 
 #[test]
@@ -141,11 +179,33 @@ fn validate_names_the_cause() {
     );
     assert_eq!(
         text(&settings(None, Some("copy"), None), "o.oga"),
-        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac only)"
+        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac and opus)"
     );
     assert_eq!(
         text(&settings(None, Some("pcm"), None), "o.oga"),
-        "unsupported: codec pcm cannot be written into ogg (ogg holds flac only)"
+        "unsupported: codec pcm cannot be written into ogg (ogg writes flac only; an opus \
+         stream can be copied with --codec copy)"
+    );
+    assert_eq!(
+        text(&settings(None, Some("copy"), None), "o.m4a"),
+        "unsupported: cannot copy pcm_s16le into mp4 (mp4 holds alac only)"
+    );
+    assert_eq!(
+        text(&settings(None, Some("aac"), None), "o.m4a"),
+        "unsupported: codec aac cannot be written into mp4 (mp4 writes alac only; aac and mp3 \
+         are not written)"
+    );
+    assert_eq!(
+        text(&settings(None, None, Some(5)), "o.m4a"),
+        "unsupported: --compression-level applies to flac only"
+    );
+    let opus = probe("in.opus", &mut io, &limits).unwrap().streams[0].clone();
+    assert_eq!(
+        validate(&opus, "o.opus", &settings(None, None, None))
+            .unwrap_err()
+            .to_string(),
+        "unsupported: encoding opus is not supported yet; an opus stream can be copied with \
+         --codec copy into .opus"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),
@@ -163,9 +223,90 @@ fn validate_names_the_cause() {
         ".flac",
         ".aiff/.aif/.aifc",
         ".oga/.ogg",
+        ".m4a/.mp4/.m4b",
     ] {
         assert!(ext.contains(want), "{want} missing from {ext}");
     }
+}
+
+/// ALAC has one layout per channel count: a stream in another is refused before anything is
+/// written, with the advice that works (a `--channels` name when a standard mix reaches the
+/// layout, else nothing a flag can do).
+#[test]
+fn alac_refuses_another_layout_and_says_what_would_work() {
+    use crossfade_core::Channel::*;
+    let mut io = MemoryIo::new();
+    let positioned =
+        |positions: Vec<crossfade_core::Channel>| ChannelLayout::from_positions(positions).unwrap();
+    // A plain WAV header carries no layout, so the probed stream is given the one under test.
+    let limits = Limits::default();
+    let streams: std::collections::HashMap<&str, _> = [
+        ("four.wav", ChannelLayout::unpositioned(4).unwrap()),
+        (
+            "quad.wav",
+            positioned(vec![FrontLeft, FrontRight, BackLeft, BackRight]),
+        ),
+        ("eight.wav", ChannelLayout::unpositioned(8).unwrap()),
+        ("seven1.wav", ChannelLayout::from_name("7.1").unwrap()),
+        ("five1.wav", ChannelLayout::from_name("5.1").unwrap()),
+    ]
+    .into_iter()
+    .map(|(name, layout)| {
+        let n = usize::from(layout.channels());
+        io.insert(
+            name,
+            sine_wav(
+                &spec(
+                    8000,
+                    SampleFormat::S16,
+                    ChannelLayout::unpositioned(n as u16).unwrap(),
+                ),
+                3000,
+            )
+            .1,
+        );
+        let mut stream = probe(name, &mut io, &limits).unwrap().streams[0].clone();
+        stream.audio = spec(8000, SampleFormat::S16, layout);
+        (name, stream)
+    })
+    .collect();
+    let text = |input: &str, settings: &AudioSettings| {
+        validate(&streams[input], "o.m4a", settings).map(|p| p.output.audio.layout().clone())
+    };
+    let none = AudioSettings::default();
+    let err = |input: &str| text(input, &none).unwrap_err().to_string();
+    // The standard mixes never invent a position, so only what already has a name works.
+    assert_eq!(
+        err("four.wav"),
+        "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is 4 \
+         unlabelled channels; use --channels 4.0 to convert"
+    );
+    assert_eq!(
+        err("quad.wav"),
+        "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is quad; \
+         no standard mix reaches it, so a mix filter with a matrix is the way"
+    );
+    assert!(
+        err("eight.wav").ends_with("no --channels name selects it"),
+        "{}",
+        err("eight.wav")
+    );
+    assert!(
+        err("seven1.wav").contains("this stream is 7.1;"),
+        "{}",
+        err("seven1.wav")
+    );
+    // What the advice names does work, and so does a layout that is ALAC's own.
+    let channels = |name: &str| AudioSettings {
+        channels: Some(crossfade_graph::filter::parse_channels(name).unwrap()),
+        ..AudioSettings::default()
+    };
+    assert_eq!(
+        text("four.wav", &channels("4.0")).unwrap(),
+        ChannelLayout::from_name("4.0").unwrap()
+    );
+    assert!(text("five1.wav", &none).is_ok());
+    assert!(text("seven1.wav", &channels("stereo")).is_ok());
 }
 
 #[test]
@@ -188,7 +329,9 @@ fn codec_limits_surface_without_a_file() {
 fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
-        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
+        [
+            "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "m4a", "mp4", "m4b"
+        ]
     );
     let mut io = io();
     let limits = Limits::default();

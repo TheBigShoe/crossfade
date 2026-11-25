@@ -8,6 +8,29 @@ fn unsupported(what: impl Into<String>) -> Error {
     Error::Unsupported { what: what.into() }
 }
 
+/// What a container writes, for the end of a refusal of another codec.
+fn writes_only(format: FormatId, codec: &str) -> &'static str {
+    match (format, codec) {
+        (FormatId::Ogg, "opus") => {
+            " (encoding opus is not supported yet; an opus stream can be copied with --codec copy)"
+        }
+        (FormatId::Ogg, _) => {
+            " (ogg writes flac only; an opus stream can be copied with --codec copy)"
+        }
+        (FormatId::Mp4, _) => " (mp4 writes alac only; aac and mp3 are not written)",
+        _ => "",
+    }
+}
+
+fn integer_only(codec: &str, sample_format: SampleFormat) -> Result<(), Error> {
+    if sample_format.is_float() {
+        return Err(unsupported(format!(
+            "{codec} cannot store floating-point samples; choose --sample-format s16, s24 or s32"
+        )));
+    }
+    Ok(())
+}
+
 /// The codec to encode with for `format`. `requested` is the job's codec name; `None` is the
 /// container's default. `"copy"` never reaches here: the pipeline handles it first.
 pub fn output_codec(
@@ -15,15 +38,11 @@ pub fn output_codec(
     sample_format: SampleFormat,
     requested: Option<&str>,
 ) -> Result<CodecId, Error> {
-    let why = if format == FormatId::Ogg {
-        " (ogg holds flac only)"
-    } else {
-        ""
-    };
     let refuse = |codec: &str| {
         unsupported(format!(
-            "codec {codec} cannot be written into {}{why}",
-            format.name()
+            "codec {codec} cannot be written into {}{}",
+            format.name(),
+            writes_only(format, codec)
         ))
     };
     let accept = |name: &str| match requested {
@@ -35,12 +54,18 @@ pub fn output_codec(
         FormatId::Aiff => accept("pcm").map(|()| CodecId::pcm_be_for(sample_format)),
         FormatId::Flac | FormatId::Ogg => {
             accept("flac")?;
-            if sample_format.is_float() {
+            integer_only("flac", sample_format)?;
+            Ok(CodecId::Flac)
+        }
+        FormatId::Mp4 => {
+            accept("alac")?;
+            integer_only("alac", sample_format)?;
+            if sample_format == SampleFormat::U8 {
                 return Err(unsupported(
-                    "flac cannot store floating-point samples; choose --sample-format s16, s24 or s32",
+                    "alac cannot code 8-bit samples; choose --sample-format s16, s24 or s32",
                 ));
             }
-            Ok(CodecId::Flac)
+            Ok(CodecId::Alac)
         }
         // Any container added later, until it is wired here.
         _ => Err(unsupported(format!(
@@ -54,13 +79,16 @@ pub fn output_codec(
 pub fn can_write(format: FormatId) -> bool {
     matches!(
         format,
-        FormatId::Wav | FormatId::Flac | FormatId::Aiff | FormatId::Ogg
+        FormatId::Wav | FormatId::Flac | FormatId::Aiff | FormatId::Ogg | FormatId::Mp4
     )
 }
 
-/// File extensions a front end can offer for an output, canonical spelling first.
+/// File extensions a front end can offer for an output, canonical spelling first. `.opus` is
+/// left out: it names Ogg Opus, which only a stream copy writes so far.
 pub fn writable_extensions() -> &'static [&'static str] {
-    &["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
+    &[
+        "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "m4a", "mp4", "m4b",
+    ]
 }
 
 /// Whether `format` can carry `codec`'s packets unchanged (stream copy).
@@ -75,7 +103,9 @@ pub fn can_hold(format: FormatId, codec: CodecId) -> bool {
             codec,
             PcmS8 | PcmS16Be | PcmS24Be | PcmS32Be | PcmF32Be | PcmF64Be
         ),
-        FormatId::Flac | FormatId::Ogg => codec == Flac,
+        FormatId::Flac => codec == Flac,
+        FormatId::Ogg => matches!(codec, Flac | Opus),
+        FormatId::Mp4 => codec == Alac,
         _ => false,
     }
 }
@@ -196,9 +226,46 @@ mod tests {
         );
         assert_eq!(
             what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
-            "codec pcm cannot be written into ogg (ogg holds flac only)"
+            "codec pcm cannot be written into ogg (ogg writes flac only; an opus stream can be \
+             copied with --codec copy)"
         );
         assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
+    }
+
+    #[test]
+    fn opus_is_not_written_yet_but_the_refusal_says_so() {
+        assert_eq!(
+            what(output_codec(FormatId::Ogg, S16, Some("opus"))),
+            "codec opus cannot be written into ogg (encoding opus is not supported yet; an opus \
+             stream can be copied with --codec copy)"
+        );
+    }
+
+    #[test]
+    fn mp4_writes_alac_only() {
+        for f in [S16, S24, S32] {
+            assert_eq!(output_codec(FormatId::Mp4, f, None), Ok(CodecId::Alac));
+            assert_eq!(
+                output_codec(FormatId::Mp4, f, Some("alac")),
+                Ok(CodecId::Alac)
+            );
+        }
+        for codec in ["aac", "mp3", "flac", "pcm"] {
+            assert_eq!(
+                what(output_codec(FormatId::Mp4, S16, Some(codec))),
+                format!(
+                    "codec {codec} cannot be written into mp4 (mp4 writes alac only; aac and mp3 \
+                     are not written)"
+                )
+            );
+        }
+        for f in [U8, F32, F64] {
+            let w = what(output_codec(FormatId::Mp4, f, None));
+            assert!(
+                w.contains("alac") && w.contains("--sample-format s16, s24 or s32"),
+                "{w}"
+            );
+        }
     }
 
     #[test]
@@ -250,6 +317,25 @@ mod tests {
             assert!(!can_hold(FormatId::Ogg, c), "{c:?}");
         }
         assert!(can_hold(FormatId::Ogg, Flac));
+        assert!(can_hold(FormatId::Ogg, Opus));
+        assert!(!can_hold(FormatId::Ogg, Vorbis));
+        assert!(!can_hold(FormatId::Flac, Opus));
+        assert!(can_hold(FormatId::Mp4, Alac));
+        for c in [Aac, Mp3, Flac, Opus].into_iter().chain(le).chain(be) {
+            assert!(!can_hold(FormatId::Mp4, c), "{c:?}");
+        }
+        assert!(!can_hold(FormatId::Wav, Alac));
+    }
+
+    #[test]
+    fn mp4_is_a_writable_container_with_the_readers_extensions() {
+        assert!(can_write(FormatId::Mp4));
+        assert!(!can_write(FormatId::Mp3));
+        let ext = writable_extensions();
+        for e in ["m4a", "mp4", "m4b"] {
+            assert!(ext.contains(&e), "{e}");
+            assert_eq!(FormatId::from_extension(e), Some(FormatId::Mp4));
+        }
     }
 
     #[test]

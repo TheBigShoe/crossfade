@@ -7,15 +7,18 @@ use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
 use crossfade_dsp::filters::FilterPlan;
 use crossfade_dsp::filters::gain::GainPlan;
-use crossfade_dsp::filters::mix::assumption;
+use crossfade_dsp::filters::mix::{assumption, standard_matrix};
 
 /// Stands in for a normalising job's gain when only checking that the job builds.
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
+use crossfade_codec::alac_encode::{coded_depth, layout_for, layout_problem};
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
+    is_threaded_encoder,
 };
 use crossfade_core::{
-    AudioSpec, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
+    AudioSpec, ChannelLayout, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags,
+    TimeBase,
 };
 use crossfade_dsp::chain::Chain;
 use crossfade_dsp::dither::Dither;
@@ -142,14 +145,23 @@ pub fn processing(
     }))
 }
 
-/// The container named by `path`'s extension, if we can write it.
-pub(crate) fn output_format_for(path: &str) -> Result<FormatId, Error> {
+/// The container named by `path`'s extension, if we can write it. `.opus` names Ogg Opus,
+/// which only a stream copy writes so far; anything else would put FLAC under that name.
+pub(crate) fn output_format_for(path: &str, settings: &AudioSettings) -> Result<FormatId, Error> {
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
     match FormatId::from_extension(ext) {
-        Some(f) if can_write(f) => Ok(f),
+        Some(f) if can_write(f) => {
+            if ext.eq_ignore_ascii_case("opus") && settings.codec.as_deref() != Some("copy") {
+                return Err(unsupported(
+                    "encoding opus is not supported yet; an opus stream can be copied with \
+                     --codec copy into .opus",
+                ));
+            }
+            Ok(f)
+        }
         _ => Err(unsupported(format!(
             "output extension {ext:?} of {path} (can write .wav, .flac, .aiff/.aif/.aifc, \
-                 .oga/.ogg)"
+             .oga/.ogg, .m4a/.mp4/.m4b)"
         ))),
     }
 }
@@ -171,10 +183,10 @@ fn plan_output(
             return Err(unsupported("--codec copy cannot take a compression level"));
         }
         if !can_hold(output_format, input.codec) {
-            let why = if output_format == FormatId::Ogg {
-                " (ogg holds flac only)"
-            } else {
-                ""
+            let why = match output_format {
+                FormatId::Ogg => " (ogg holds flac and opus)",
+                FormatId::Mp4 => " (mp4 holds alac only)",
+                _ => "",
             };
             return Err(unsupported(format!(
                 "cannot copy {} into {}{why}",
@@ -230,12 +242,20 @@ fn output_plan(
     };
     // The codec's options are checked here too, so a pure plan refuses what a build would.
     encode_options(codec, settings.compression_level)?;
+    let mut all = Vec::from_iter(sample_format_note(input, settings));
+    let depth = if codec == CodecId::Alac {
+        alac_depth(out_format, depth, &mut all)
+    } else {
+        depth
+    };
+    if codec == CodecId::Alac {
+        check_alac_layout(out_spec.layout())?;
+    }
     let output = StreamInfo {
         frames,
         bits_per_raw_sample: depth,
         ..StreamInfo::new(0, codec, out_spec, time_base)
     };
-    let mut all = Vec::from_iter(sample_format_note(input, settings));
     all.extend(notes(in_spec, chain));
     Ok(OutputPlan {
         output_format,
@@ -243,6 +263,35 @@ fn output_plan(
         copy: false,
         notes: all,
     })
+}
+
+/// Refuses a layout ALAC cannot store, saying what would work: a `--channels` name when a
+/// standard mix reaches ALAC's layout, else that nothing short of a matrix does.
+fn check_alac_layout(layout: &ChannelLayout) -> Result<(), Error> {
+    let Some(problem) = layout_problem(layout) else {
+        return Ok(());
+    };
+    let wanted = layout_for(layout.channels());
+    let advice = match wanted.as_ref().and_then(|w| Some((w.name()?, w))) {
+        Some((name, w)) if standard_matrix(layout, w).is_ok() => {
+            format!("use --channels {name} to convert")
+        }
+        Some(_) => "no standard mix reaches it, so a mix filter with a matrix is the way".into(),
+        None => "no --channels name selects it".into(),
+    };
+    Err(unsupported(format!("{problem}; {advice}")))
+}
+
+/// The true depth an ALAC stream names for `true_depth` in `format`: 20 in `S24`, else the
+/// format's full width (`None`). A depth ALAC cannot code is written one up, and `notes` says so.
+fn alac_depth(format: SampleFormat, true_depth: Option<u8>, notes: &mut Vec<String>) -> Option<u8> {
+    let coded = coded_depth(format, true_depth)?;
+    if let Some(d) = true_depth.filter(|&d| d != coded && usize::from(d) < format.bits()) {
+        notes.push(format!(
+            "alac cannot code {d}-bit audio: writing {coded}-bit"
+        ));
+    }
+    (usize::from(coded) != format.bits()).then_some(coded)
 }
 
 /// Copying passes packets through untouched, so it cannot honour anything that changes them.
@@ -322,7 +371,7 @@ pub(crate) fn resolve(
 
 /// Threads for a decoder and an encoder from one budget (see `Limits::max_threads`).
 pub(crate) fn codec_threads(threads: usize, input: CodecId, output: CodecId) -> (usize, usize) {
-    match (threads, (is_threaded(input), is_threaded(output))) {
+    match (threads, (is_threaded(input), is_threaded_encoder(output))) {
         // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
         (0, (true, false)) => (0, 1),
         (0, (false, true)) => (1, 0),
@@ -339,7 +388,7 @@ pub fn describe(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_output(input, format, settings).map(|(plan, _)| plan)
 }
 
@@ -352,7 +401,7 @@ pub fn validate(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     // The encoder is only looked at, never fed, so it stays on this thread. A normalising
     // job's gain is not known until it runs: any gain builds the same chain.
     let (plan, _) = resolve(input, format, settings, 1, Pass::Convert(Some(UNITY)))?;
@@ -555,7 +604,7 @@ pub fn describe_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     plan_join(inputs, format, settings).map(|j| j.plan)
 }
 
@@ -566,7 +615,7 @@ pub fn validate_concat(
     output_path: &str,
     settings: &AudioSettings,
 ) -> Result<OutputPlan, Error> {
-    let format = output_format_for(output_path)?;
+    let format = output_format_for(output_path, settings)?;
     let (join, _) = resolve_join(inputs, format, settings, 1, Pass::Convert(Some(UNITY)))?;
     create_muxer(
         format,
@@ -628,6 +677,35 @@ mod tests {
             assert_eq!(depth_of(&twenty, path, Some(to)), None, "{to:?}");
         }
         assert_eq!(depth_of(&stream(S16, None), "o.flac", Some(S24)), None);
+    }
+
+    /// ALAC codes 16, 20, 24 and 32 bits: 20 is the only depth the stream names, and a depth it
+    /// has no name for is written one up, with a note.
+    #[test]
+    fn alac_writes_the_next_depth_up_and_says_so() {
+        use SampleFormat::*;
+        let plan = |input: &StreamInfo| validate(input, "o.m4a", &AudioSettings::default());
+        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", None), Some(20));
+        assert_eq!(depth_of(&stream(S24, Some(18)), "o.m4a", None), Some(20));
+        assert_eq!(depth_of(&stream(S24, Some(24)), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S24, None), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S16, Some(12)), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S32, Some(32)), "o.m4a", None), None);
+        assert_eq!(
+            depth_of(&stream(S24, Some(20)), "o.m4a", Some(S24)),
+            Some(20)
+        );
+        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", Some(S16)), None);
+        assert!(plan(&stream(S24, Some(20))).unwrap().notes.is_empty());
+        assert!(plan(&stream(S16, None)).unwrap().notes.is_empty());
+        assert_eq!(
+            plan(&stream(S16, Some(12))).unwrap().notes,
+            ["alac cannot code 12-bit audio: writing 16-bit"]
+        );
+        assert_eq!(
+            plan(&stream(S24, Some(18))).unwrap().notes,
+            ["alac cannot code 18-bit audio: writing 20-bit"]
+        );
     }
 
     #[test]

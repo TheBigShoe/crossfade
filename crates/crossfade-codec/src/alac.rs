@@ -11,7 +11,7 @@
 use crossfade_core::{AudioFrame, Decoder, Error, Packet, SampleFormat, Samples, StreamInfo};
 use std::collections::VecDeque;
 
-fn engine_error(e: crossfade_alac::Error) -> Error {
+pub(crate) fn engine_error(e: crossfade_alac::Error) -> Error {
     match e {
         crossfade_alac::Error::Unsupported(_) | crossfade_alac::Error::InvalidConfig(_) => {
             Error::Unsupported {

@@ -113,6 +113,6 @@ fn writing_mp3_is_still_refused_by_its_extension() {
     };
     assert_eq!(
         what,
-        "output extension \"mp3\" of o.mp3 (can write .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg)"
+        "output extension \"mp3\" of o.mp3 (can write .wav, .flac, .aiff/.aif/.aifc, .oga/.ogg, .m4a/.mp4/.m4b)"
     );
 }
