@@ -14,7 +14,9 @@ pub(in crate::celt) fn signal(kind: &str, channels: usize, len: usize) -> Vec<f3
             let noise = ((seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
             let v = match kind {
                 "silence" => 0.0,
-                "tone" => 0.5 * libm::sinf(2.0 * std::f32::consts::PI * (440.0 + 110.0 * ch as f32) * t),
+                "tone" => {
+                    0.5 * libm::sinf(2.0 * std::f32::consts::PI * (440.0 + 110.0 * ch as f32) * t)
+                }
                 "sweep" => 0.4 * libm::sinf(2.0 * std::f32::consts::PI * (50.0 + 9000.0 * t) * t),
                 "noise" => 0.3 * noise,
                 "clicks" => {
@@ -108,7 +110,9 @@ fn frame(n: usize, channels: usize, end: usize) -> CeltEncodeFrame {
 
 #[test]
 fn every_frame_decodes_with_the_encoders_final_range() {
-    for kind in ["silence", "tone", "sweep", "noise", "clicks", "dc", "full", "loud"] {
+    for kind in [
+        "silence", "tone", "sweep", "noise", "clicks", "dc", "full", "loud",
+    ] {
         for channels in [1, 2] {
             for n in [120, 240, 480, 960] {
                 for bytes in [2, 3, 8, 40, 160, 1275] {
@@ -158,11 +162,11 @@ fn vbr_frames_follow_the_bitrate() {
 
 #[test]
 fn what_comes_out_sounds_like_what_went_in() {
-    // CELT's own delay: the decoder's output lags by the overlap... measured, not assumed.
+    // Measured: 34.7, 37.3 and 27.4 dB. The best alignment is DELAY.
     for (kind, channels, bytes, min_snr) in [
-        ("tone", 1, 160, 15.0),
-        ("tone", 2, 320, 15.0),
-        ("sweep", 1, 200, 10.0),
+        ("tone", 1, 160, 30.0),
+        ("tone", 2, 320, 32.0),
+        ("sweep", 1, 200, 23.0),
     ] {
         let pcm = signal(kind, channels, 20 * 960);
         let (out, _) = round_trip(&pcm, channels, &frame(960, channels, 21), bytes);
@@ -170,6 +174,7 @@ fn what_comes_out_sounds_like_what_went_in() {
             .map(|d| snr(&pcm, &out, channels, d))
             .fold(f64::MIN, f64::max);
         let at = snr(&pcm, &out, channels, DELAY);
-        assert!(at > min_snr, "{kind} {channels} ch: {at} dB (best {best})");
+        assert!(at > min_snr, "{kind} {channels} ch: {at} dB");
+        assert_eq!(at, best, "{kind} {channels} ch");
     }
 }
