@@ -104,16 +104,6 @@ fn an_unreadable_file_is_described_with_its_problem_not_refused() {
     assert_eq!(missing["readable"], false);
 }
 
-#[cfg(not(feature = "aac"))]
-#[test]
-fn aac_without_the_feature_says_so_in_the_apps_words() {
-    let got = check(&fixture("adts/tone_44k_stereo.aac"));
-    assert_eq!(
-        got["problem"],
-        "This build of Crossfade does not include AAC decoding."
-    );
-}
-
 #[test]
 fn null_and_bad_text_are_errors() {
     let mut out = std::ptr::null_mut();

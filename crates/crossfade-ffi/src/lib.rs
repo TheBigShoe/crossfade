@@ -9,6 +9,7 @@
 mod about;
 mod abi;
 mod error;
+mod inspect;
 
 pub use abi::*;
 pub use error::*;

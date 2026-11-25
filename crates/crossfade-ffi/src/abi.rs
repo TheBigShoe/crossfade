@@ -2,7 +2,7 @@
 //! safe function and writes the result back. Every `unsafe` block of the crate is here.
 #![allow(unsafe_code)]
 
-use crate::about;
+use crate::{about, inspect};
 use crate::error::{Failure, guard, last_error};
 use std::ffi::{CStr, CString, c_char};
 
@@ -54,7 +54,7 @@ unsafe fn string_out(out: *mut *mut c_char, text: String) -> Result<(), Failure>
 ///
 /// # Safety
 /// `ptr` is null or points at a NUL-terminated string that outlives the call.
-#[allow(dead_code)]
+
 unsafe fn str_arg<'a>(ptr: *const c_char, what: &str) -> Result<&'a str, Failure> {
     if ptr.is_null() {
         return Err(Failure::null(what));
@@ -89,6 +89,24 @@ pub extern "C" fn cf_version() -> *const c_char {
 pub unsafe extern "C" fn cf_about(out: *mut *mut c_char) -> i32 {
     guard(|| {
         let json = about::json(ABI_VERSION);
+        // SAFETY: the caller's promise about `out`.
+        unsafe { string_out(out, json) }
+    })
+}
+
+/// What the file at `path` is, as JSON; an unreadable file is described, not refused.
+///
+/// # Safety
+/// `path` is null or a NUL-terminated string; `out` is null or valid for one write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cf_inspect(path: *const c_char, out: *mut *mut c_char) -> i32 {
+    guard(|| {
+        // SAFETY: the caller's promise about `path`.
+        let path = unsafe { str_arg(path, "the path") }?;
+        if out.is_null() {
+            return Err(Failure::null("the out pointer"));
+        }
+        let json = inspect::json(path);
         // SAFETY: the caller's promise about `out`.
         unsafe { string_out(out, json) }
     })
