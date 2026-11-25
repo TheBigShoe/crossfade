@@ -137,13 +137,57 @@ pub(crate) fn predict(
     if order == FIRST_DIFFERENCE {
         return;
     }
+    // The orders the encoder tries get a copy with the taps in registers, as in `unpredict`.
+    match order {
+        4 => predict_fixed::<4>(x, out, coefs, chan_bits, den_shift),
+        8 => predict_fixed::<8>(x, out, coefs, chan_bits, den_shift),
+        _ => predict_any(x, out, coefs, chan_bits, den_shift),
+    }
+}
+
+fn predict_fixed<const N: usize>(
+    x: &[i32],
+    out: &mut [i32],
+    coefs: &mut [i16],
+    chan_bits: u32,
+    den_shift: u32,
+) {
+    let Ok(c) = <&[i16; N]>::try_from(&*coefs) else {
+        return;
+    };
+    let mut c = *c;
+    let den_half = if den_shift == 0 {
+        0
+    } else {
+        1i32 << (den_shift - 1)
+    };
+    let wrap = 32 - chan_bits.min(32);
+    for j in N + 1..x.len() {
+        let top = x[j - N - 1];
+        let Ok(taps) = <[i32; N]>::try_from(&x[j - N..j]) else {
+            return;
+        };
+        let mut sum = 0i32;
+        for k in 0..N {
+            sum = sum.wrapping_add(i32::from(c[k]).wrapping_mul(taps[N - 1 - k].wrapping_sub(top)));
+        }
+        let predicted = sum.wrapping_add(den_half) >> den_shift;
+        let del = (x[j].wrapping_sub(top).wrapping_sub(predicted) << wrap) >> wrap;
+        out[j] = del;
+        adapt(&mut c, &taps, top, del, den_shift);
+    }
+    coefs.copy_from_slice(&c);
+}
+
+fn predict_any(x: &[i32], out: &mut [i32], coefs: &mut [i16], chan_bits: u32, den_shift: u32) {
+    let order = coefs.len();
     let den_half = if den_shift == 0 {
         0
     } else {
         1i32 << (den_shift - 1)
     };
     let span = order + 1;
-    for j in span..num {
+    for j in span..x.len() {
         let window = &x[j - span..j];
         let top = window[0];
         let taps = &window[1..];
