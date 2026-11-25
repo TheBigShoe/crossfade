@@ -158,11 +158,21 @@ fn only_48_khz_is_offered_and_another_rate_is_dropped() {
     let mut s = wav_sheet(44_100, ChannelLayout::stereo());
     s.set_sample_rate(Some(96_000));
     s.set_container(Container::Opus);
-    assert_eq!(s.sample_rate(), None);
-    assert_eq!(s.rate_options(), [None, Some(48_000)]);
+    // The row says what is written: 48 kHz, the only choice, and selected.
+    assert_eq!(s.rate_options(), [Some(48_000)]);
+    assert_eq!(s.sample_rate(), Some(48_000));
+    assert_eq!(ConvertSheet::rate_label(s.sample_rate()), "48 kHz");
     assert!(s.problems(&nothing_exists).is_empty());
+    // Nothing is asked of the engine: it resamples by itself, as without --sample-rate.
+    let audio = &s.build(&nothing_exists).unwrap().job.outputs[0].audio;
+    assert_eq!(audio.sample_rate, None);
+    // A source already at 48 kHz shows the same row.
+    let mut s = wav_sheet(48_000, ChannelLayout::stereo());
+    s.set_container(Container::Opus);
+    assert_eq!((s.rate_options(), s.sample_rate()), (vec![Some(48_000)], Some(48_000)));
     s.set_container(Container::Wav);
     assert!(s.rate_options().len() > 2);
+    assert_eq!(s.sample_rate(), None);
 }
 
 #[test]
@@ -272,4 +282,47 @@ fn the_ogg_container_is_named_for_what_it_holds() {
     assert_eq!(s.container_label(Container::OggFlac), "Ogg");
     s.set_container(Container::Opus);
     assert!(s.copy_available());
+}
+
+/// A sheet for a FLAC file the engine itself wrote.
+fn flac_sheet() -> ConvertSheet {
+    let (_, wav) = sine_wav(
+        &spec(48_000, SampleFormat::S16, ChannelLayout::stereo()),
+        4_800,
+    );
+    let mut io = MemoryIo::new();
+    io.insert("seed.wav", wav);
+    let job = Job {
+        version: Job::VERSION,
+        inputs: vec![JobInput {
+            path: "seed.wav".into(),
+        }],
+        outputs: vec![JobOutput {
+            path: "song.flac".into(),
+            audio: AudioSettings::default(),
+        }],
+    };
+    run(
+        &job,
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
+    ConvertSheet::for_input(&entry_of(&mut io, "song.flac"))
+}
+
+#[test]
+fn copy_into_opus_is_offered_for_opus_only() {
+    let mut flac = flac_sheet();
+    flac.set_container(Container::Flac);
+    assert!(flac.copy_available());
+    flac.set_container(Container::Opus);
+    assert!(!flac.copy_available());
+    flac.set_copy(true);
+    assert!(!flac.copy());
+    let mut opus = opus_sheet();
+    opus.set_container(Container::Opus);
+    assert!(opus.copy_available());
 }
