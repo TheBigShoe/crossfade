@@ -308,3 +308,57 @@ fn surround_gives_the_same_bytes_on_every_platform() {
         ]
     );
 }
+
+/// One second of 5.1: a tone per channel and bursts of noise, the rear pair at `rear` times
+/// the others' level.
+fn surround_with_rear(rear: f32) -> Vec<f32> {
+    let tau = 2.0 * std::f32::consts::PI;
+    let mut seed = 0x2468_ace1u32;
+    let mut out = Vec::with_capacity(48_000 * 6);
+    for i in 0..48_000 {
+        let t = i as f32 / 48_000.0;
+        for ch in 0..6 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = ((seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
+            let f = 200.0 * (ch + 1) as f32 + 37.0;
+            let env = (1.0 - (i % 24_000) as f32 / 1200.0).max(0.0);
+            let g = if ch == 3 || ch == 4 { rear } else { 1.0 };
+            out.push(g * (0.25 * libm::sinf(tau * f * t) + 0.05 * env * noise));
+        }
+    }
+    out
+}
+
+/// The mean bytes of each stream's part of the packets (the self-delimited lengths
+/// included).
+fn stream_bytes(packets: &[Vec<u8>], streams: usize) -> Vec<f64> {
+    let mut sum = vec![0usize; streams];
+    for p in packets {
+        let mut rest = p.as_slice();
+        for (s, total) in sum.iter_mut().enumerate() {
+            let parsed = if s + 1 < streams {
+                Packet::parse_self_delimited(rest).expect("parses")
+            } else {
+                Packet::parse(rest).expect("parses")
+            };
+            *total += parsed.byte_len();
+            rest = &rest[parsed.byte_len()..];
+        }
+    }
+    sum.iter()
+        .map(|&b| b as f64 / packets.len() as f64)
+        .collect()
+}
+
+#[test]
+fn the_surround_masks_move_bits_to_the_unmasked_channels() {
+    // In VBR a loud rear pair masks the front: libopus 1.5.2 then gives the front pair 233
+    // bytes a packet instead of 364 (and the centre 134 instead of 264) on this signal, the
+    // rear pair more. Without the masks the front took the same either way.
+    let cfg = config(6, 256_000, true, FrameDuration::Ms20);
+    let quiet = stream_bytes(&round_trip(&cfg, 1, &surround_with_rear(0.1)).0, 4);
+    let loud = stream_bytes(&round_trip(&cfg, 1, &surround_with_rear(1.0)).0, 4);
+    assert!(loud[0] < 0.8 * quiet[0], "front: {quiet:?} then {loud:?}");
+    assert!(loud[2] < 0.8 * quiet[2], "centre: {quiet:?} then {loud:?}");
+    assert!(loud[1] > quiet[1], "rear: {quiet:?} then {loud:?}");
+}
