@@ -206,6 +206,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "opus_encode"
+path = "fuzz_targets/opus_encode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "ogg_opus_demux"
 path = "fuzz_targets/ogg_opus_demux.rs"
 test = false
