@@ -189,6 +189,36 @@ impl RangeEncoder {
         self.nbits_total += bits as i32;
     }
 
+    /// `ec_enc_patch_initial_bits`: overwrites the first `nbits` (at most 8) bits of the frame
+    /// with `val`, after at least that many were coded as symbols of power-of-two totals.
+    pub fn patch_initial_bits(&mut self, val: u32, nbits: u32) {
+        let shift = SYM_BITS - nbits;
+        let mask = ((1 << nbits) - 1) << shift;
+        if self.offs > 0 {
+            self.buf[0] = ((u32::from(self.buf[0]) & !mask) | val << shift) as u8;
+        } else if let Some(rem) = self.rem {
+            // Still held back for a carry.
+            self.rem = Some((rem & !mask) | val << shift);
+        } else if self.rng <= CODE_TOP >> nbits {
+            // Never renormalised: the bits are still in `val`.
+            self.val = (self.val & !(mask << CODE_SHIFT)) | val << (CODE_SHIFT + shift);
+        } else {
+            self.error = true;
+        }
+    }
+
+    /// `ec_enc_shrink`: the frame becomes `size` bytes, which what was written must fit in.
+    pub fn shrink(&mut self, size: usize) {
+        if self.offs + self.end_offs > size || size > self.storage {
+            self.error = true;
+            return;
+        }
+        let from = self.storage - self.end_offs;
+        self.buf.copy_within(from.., size - self.end_offs);
+        self.buf.truncate(size);
+        self.storage = size;
+    }
+
     pub fn tell(&self) -> i32 {
         self.nbits_total - ilog(self.rng) as i32
     }
