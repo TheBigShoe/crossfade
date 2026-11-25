@@ -71,6 +71,7 @@
 //! the range decoder needs none.
 
 mod bands;
+mod bands_enc;
 mod cwrs;
 mod decoder;
 mod ec;
