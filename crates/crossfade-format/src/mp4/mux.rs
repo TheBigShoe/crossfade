@@ -28,8 +28,17 @@ struct Mp4Muxer {
     sizes: Vec<u32>,
     /// `stts` as (samples, duration) runs.
     durations: Vec<(u32, u32)>,
-    /// The next packet's pts, in frames.
+    /// The first packet's pts, and where the next one must start, in frames.
+    start: Option<i64>,
     next_pts: i64,
+}
+
+/// What the movie plays out of the media: `priming` frames are skipped, `audible` are played.
+#[derive(Debug, Clone, Copy)]
+struct Timeline {
+    total: u64,
+    priming: u64,
+    audible: u64,
 }
 
 /// An MP4 writer for `stream`.
@@ -52,6 +61,7 @@ pub fn create(
         pos: DATA_AT,
         sizes: Vec::new(),
         durations: Vec::new(),
+        start: None,
         next_pts: 0,
     }))
 }
@@ -135,18 +145,43 @@ impl Mp4Muxer {
         boxed(b"stbl", &[&stsd, &stts, &stsc, &stsz, &stco])
     }
 
-    fn moov(&self) -> Result<Vec<u8>, Error> {
-        let rate = u64::from(self.stream.audio.sample_rate());
+    /// The timeline the packets and the stream's length make; a length they cannot back is an
+    /// error, not a short file.
+    fn timeline(&self) -> Result<Timeline, Error> {
         let total: u64 = self
             .durations
             .iter()
             .map(|&(n, d)| u64::from(n) * u64::from(d))
             .sum();
+        let priming = self.start.map_or(0, |s| s.unsigned_abs());
+        let available = total.saturating_sub(priming);
+        let audible = match self.stream.frames {
+            Some(f) if f > available => {
+                return Err(Error::Malformed {
+                    what: format!(
+                        "mp4: the stream is {f} frames long, but its packets hold {available} \
+                         after {priming} of priming"
+                    ),
+                });
+            }
+            Some(f) => f,
+            None => available,
+        };
+        Ok(Timeline {
+            total,
+            priming,
+            audible,
+        })
+    }
+
+    fn moov(&self, t: Timeline) -> Result<Vec<u8>, Error> {
+        let rate = u64::from(self.stream.audio.sample_rate());
+        let total = t.total;
         let version = u8::from(total > u64::from(u32::MAX));
         let times = [be(version, 0), be(version, 0)].concat();
         let mut mvhd = times.clone();
         mvhd.extend_from_slice(&(rate as u32).to_be_bytes());
-        mvhd.extend_from_slice(&be(version, total));
+        mvhd.extend_from_slice(&be(version, t.audible));
         mvhd.extend_from_slice(&0x0001_0000u32.to_be_bytes());
         mvhd.extend_from_slice(&0x0100u16.to_be_bytes());
         mvhd.extend_from_slice(&[0; 10]);
@@ -158,7 +193,7 @@ impl Mp4Muxer {
         let mut tkhd = times.clone();
         tkhd.extend_from_slice(&1u32.to_be_bytes());
         tkhd.extend_from_slice(&[0; 4]);
-        tkhd.extend_from_slice(&be(version, total));
+        tkhd.extend_from_slice(&be(version, t.audible));
         tkhd.extend_from_slice(&[0; 8]);
         tkhd.extend_from_slice(&[0; 4]);
         tkhd.extend_from_slice(&0x0100u16.to_be_bytes());
@@ -182,7 +217,16 @@ impl Mp4Muxer {
         let entry = sample_entry::entry(&self.stream, &self.cookie)?;
         let minf = boxed(b"minf", &[&smhd, &dinf, &self.stbl(&entry)?])?;
         let mdia = boxed(b"mdia", &[&mdhd, &hdlr, &minf])?;
-        let trak = boxed(b"trak", &[&tkhd, &mdia])?;
+        let edts = if t.priming > 0 || t.audible < t.total {
+            let mut elst = 1u32.to_be_bytes().to_vec();
+            elst.extend_from_slice(&be(version, t.audible));
+            elst.extend_from_slice(&be(version, t.priming));
+            elst.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+            boxed(b"edts", &[&full(b"elst", version, 0, &[&elst])?])?
+        } else {
+            Vec::new()
+        };
+        let trak = boxed(b"trak", &[&tkhd, &edts, &mdia])?;
         let udta = if self.ilst.is_empty() {
             Vec::new()
         } else {
@@ -196,6 +240,32 @@ impl Mp4Muxer {
 
 impl Muxer for Mp4Muxer {
     fn write_packet(&mut self, packet: &Packet) -> Result<(), Error> {
+        if packet.stream != 0 {
+            return Err(Error::Unsupported {
+                what: format!("mp4: the writer holds one track, not stream {}", packet.stream),
+            });
+        }
+        match self.start {
+            None if packet.pts > 0 => {
+                return Err(Error::Malformed {
+                    what: format!(
+                        "mp4: the first packet starts after 0 (pts {}): the timeline starts \
+                         with the first frame meant to be heard",
+                        packet.pts
+                    ),
+                });
+            }
+            Some(_) if packet.pts != self.next_pts => {
+                return Err(Error::Malformed {
+                    what: format!(
+                        "mp4: a packet at pts {} does not follow the previous one, which ends \
+                         at {}",
+                        packet.pts, self.next_pts
+                    ),
+                });
+            }
+            _ => {}
+        }
         let size = u32::try_from(packet.data.len()).map_err(|_| too_big(*b"mdat"))?;
         let duration = u32::try_from(packet.duration).map_err(|_| too_big(*b"stts"))?;
         self.sink.write_all(&packet.data)?;
@@ -208,12 +278,13 @@ impl Muxer for Mp4Muxer {
             Some((n, d)) if *d == duration => *n += 1,
             _ => self.durations.push((1, duration)),
         }
-        self.next_pts += i64::from(duration);
+        self.start.get_or_insert(packet.pts);
+        self.next_pts = packet.pts + i64::from(duration);
         Ok(())
     }
 
     fn finish(&mut self) -> Result<(), Error> {
-        let moov = self.moov()?;
+        let moov = self.moov(self.timeline()?)?;
         self.sink.write_all(&moov)?;
         self.sink.seek(SeekFrom::Start(MDAT_AT))?;
         self.sink.write_all(&mdat_header(self.pos - DATA_AT))?;
