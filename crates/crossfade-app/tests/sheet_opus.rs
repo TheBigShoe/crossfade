@@ -166,8 +166,9 @@ fn only_48_khz_is_offered_and_another_rate_is_dropped() {
 }
 
 #[test]
-fn a_surround_source_is_refused_in_words_that_name_no_flag_unless_it_is_vorbis_layout() {
-    let mut s = wav_sheet(48_000, ChannelLayout::from_name("5.1").unwrap());
+fn a_surround_source_that_is_not_opuss_is_refused_in_words_that_name_no_flag() {
+    // Four channels as 4.0 (front and back centre) are not Vorbis's quad; stereo is a way out.
+    let mut s = labelled_sheet(4, 0x107);
     s.set_container(Container::Opus);
     let problems = s.problems(&nothing_exists);
     let [Problem::Source(text)] = problems.as_slice() else {
@@ -175,7 +176,7 @@ fn a_surround_source_is_refused_in_words_that_name_no_flag_unless_it_is_vorbis_l
     };
     assert_eq!(
         text,
-        "Opus stores 6 channels in one layout only (5.1-back) and this stream is 6 unlabelled channels. Choose \
+        "Opus stores 4 channels in one layout only (quad) and this stream is 4.0. Choose \
          Mono or Stereo under Channels."
     );
     // Choosing Stereo clears it.
@@ -205,6 +206,31 @@ fn a_surround_source_is_refused_in_words_that_name_no_flag_unless_it_is_vorbis_l
         text,
         "Opus holds at most 8 channels, got 9. Choose Mono or Stereo under Channels."
     );
+}
+
+#[test]
+fn side_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the_note() {
+    let side = "5.1 with side surrounds written as 5.1 with back surrounds: opus names its \
+                surround pair as back speakers";
+    let mut s = labelled_sheet(6, 0x60F);
+    s.set_container(Container::Opus);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(s.notes(), [side]);
+    // The plan says what is written: Vorbis's layout, with its surround default bitrate.
+    assert_eq!(s.bitrate_label(None), "Default (320 kb/s)");
+    assert!(s.build(&nothing_exists).is_ok());
+    // A plain WAV header carries no layout: six channels are 5.1.
+    let mut s = wav_sheet(48_000, ChannelLayout::unpositioned(6).unwrap());
+    s.set_container(Container::Opus);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(
+        s.notes(),
+        ["6 unlabelled channels taken as 5.1 with back surrounds: opus's layout for 6 channels"]
+    );
+    // Opus's own layout needs no note.
+    let mut s = labelled_sheet(6, 0x3F);
+    s.set_container(Container::Opus);
+    assert!(s.notes().is_empty());
 }
 
 #[test]
