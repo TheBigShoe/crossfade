@@ -31,14 +31,17 @@ pub enum Container {
     Aiff,
     /// FLAC in an Ogg stream, `.oga`.
     OggFlac,
+    /// Apple Lossless in MP4, `.m4a`.
+    Mp4,
 }
 
 impl Container {
-    pub const ALL: [Container; 4] = [
+    pub const ALL: [Container; 5] = [
         Container::Wav,
         Container::Flac,
         Container::Aiff,
         Container::OggFlac,
+        Container::Mp4,
     ];
 
     pub fn label(self) -> &'static str {
@@ -47,6 +50,7 @@ impl Container {
             Self::Flac => "FLAC",
             Self::Aiff => "AIFF",
             Self::OggFlac => "Ogg FLAC",
+            Self::Mp4 => "Apple Lossless",
         }
     }
 
@@ -57,6 +61,7 @@ impl Container {
             Self::Flac => "flac",
             Self::Aiff => "aiff",
             Self::OggFlac => "oga",
+            Self::Mp4 => "m4a",
         }
     }
 
@@ -75,6 +80,7 @@ impl Container {
             "wav" => Some(Self::Wav),
             "flac" => Some(Self::Flac),
             "oga" | "ogg" => Some(Self::OggFlac),
+            "m4a" | "mp4" | "m4b" => Some(Self::Mp4),
             _ => Some(Self::Aiff),
         }
     }
@@ -143,6 +149,12 @@ pub const PRESETS: &[Preset] = &[
         FormatChoice::Format(SampleFormat::S24),
     ),
     preset("aiff", "AIFF", Container::Aiff, FormatChoice::SameAsSource),
+    preset(
+        "alac",
+        "Apple Lossless",
+        Container::Mp4,
+        FormatChoice::SameAsSource,
+    ),
 ];
 
 /// FLAC's highest level.
@@ -172,7 +184,9 @@ impl Problem {
             Self::OutputExists => {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
-            Self::Extension => "Crossfade can save .wav, .flac, .oga, .ogg and .aiff files.".into(),
+            Self::Extension => {
+                "Crossfade can save .wav, .flac, .oga, .ogg, .aiff and .m4a files.".into()
+            }
             Self::Source(text) | Self::Adjust { message: text, .. } => text.clone(),
         }
     }
@@ -335,6 +349,9 @@ impl ConvertSheet {
             Container::Flac | Container::OggFlac => {
                 format!("FLAC stores whole-number samples, so this will be saved as {bits}-bit.")
             }
+            Container::Mp4 => format!(
+                "Apple Lossless stores whole-number samples, so this will be saved as {bits}-bit."
+            ),
             _ => format!(
                 "This file type cannot store that format, so this will be saved as {bits}-bit."
             ),
@@ -673,9 +690,14 @@ impl ConvertSheet {
         let stream = self.stream.as_ref()?;
         let channels = stream.audio.layout().channels();
         let text = if what.contains("at most 8 channels") {
-            format!("FLAC can store up to 8 channels; this file has {channels}.")
+            let name = if self.container == Container::Mp4 {
+                "Apple Lossless"
+            } else {
+                "FLAC"
+            };
+            format!("{name} can store up to 8 channels; this file has {channels}.")
         } else {
-            plain(&what)
+            plain(&what.replacen("alac", "Apple Lossless", 1))
         };
         Some(Problem::Source(text))
     }

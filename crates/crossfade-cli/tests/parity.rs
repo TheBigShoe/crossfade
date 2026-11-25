@@ -322,7 +322,7 @@ const ROWS: &[Row] = &[
     Row {
         input: "in.wav",
         steps: &[Do::Container(Container::Mp4), Do::Format("f32")],
-        cli: &["-o", "in.m4a", "--sample-format", "s24"],
+        cli: &["-o", "in-s24.m4a", "--sample-format", "s24"],
     },
     Row {
         input: "in.wav",

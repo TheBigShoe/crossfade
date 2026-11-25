@@ -81,10 +81,10 @@ fn only_whole_number_formats_are_offered_and_a_float_source_says_so() {
     use SampleFormat::*;
     let mut s = sheet("in.wav", F32);
     s.set_container(Container::Mp4);
-    let whole = [S16, S24, S32].map(FormatChoice::Format);
+    // The float source cannot stay as it is, so "same" is not offered either.
     assert_eq!(
         s.format_options(),
-        [FormatChoice::SameAsSource].into_iter().chain(whole).collect::<Vec<_>>()
+        [S16, S24, S32].map(FormatChoice::Format).to_vec()
     );
     assert_eq!(s.format(), FormatChoice::Format(S24));
     assert_eq!(
