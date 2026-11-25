@@ -1,4 +1,4 @@
-use crossfade_app::inspector::{Section, depth, sections};
+use crossfade_app::inspector::{Section, depth, sections, summary};
 use crossfade_graph::{ProbeDocument, ProbeStream, ProbeTag};
 use std::collections::BTreeSet;
 
@@ -416,4 +416,16 @@ fn a_lossless_stream_still_shows_its_depth() {
         depth(&stereo_s24_96k().streams[0]).as_deref(),
         Some("24-bit")
     );
+}
+
+#[test]
+fn the_summary_is_the_files_list_line() {
+    assert_eq!(
+        summary(&stereo_s24_96k()),
+        "WAV \u{b7} 96 kHz \u{b7} stereo \u{b7} 24-bit \u{b7} 1:02.500"
+    );
+    let mut odd = mono_u8_unknown_length();
+    odd.streams[0].sample_rate = 44_100;
+    assert_eq!(summary(&odd), "WAV \u{b7} 44.1 kHz \u{b7} mono \u{b7} 8-bit");
+    assert_eq!(summary(&doc(None, vec![])), "no audio");
 }
