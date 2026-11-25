@@ -101,7 +101,10 @@ fn the_request_is_the_cli_s_for_an_m4a_convert() {
     assert_eq!(line, "crossfade convert in.wav -o in.m4a");
     s.set_format(FormatChoice::Format(SampleFormat::S16));
     let line = crossfade_app::command::command_line(&s.build(&nothing_exists).unwrap()).unwrap();
-    assert!(line.ends_with("-o in-s16.m4a --sample-format s16"), "{line}");
+    assert!(
+        line.ends_with("-o in-s16.m4a --sample-format s16"),
+        "{line}"
+    );
 }
 
 #[test]

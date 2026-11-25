@@ -42,14 +42,20 @@ fn the_formats_alac_cannot_hold_are_refused_with_the_choices() {
         assert!(w.contains("--sample-format s16, s24 or s32"), "{f:?}: {w}");
     }
     for f in [S16, S24, S32] {
-        assert!(encoder(&spec(f, 2), &EncodeOptions::default()).is_ok(), "{f:?}");
+        assert!(
+            encoder(&spec(f, 2), &EncodeOptions::default()).is_ok(),
+            "{f:?}"
+        );
     }
 }
 
 #[test]
 fn only_alacs_own_layout_for_the_channel_count_is_accepted() {
     for n in 1..=8 {
-        assert!(encoder(&spec(S16, n), &EncodeOptions::default()).is_ok(), "{n}");
+        assert!(
+            encoder(&spec(S16, n), &EncodeOptions::default()).is_ok(),
+            "{n}"
+        );
     }
     let skewed = AudioSpec::new(44100, S16, ChannelLayout::unpositioned(2).unwrap()).unwrap();
     let w = what(encoder(&skewed, &EncodeOptions::default()));

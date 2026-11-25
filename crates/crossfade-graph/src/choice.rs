@@ -261,7 +261,10 @@ mod tests {
         }
         for f in [U8, F32, F64] {
             let w = what(output_codec(FormatId::Mp4, f, None));
-            assert!(w.contains("alac") && w.contains("--sample-format s16, s24 or s32"), "{w}");
+            assert!(
+                w.contains("alac") && w.contains("--sample-format s16, s24 or s32"),
+                "{w}"
+            );
         }
     }
 

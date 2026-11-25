@@ -36,7 +36,12 @@ fn ok(args: &[&str]) -> String {
 
 fn refused(args: &[&str]) -> String {
     let out = run(args);
-    assert_eq!(out.status.code(), Some(1), "{args:?}: {}", text(&out.stdout));
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{args:?}: {}",
+        text(&out.stdout)
+    );
     text(&out.stderr)
 }
 
@@ -89,7 +94,10 @@ fn mdat(bytes: &[u8]) -> &[u8] {
     while pos + 8 <= bytes.len() {
         let size = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
         let (head, size) = if size == 1 {
-            (16, u64::from_be_bytes(bytes[pos + 8..pos + 16].try_into().unwrap()) as usize)
+            (
+                16,
+                u64::from_be_bytes(bytes[pos + 8..pos + 16].try_into().unwrap()) as usize,
+            )
         } else {
             (8, size)
         };
@@ -113,10 +121,17 @@ fn every_depth_and_channel_count_comes_back_bit_for_bit() {
         std::fs::write(&wav_in, signal.wav()).unwrap();
         ok(&["convert", "--force", &wav_in, "-o", &m4a]);
         ok(&["convert", "--force", &m4a, "-o", &wav_out]);
-        assert!(wav_data(&read(&wav_out)) == wav_data(&signal.wav()), "{name}");
+        assert!(
+            wav_data(&read(&wav_out)) == wav_data(&signal.wav()),
+            "{name}"
+        );
         // The 20-bit file keeps its valid bits.
         let shown = ok(&["probe", &m4a]);
-        assert_eq!(shown.contains("(20-bit)"), signal.bits == 20, "{name}: {shown}");
+        assert_eq!(
+            shown.contains("(20-bit)"),
+            signal.bits == 20,
+            "{name}: {shown}"
+        );
     }
 }
 
@@ -132,7 +147,10 @@ fn flac_and_aiff_sources_reach_m4a_and_come_back_the_same() {
             ok(&["convert", "--force", &wav_in, "-o", &src]);
             ok(&["convert", "--force", &src, "-o", &m4a]);
             ok(&["convert", "--force", &m4a, "-o", &back]);
-            assert!(wav_data(&read(&back)) == wav_data(&signal.wav()), "{name} via {via}");
+            assert!(
+                wav_data(&read(&back)) == wav_data(&signal.wav()),
+                "{name} via {via}"
+            );
         }
     }
 }
@@ -187,9 +205,22 @@ fn tags_survive_into_m4a_and_back() {
     // A LIST/INFO chunk with a title and an artist, appended after `data`.
     let info: Vec<u8> = [(&b"INAM"[..], &b"Tone\0\0"[..]), (b"IART", b"Duo\0")]
         .iter()
-        .flat_map(|(id, v)| [id.to_vec(), (v.len() as u32).to_le_bytes().to_vec(), v.to_vec()].concat())
+        .flat_map(|(id, v)| {
+            [
+                id.to_vec(),
+                (v.len() as u32).to_le_bytes().to_vec(),
+                v.to_vec(),
+            ]
+            .concat()
+        })
         .collect();
-    let list = [b"LIST".to_vec(), (4 + info.len() as u32).to_le_bytes().to_vec(), b"INFO".to_vec(), info].concat();
+    let list = [
+        b"LIST".to_vec(),
+        (4 + info.len() as u32).to_le_bytes().to_vec(),
+        b"INFO".to_vec(),
+        info,
+    ]
+    .concat();
     wav.extend_from_slice(&list);
     let riff = (wav.len() - 8) as u32;
     wav[4..8].copy_from_slice(&riff.to_le_bytes());
@@ -197,10 +228,16 @@ fn tags_survive_into_m4a_and_back() {
     std::fs::write(&wav_in, wav).unwrap();
     ok(&["convert", &wav_in, "-o", &m4a]);
     let shown = ok(&["probe", &m4a]);
-    assert!(shown.contains("ARTIST: Duo") && shown.contains("TITLE: Tone"), "{shown}");
+    assert!(
+        shown.contains("ARTIST: Duo") && shown.contains("TITLE: Tone"),
+        "{shown}"
+    );
     ok(&["convert", &m4a, "-o", &flac]);
     let shown = ok(&["probe", &flac]);
-    assert!(shown.contains("ARTIST: Duo") && shown.contains("TITLE: Tone"), "{shown}");
+    assert!(
+        shown.contains("ARTIST: Duo") && shown.contains("TITLE: Tone"),
+        "{shown}"
+    );
 }
 
 #[test]
@@ -238,7 +275,12 @@ fn processing_into_m4a_gives_what_it_gives_into_flac() {
 #[test]
 fn a_stream_copy_between_m4a_files_keeps_the_packets() {
     let dir = Dir::new("copy");
-    for file in ["alac-stereo16.m4a", "alac-stereo20.m4a", "alac-ch6.m4a", "alac-stereo32.m4a"] {
+    for file in [
+        "alac-stereo16.m4a",
+        "alac-stereo20.m4a",
+        "alac-ch6.m4a",
+        "alac-stereo32.m4a",
+    ] {
         let input = fixture(file);
         let (copy, a, b) = (dir.path("c.m4a"), dir.path("a.wav"), dir.path("b.wav"));
         ok(&["convert", "--force", &input, "--codec", "copy", "-o", &copy]);
@@ -275,9 +317,20 @@ fn an_opus_stream_copies_into_opus_ogg_and_oga_and_decodes_the_same() {
     for name in ["c.opus", "c.ogg", "c.oga"] {
         let (copy, got) = (dir.path(name), dir.path("got.wav"));
         ok(&["convert", "--force", &input, "--codec", "copy", "-o", &copy]);
-        assert!(ok(&["probe", &copy]).contains("opus, 48000 Hz, stereo"), "{name}");
+        assert!(
+            ok(&["probe", &copy]).contains("opus, 48000 Hz, stereo"),
+            "{name}"
+        );
         assert!(ok(&["probe", &copy]).contains("TITLE: Tone"), "{name}");
-        ok(&["convert", "--force", &copy, "--sample-format", "f32", "-o", &got]);
+        ok(&[
+            "convert",
+            "--force",
+            &copy,
+            "--sample-format",
+            "f32",
+            "-o",
+            &got,
+        ]);
         assert!(wav_data(&read(&got)) == wav_data(&read(&want)), "{name}");
     }
 }
@@ -291,17 +344,36 @@ fn what_alac_cannot_take_is_refused_in_plain_words() {
     let o = dir.path("o.m4a");
 
     let err = refused(&["convert", &stereo, "--sample-format", "f32", "-o", &o]);
-    assert!(err.contains("alac cannot store floating-point samples"), "{err}");
+    assert!(
+        err.contains("alac cannot store floating-point samples"),
+        "{err}"
+    );
     assert!(err.contains("--sample-format s16, s24 or s32"), "{err}");
     let err = refused(&["convert", &stereo, "--sample-format", "u8", "-o", &o]);
     assert!(err.contains("alac cannot code 8-bit samples"), "{err}");
     let err = refused(&["convert", &stereo, "--compression-level", "5", "-o", &o]);
-    assert!(err.contains("--compression-level applies to flac only"), "{err}");
+    assert!(
+        err.contains("--compression-level applies to flac only"),
+        "{err}"
+    );
     let err = refused(&["convert", &stereo, "--codec", "copy", "-o", &o]);
-    assert!(err.contains("cannot copy pcm_s16le into mp4 (mp4 holds alac only)"), "{err}");
+    assert!(
+        err.contains("cannot copy pcm_s16le into mp4 (mp4 holds alac only)"),
+        "{err}"
+    );
     ok(&["convert", &stereo, "--codec", "alac", "-o", &o]);
-    let err = refused(&["convert", &stereo, "--codec", "alac", "-o", &dir.path("o.flac")]);
-    assert!(err.contains("codec alac cannot be written into flac"), "{err}");
+    let err = refused(&[
+        "convert",
+        &stereo,
+        "--codec",
+        "alac",
+        "-o",
+        &dir.path("o.flac"),
+    ]);
+    assert!(
+        err.contains("codec alac cannot be written into flac"),
+        "{err}"
+    );
     // Not written: the codec names clap accepts stop at the ones that are.
     for codec in ["aac", "mp3", "opus"] {
         let out = run(&["convert", &stereo, "--codec", codec, "-o", &o]);
@@ -319,7 +391,10 @@ fn what_alac_cannot_take_is_refused_in_plain_words() {
     };
     std::fs::write(&quad, quad_wav).unwrap();
     let err = refused(&["convert", &quad, "-o", &o]);
-    assert!(err.contains("alac stores 4 channels in one layout only (4.0)"), "{err}");
+    assert!(
+        err.contains("alac stores 4 channels in one layout only (4.0)"),
+        "{err}"
+    );
     assert!(err.contains("this stream is quad"), "{err}");
     assert!(err.contains("no standard mix reaches it"), "{err}");
     assert!(!Path::new(&o).exists(), "nothing is created");

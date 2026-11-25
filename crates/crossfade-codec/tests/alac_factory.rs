@@ -7,7 +7,13 @@ use crossfade_core::{AudioSpec, ChannelLayout, CodecId, SampleFormat};
 fn alac_has_an_encoder_whatever_the_thread_count() {
     let audio = AudioSpec::new(44100, SampleFormat::S16, ChannelLayout::stereo()).unwrap();
     let opts = EncodeOptions::default();
-    assert_eq!(encoder_for(CodecId::Alac, &audio, &opts).unwrap().extradata().len(), 24);
+    assert_eq!(
+        encoder_for(CodecId::Alac, &audio, &opts)
+            .unwrap()
+            .extradata()
+            .len(),
+        24
+    );
     for threads in [0, 1, 4] {
         assert!(encoder_for_threads(CodecId::Alac, &audio, &opts, threads).is_ok());
     }

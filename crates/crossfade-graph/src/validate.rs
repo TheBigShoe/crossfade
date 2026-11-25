@@ -287,7 +287,9 @@ fn check_alac_layout(layout: &ChannelLayout) -> Result<(), Error> {
 fn alac_depth(format: SampleFormat, true_depth: Option<u8>, notes: &mut Vec<String>) -> Option<u8> {
     let coded = coded_depth(format, true_depth)?;
     if let Some(d) = true_depth.filter(|&d| d != coded && usize::from(d) < format.bits()) {
-        notes.push(format!("alac cannot code {d}-bit audio: writing {coded}-bit"));
+        notes.push(format!(
+            "alac cannot code {d}-bit audio: writing {coded}-bit"
+        ));
     }
     (usize::from(coded) != format.bits()).then_some(coded)
 }
@@ -689,7 +691,10 @@ mod tests {
         assert_eq!(depth_of(&stream(S24, None), "o.m4a", None), None);
         assert_eq!(depth_of(&stream(S16, Some(12)), "o.m4a", None), None);
         assert_eq!(depth_of(&stream(S32, Some(32)), "o.m4a", None), None);
-        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", Some(S24)), Some(20));
+        assert_eq!(
+            depth_of(&stream(S24, Some(20)), "o.m4a", Some(S24)),
+            Some(20)
+        );
         assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", Some(S16)), None);
         assert!(plan(&stream(S24, Some(20))).unwrap().notes.is_empty());
         assert!(plan(&stream(S16, None)).unwrap().notes.is_empty());
