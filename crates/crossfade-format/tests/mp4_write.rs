@@ -105,3 +105,72 @@ fn tags_survive_in_the_written_file() {
     let again = read(write(&original.stream, &original.packets, &tags));
     assert_eq!(again.tags, tags);
 }
+
+const ALAC_FIXTURES: [&str; 12] = [
+    "alac-mono16.m4a",
+    "alac-stereo16.m4a",
+    "alac-stereo20.m4a",
+    "alac-stereo24.m4a",
+    "alac-stereo32.m4a",
+    "alac-ch3.m4a",
+    "alac-ch4.m4a",
+    "alac-ch5.m4a",
+    "alac-ch6.m4a",
+    "alac-ch7.m4a",
+    "alac-ch8.m4a",
+    "alac-noise16.m4a",
+];
+
+/// The boxes in a box body: (type, body).
+fn children(body: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while rest.len() >= 8 {
+        let size = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+        assert!((8..=rest.len()).contains(&size), "box size {size}");
+        out.push((rest[4..8].try_into().unwrap(), &rest[8..size]));
+        rest = &rest[size..];
+    }
+    assert!(rest.is_empty(), "{} stray bytes", rest.len());
+    out
+}
+
+fn child<'a>(body: &'a [u8], kind: &[u8; 4]) -> &'a [u8] {
+    children(body)
+        .into_iter()
+        .find(|(k, _)| k == kind)
+        .unwrap_or_else(|| panic!("no {}", String::from_utf8_lossy(kind)))
+        .1
+}
+
+/// The boxes inside the track's `alac` sample entry: its cookie box and the `chan` box.
+fn entry_children(file: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
+    let mut body = child(file, b"moov");
+    for kind in [b"trak", b"mdia", b"minf", b"stbl"] {
+        body = child(body, kind);
+    }
+    let stsd = child(body, b"stsd");
+    let entry = child(&stsd[8..], b"alac");
+    children(&entry[28..])
+        .into_iter()
+        .map(|(k, b)| (k, b.to_vec()))
+        .collect()
+}
+
+#[test]
+fn every_alac_fixture_reads_back_the_same_after_a_rewrite() {
+    for name in ALAC_FIXTURES {
+        let original = read(fixture(name));
+        assert_same(&original, &rewrite(&original), name);
+    }
+}
+
+#[test]
+fn layouts_above_stereo_are_stored_as_afconvert_stores_them() {
+    for name in ALAC_FIXTURES {
+        let bytes = fixture(name);
+        let original = read(bytes.clone());
+        let written = write(&original.stream, &original.packets, &original.tags);
+        assert_eq!(entry_children(&written), entry_children(&bytes), "{name}");
+    }
+}
