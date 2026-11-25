@@ -130,6 +130,8 @@ pub(super) struct Coarse {
     pub(super) force_intra: bool,
     /// Try intra and inter and keep the better (complexity 4 and up).
     pub(super) two_pass: bool,
+    /// The LFE: energy decays at most 3 dB a frame and never rises past band 1.
+    pub(super) lfe: bool,
 }
 
 /// `quant_coarse_energy_impl`: codes the intra flag and the deltas; returns the badness
@@ -181,6 +183,9 @@ fn quant_coarse_impl(
                     qi = qi.max(-1);
                 }
             }
+            if p.lfe && i >= 2 {
+                qi = qi.min(0);
+            }
             if budget - tell >= 15 {
                 let pi = 2 * i.min(20);
                 laplace::encode(
@@ -209,7 +214,7 @@ fn quant_coarse_impl(
             *prev = *prev + q - beta * q;
         }
     }
-    badness
+    if p.lfe { 0 } else { badness }
 }
 
 /// `quant_coarse_energy`: codes `e_bands` (log2 amplitudes) against `old`, which becomes the
@@ -245,6 +250,9 @@ pub(super) fn quant_coarse_energy(
     let mut max_decay = 16.0f32;
     if end - start > 10 {
         max_decay = max_decay.min(0.125 * p.nb_available_bytes as f32);
+    }
+    if p.lfe {
+        max_decay = 3.0;
     }
     let start_state = enc.clone();
     let mut old_intra = *old;

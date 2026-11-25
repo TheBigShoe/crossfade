@@ -83,6 +83,8 @@ pub(crate) struct CeltEncoder {
     /// `CELT_SET_PREDICTION` below 2: no pitch pre-filter; at 0, intra energy too.
     disable_pf: bool,
     force_intra: bool,
+    /// `OPUS_SET_LFE`: a low-frequency effects channel, everything in the first bands.
+    lfe: bool,
     // From here on, what OPUS_RESET_STATE clears.
     rng: u32,
     spread_decision: i32,
@@ -647,6 +649,7 @@ fn dynalloc_analysis(
     constrained_vbr: bool,
     lm: usize,
     effective_bytes: i32,
+    lfe: bool,
 ) -> Dynalloc {
     let mut d = Dynalloc {
         offsets: [0; NB_EBANDS],
@@ -695,7 +698,7 @@ fn dynalloc_analysis(
         }
     }
     // From 24 kb/s at 20 ms (96 at 2.5 ms): dynalloc can then not bust the budget.
-    if effective_bytes >= 30 + 5 * lm as i32 {
+    if effective_bytes >= 30 + 5 * lm as i32 && !lfe {
         let mut follower = [0.0f32; 2 * NB_EBANDS];
         let mut last = 0;
         for ch in 0..c {
@@ -1044,6 +1047,7 @@ impl CeltEncoder {
             channels: channels.clamp(1, 2),
             disable_pf: false,
             force_intra: false,
+            lfe: false,
             rng: 0,
             spread_decision: SPREAD_NORMAL,
             delayed_intra: 1.0,
@@ -1078,6 +1082,7 @@ impl CeltEncoder {
         *self = Self {
             disable_pf: self.disable_pf,
             force_intra: self.force_intra,
+            lfe: self.lfe,
             ..Self::new(self.channels)
         };
     }
@@ -1088,6 +1093,11 @@ impl CeltEncoder {
     pub(crate) fn set_prediction(&mut self, prediction: u8) {
         self.disable_pf = prediction <= 1;
         self.force_intra = prediction == 0;
+    }
+
+    /// `OPUS_SET_LFE`.
+    pub(crate) fn set_lfe(&mut self, lfe: bool) {
+        self.lfe = lfe;
     }
 
     /// `OPUS_GET_FINAL_RANGE`: the range coder's state after the last frame.
@@ -1332,7 +1342,7 @@ impl CeltEncoder {
             self.preemph_mem[ch] = mem;
         }
 
-        let enabled = nb_available_bytes > 12 * ci
+        let enabled = ((self.lfe && nb_available_bytes > 3) || nb_available_bytes > 12 * ci)
             && !hybrid
             && !silence
             && !self.disable_pf
@@ -1359,7 +1369,7 @@ impl CeltEncoder {
         let mut short_blocks = false;
         let mut tf_chan = 0;
         let mut weak_transient = false;
-        if COMPLEXITY >= 1 {
+        if COMPLEXITY >= 1 && !self.lfe {
             // Steadier energy on fricatives at low hybrid rates; vowels (voiced, a small
             // SILK offset) keep their real transients.
             let allow_weak = hybrid && effective_bytes < 15 && frame.silk_info.signal_type != 2;
@@ -1397,11 +1407,17 @@ impl CeltEncoder {
             tf_chan = 0;
         }
         compute_band_energies(&freq, &mut band_e, eff_end, c, lm);
+        if self.lfe {
+            // Past the second band, at most 40 dB under the first.
+            for i in 2..end {
+                band_e[i] = band_e[i].min(1e-4 * band_e[0]).max(EPSILON);
+            }
+        }
         amp2_log2(&band_e, &mut band_log_e, eff_end, end, c);
 
-        // Temporal VBR.
-        let temporal_vbr;
-        {
+        // Temporal VBR, not for the LFE.
+        let mut temporal_vbr = 0.0;
+        if !self.lfe {
             let mut follow = -10.0f32;
             let mut frame_avg = 0.0f32;
             let offset = if short_blocks { 0.5 * lm as f32 } else { 0.0 };
@@ -1413,7 +1429,7 @@ impl CeltEncoder {
                 frame_avg += follow;
             }
             frame_avg /= (end - start) as f32;
-            temporal_vbr = (frame_avg - self.spec_avg).clamp(-1.5, 3.0);
+            temporal_vbr = (frame_avg - self.spec_avg).clamp(-1.5, 3.0f32);
             self.spec_avg += 0.02 * temporal_vbr;
         }
         if !second_mdct {
@@ -1425,6 +1441,7 @@ impl CeltEncoder {
             && enc.tell() + 3 <= total_bits
             && !is_transient
             && COMPLEXITY >= 5
+            && !self.lfe
             && !hybrid
             && patch_transient_decision(&band_log_e, &self.old_band_e, start, end, c)
         {
@@ -1448,7 +1465,8 @@ impl CeltEncoder {
         let mut x = vec![0.0f32; c * n];
         normalise_bands(&freq, &mut x, &band_e, eff_end, c, m);
 
-        let enable_tf_analysis = effective_bytes >= 15 * ci && !hybrid && COMPLEXITY >= 2;
+        let enable_tf_analysis =
+            effective_bytes >= 15 * ci && !hybrid && COMPLEXITY >= 2 && !self.lfe;
         let dyn_ = dynalloc_analysis(
             &band_log_e,
             &band_log_e2,
@@ -1461,6 +1479,7 @@ impl CeltEncoder {
             frame.constrained_vbr,
             lm,
             effective_bytes,
+            self.lfe,
         );
         let mut offsets = dyn_.offsets;
         let mut tf_res = [0i32; NB_EBANDS];
@@ -1525,6 +1544,7 @@ impl CeltEncoder {
                 nb_available_bytes,
                 force_intra: self.force_intra,
                 two_pass: COMPLEXITY >= 4,
+                lfe: self.lfe,
             },
             &band_log_e,
             &mut self.old_band_e,
@@ -1536,7 +1556,10 @@ impl CeltEncoder {
         tf_encode(start, end, is_transient, &mut tf_res, lm, tf_select, enc);
 
         if enc.tell() + 4 <= total_bits {
-            if hybrid {
+            if self.lfe {
+                self.tapset_decision = 0;
+                self.spread_decision = SPREAD_NORMAL;
+            } else if hybrid {
                 self.spread_decision = if is_transient {
                     SPREAD_NORMAL
                 } else {
@@ -1561,6 +1584,10 @@ impl CeltEncoder {
             enc.enc_icdf(self.spread_decision as usize, &SPREAD_ICDF, 5);
         }
 
+        // For the LFE, everything interesting is in the first band.
+        if self.lfe {
+            offsets[0] = 8.min(effective_bytes / 3);
+        }
         let cap = init_caps(lm, c);
         let mut dynalloc_logp = 6;
         total_bits <<= BITRES;
@@ -1617,7 +1644,7 @@ impl CeltEncoder {
 
         let mut alloc_trim = 5;
         if tell_frac + (6 << BITRES) <= total_bits - total_boost {
-            if hybrid {
+            if hybrid || self.lfe {
                 self.stereo_saving = 0.0;
             } else {
                 alloc_trim = alloc_trim_analysis(
@@ -1739,7 +1766,7 @@ impl CeltEncoder {
             0
         };
         bits -= anti_collapse_rsv;
-        let signal_bandwidth = end - 1;
+        let signal_bandwidth = if self.lfe { 1 } else { end - 1 };
         let alloc = compute_allocation(
             start,
             end,
