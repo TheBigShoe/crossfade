@@ -21,7 +21,11 @@ fn shapes(n: usize, lm: usize, c: usize, seed: u32) -> (Vec<f32>, [f32; 2 * NB_E
                 let tone = libm::sinf(j as f32 * (0.3 + 0.1 * ch as f32) + seed as f32);
                 let noise = ((s >> 9) as f32 / (1 << 23) as f32) - 0.5;
                 // The second channel is mostly the first: stereo correlation.
-                let v = if ch == 1 { 0.8 * x[j] + 0.3 * noise } else { tone + noise };
+                let v = if ch == 1 {
+                    0.8 * x[j] + 0.3 * noise
+                } else {
+                    tone + noise
+                };
                 x[ch * n + j] = v;
                 e += v * v;
             }

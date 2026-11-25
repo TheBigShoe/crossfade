@@ -43,7 +43,7 @@ fn ordery(stride: usize) -> &'static [usize] {
 }
 
 /// `deinterleave_hadamard`.
-fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
+pub(super) fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
     let n = n0 * stride;
     if n > x.len() || n > MAX_BAND {
         return;
@@ -67,7 +67,7 @@ fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool
 }
 
 /// `interleave_hadamard`.
-fn interleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
+pub(super) fn interleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
     let n = n0 * stride;
     if n > x.len() || n > MAX_BAND {
         return;
@@ -91,7 +91,7 @@ fn interleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) 
 }
 
 /// `compute_qn`: the resolution of a split angle.
-fn compute_qn(n: i32, b: i32, offset: i32, pulse_cap: i32, stereo: bool) -> i32 {
+pub(super) fn compute_qn(n: i32, b: i32, offset: i32, pulse_cap: i32, stereo: bool) -> i32 {
     const EXP2_TABLE8: [i32; 8] = [16384, 17866, 19483, 21247, 23170, 25267, 27554, 30048];
     let mut n2 = 2 * n - 1;
     if stereo && n == 2 {
@@ -108,7 +108,7 @@ fn compute_qn(n: i32, b: i32, offset: i32, pulse_cap: i32, stereo: bool) -> i32 
 }
 
 /// `stereo_merge`: mid and side back to left and right.
-fn stereo_merge(x: &mut [f32], y: &mut [f32], mid: f32) {
+pub(super) fn stereo_merge(x: &mut [f32], y: &mut [f32], mid: f32) {
     let mut xp = 0.0f32;
     let mut side = 0.0f32;
     for (&a, &b) in x.iter().zip(y.iter()) {
