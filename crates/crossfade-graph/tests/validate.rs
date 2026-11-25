@@ -4,6 +4,7 @@ mod common;
 
 use common::{job, sine_wav, spec};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
+use crossfade_opus::testing::ogg::{self as w, OggLayout};
 use crossfade_graph::{
     AudioSettings, CancelToken, Pipeline, probe, run, validate, writable_extensions,
 };
@@ -45,6 +46,24 @@ fn io() -> MemoryIo {
         &mut |_| {},
     )
     .unwrap();
+    run(
+        &job("s16.wav", "s16.m4a", None),
+        &mut io,
+        &Limits::default(),
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
+    let audio = w::packets(9, true, 10, 50, 1);
+    io.insert(
+        "in.opus",
+        w::ogg_file(
+            &w::opus_head(2, 312, 0, None),
+            &w::opus_tags("t", &[]),
+            &audio,
+            &OggLayout::default(),
+        ),
+    );
     io
 }
 
@@ -75,6 +94,14 @@ fn table() -> Vec<Case> {
         ),
         ("s16.flac", "o.wav", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("copy"), None)),
+        ("s16.wav", "o.m4a", settings(None, None, None)),
+        ("s24.wav", "o.mp4", settings(None, Some("alac"), None)),
+        ("s32.wav", "o.M4B", settings(None, None, None)),
+        ("s16.wav", "o.m4a", settings(Some(S24), None, None)),
+        ("s16.m4a", "o.m4a", settings(None, Some("copy"), None)),
+        ("s16.m4a", "o.flac", settings(None, None, None)),
+        ("in.opus", "o.opus", settings(None, Some("copy"), None)),
+        ("in.opus", "o.ogg", settings(None, Some("copy"), None)),
         // Refusals.
         ("f32.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.flac", settings(Some(F64), None, None)),
@@ -94,6 +121,17 @@ fn table() -> Vec<Case> {
         ("s16.wav", "o.mp3", settings(None, None, None)),
         ("s16.wav", "o", settings(None, None, None)),
         ("s16.wav", "o.wav", settings(None, Some("mp3"), None)),
+        ("s16.wav", "o.m4a", settings(None, Some("aac"), None)),
+        ("s16.wav", "o.m4a", settings(None, Some("flac"), None)),
+        ("f32.wav", "o.m4a", settings(None, None, None)),
+        ("s16.wav", "o.m4a", settings(Some(U8), None, None)),
+        ("s16.wav", "o.m4a", settings(None, None, Some(5))),
+        ("s16.wav", "o.m4a", settings(None, Some("copy"), None)),
+        ("s16.flac", "o.m4a", settings(None, Some("copy"), None)),
+        ("wide.wav", "o.m4a", settings(None, None, None)),
+        ("in.opus", "o.opus", settings(None, None, None)),
+        ("in.opus", "o.ogg", settings(None, Some("opus"), None)),
+        ("s16.m4a", "o.wav", settings(None, Some("copy"), None)),
     ]
 }
 
@@ -126,7 +164,7 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 17, "the table keeps its refusals");
+    assert_eq!(refused, 28, "the table keeps its refusals");
 }
 
 #[test]
@@ -141,11 +179,33 @@ fn validate_names_the_cause() {
     );
     assert_eq!(
         text(&settings(None, Some("copy"), None), "o.oga"),
-        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac only)"
+        "unsupported: cannot copy pcm_s16le into ogg (ogg holds flac and opus)"
     );
     assert_eq!(
         text(&settings(None, Some("pcm"), None), "o.oga"),
-        "unsupported: codec pcm cannot be written into ogg (ogg holds flac only)"
+        "unsupported: codec pcm cannot be written into ogg (ogg writes flac only; an opus \
+         stream can be copied with --codec copy)"
+    );
+    assert_eq!(
+        text(&settings(None, Some("copy"), None), "o.m4a"),
+        "unsupported: cannot copy pcm_s16le into mp4 (mp4 holds alac only)"
+    );
+    assert_eq!(
+        text(&settings(None, Some("aac"), None), "o.m4a"),
+        "unsupported: codec aac cannot be written into mp4 (mp4 writes alac only; aac and mp3 \
+         are not written)"
+    );
+    assert_eq!(
+        text(&settings(None, None, Some(5)), "o.m4a"),
+        "unsupported: --compression-level applies to flac only"
+    );
+    let opus = probe("in.opus", &mut io, &limits).unwrap().streams[0].clone();
+    assert_eq!(
+        validate(&opus, "o.opus", &settings(None, None, None))
+            .unwrap_err()
+            .to_string(),
+        "unsupported: encoding opus is not supported yet; an opus stream can be copied with \
+         --codec copy into .opus"
     );
     assert_eq!(
         text(&settings(None, Some("flac"), None), "o.wav"),
@@ -163,6 +223,7 @@ fn validate_names_the_cause() {
         ".flac",
         ".aiff/.aif/.aifc",
         ".oga/.ogg",
+        ".m4a/.mp4/.m4b",
     ] {
         assert!(ext.contains(want), "{want} missing from {ext}");
     }
@@ -188,7 +249,7 @@ fn codec_limits_surface_without_a_file() {
 fn writable_extensions_are_the_containers_that_can_be_written() {
     assert_eq!(
         writable_extensions(),
-        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg"]
+        ["wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "m4a", "mp4", "m4b"]
     );
     let mut io = io();
     let limits = Limits::default();
