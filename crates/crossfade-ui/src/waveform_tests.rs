@@ -302,6 +302,36 @@ fn secondary() -> Modifiers {
     }
 }
 
+fn wheel(cx: &mut TestAppContext, rig: &Rig, dy: f32) {
+    cx.update_window(rig.window, |_, window, cx| {
+        window.scroll(
+            "waveform-strip",
+            ScrollDelta::Pixels(point(px(0.), px(dy))),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_test]
+fn a_plain_wheel_pans_a_zoomed_strip_and_leaves_a_fitted_one_alone(cx: &mut TestAppContext) {
+    let (rig, _) = one_file(cx);
+    finish(cx, &rig);
+    let strip = strip(cx, &rig);
+    wheel(cx, &rig, -40.);
+    assert_eq!(strip.read_with(cx, |s, _| s.view().start()), 0);
+    click(cx, rig.window, "waveform-strip");
+    press(cx, rig.window, "+");
+    draw(cx, rig.window);
+    let zoomed = strip.read_with(cx, |s, _| s.view().start());
+    wheel(cx, &rig, -40.);
+    assert!(
+        strip.read_with(cx, |s, _| s.view().start()) > zoomed,
+        "wheel down shows later audio"
+    );
+}
+
 #[gpui_test]
 fn scroll_pans_and_secondary_scroll_and_pinch_zoom(cx: &mut TestAppContext) {
     let (rig, _) = one_file(cx);

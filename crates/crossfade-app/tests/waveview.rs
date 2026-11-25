@@ -94,6 +94,22 @@ fn pan_moves_by_pixels_and_clamps_at_both_ends() {
 }
 
 #[test]
+fn a_plain_wheel_pans_a_zoomed_view_and_leaves_a_fitted_one_to_the_page() {
+    let mut v = view(10_000, 100);
+    assert!(!v.scroll(0.0, -10.0), "fitted: the inspector scrolls");
+    assert_eq!(v.start(), 0);
+    v.zoom(4.0, 0.0);
+    // Wheel down (negative) moves later in the file, as content follows a trackpad.
+    assert!(v.scroll(0.0, -10.0));
+    assert_eq!(v.start(), 250);
+    assert!(v.scroll(0.0, 10.0));
+    assert_eq!(v.start(), 0);
+    // A horizontal swipe still pans.
+    assert!(v.scroll(-10.0, 1.0));
+    assert_eq!(v.start(), 250);
+}
+
+#[test]
 fn panning_a_fitted_view_does_nothing() {
     let mut v = view(10_000, 100);
     v.pan_px(30.0);
