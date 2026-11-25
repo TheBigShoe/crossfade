@@ -79,6 +79,43 @@ impl Wake {
     }
 }
 
+/// How a frame shows a cached drawing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Draw {
+    /// Its key is the one the cache was drawn for.
+    Cached,
+    /// Its key changed in this frame: draw it afresh. GPUI learns of a notify made while
+    /// drawing only at the next frame, so this frame would otherwise serve the old drawing.
+    Fresh,
+}
+
+/// The key a cached drawing was last drawn for.
+#[derive(Debug, Clone)]
+pub struct Drawn<K> {
+    key: Option<K>,
+}
+
+impl<K: PartialEq> Default for Drawn<K> {
+    fn default() -> Self {
+        Self { key: None }
+    }
+}
+
+impl<K: PartialEq> Drawn<K> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records this frame's `key` and says how to draw.
+    pub fn frame(&mut self, key: K) -> Draw {
+        if self.key.as_ref() == Some(&key) {
+            return Draw::Cached;
+        }
+        self.key = Some(key);
+        Draw::Fresh
+    }
+}
+
 pub struct Strip {
     current: Option<(String, Option<Analyzer>)>,
     cache: Cache<Analyzer>,
