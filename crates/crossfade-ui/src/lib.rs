@@ -29,6 +29,8 @@ mod fixtures;
 #[cfg(test)]
 mod gate;
 #[cfg(test)]
+mod keyboard_tests;
+#[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
 mod playback_tests;
