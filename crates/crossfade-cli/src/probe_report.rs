@@ -89,6 +89,17 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_under_a_millisecond_reads_in_milliseconds() {
+        let mut r = report(None, Tags::new());
+        // 29 frames at 44.1 kHz: 0.658 ms, which three decimals of a second round to 0.001 s.
+        r.streams[0].frames = Some(29);
+        assert_eq!(
+            to_text(&r),
+            "Input: flac, 1234 bytes\n  Stream 0: audio, flac, 44100 Hz, stereo, s24, 0.658 ms (29 frames)\n"
+        );
+    }
+
+    #[test]
     fn raw_bits_and_tags_are_listed_when_present() {
         let mut tags = Tags::new();
         tags.push("ARTIST", "One");
