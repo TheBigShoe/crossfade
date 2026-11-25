@@ -307,10 +307,7 @@ fn the_feed_is_taken_once_and_misuse_is_refused() {
     assert_eq!(unsafe { cf_feed_channels(n.feed, &mut channels) }, CF_OK);
     assert_eq!(channels, 2);
     unsafe { cf_feed_destroy(std::ptr::null_mut()) };
-    assert_eq!(
-        unsafe { cf_player_destroy(std::ptr::null_mut()) },
-        CF_OK
-    );
+    assert_eq!(unsafe { cf_player_destroy(std::ptr::null_mut()) }, CF_OK);
 }
 
 #[test]

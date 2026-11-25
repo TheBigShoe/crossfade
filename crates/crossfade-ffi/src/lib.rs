@@ -11,6 +11,7 @@ mod about;
 mod analysis;
 mod error;
 mod inspect;
+mod player;
 mod queue;
 mod sheet;
 mod signal;

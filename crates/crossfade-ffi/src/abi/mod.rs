@@ -3,10 +3,12 @@
 #![allow(unsafe_code)]
 
 mod analysis;
+mod player;
 mod queue;
 mod sheet;
 
 pub use analysis::*;
+pub use player::*;
 pub use queue::*;
 pub use sheet::*;
 
