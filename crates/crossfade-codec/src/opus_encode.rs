@@ -12,12 +12,20 @@
 //! count, and the rate of the audio before the graph brought it to 48 kHz, which only
 //! the caller knows (`EncodeOptions::input_sample_rate`, else 48000).
 //!
-//! Surround Opus (mapping family 1) is not written yet: three or more channels are refused.
+//! Surround. Three to eight channels are written as mapping family 1 through
+//! `crossfade_opus::MultistreamEncoder`, from the one layout the engine calls Vorbis's for their
+//! count (`ChannelLayout::vorbis_order`, the layout the decoder adapter gives): the adapter
+//! reorders the frames from that layout's storage order to Vorbis's channel order, the inverse of
+//! the decoder adapter. Any other layout is refused by [`layout_problem`]; one or two channels
+//! take any layout.
 
 use crate::EncodeOptions;
 use crate::opus::engine_error as map;
-use crossfade_core::{AudioFrame, AudioSpec, Encoder, Error, Packet, SampleFormat, Samples};
-use crossfade_opus::EncoderConfig;
+use crate::vorbis::speakers;
+use crossfade_core::{
+    AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples,
+};
+use crossfade_opus::{EncoderConfig, MultistreamEncoder};
 use std::collections::VecDeque;
 
 fn unsupported(what: impl Into<String>) -> Error {
@@ -27,35 +35,96 @@ fn unsupported(what: impl Into<String>) -> Error {
 /// The only rate Opus is coded at.
 pub const SAMPLE_RATE: u32 = 48_000;
 
+/// The most channels Opus's mapping family 1 holds.
+pub const MAX_CHANNELS: u16 = 8;
+
+/// Bits per second for the whole stream when the job names none: 96 kb/s for mono, 128 kb/s
+/// for stereo, and for surround what `opusenc` gives (64 kb/s for each stream and 32 kb/s more
+/// for each coupled pair): 160 kb/s for 3 channels, 192 for 4, 256 for 5, 320 for 5.1, 416 for
+/// 6.1 and 7.1.
+pub fn default_bitrate(channels: u8) -> u32 {
+    let (streams, coupled) = match channels {
+        1 => return 96_000,
+        2 => return 128_000,
+        3 => (2, 1),
+        4 => (2, 2),
+        5 => (3, 2),
+        6 => (4, 2),
+        _ => (5, 3),
+    };
+    64_000 * streams + 32_000 * coupled
+}
+
+/// The one layout Opus stores `channels` (3 to 8) channels in: Vorbis's, in storage order.
+pub fn layout_for(channels: u16) -> Option<ChannelLayout> {
+    u8::try_from(channels)
+        .ok()
+        .filter(|n| (3..=8).contains(n))
+        .and_then(|n| ChannelLayout::vorbis_order(n).ok())
+}
+
+/// What is wrong with writing `layout` as Opus, if anything: more than eight channels, or a
+/// layout other than Vorbis's for its count (one and two channels take any layout).
+pub fn layout_problem(layout: &ChannelLayout) -> Option<String> {
+    let n = layout.channels();
+    if n > MAX_CHANNELS {
+        return Some(format!("opus holds at most 8 channels, got {n}"));
+    }
+    let wanted = layout_for(n).filter(|w| w != layout)?;
+    let words = layout.name().map_or_else(
+        || {
+            if layout.positions().is_none() {
+                format!("{n} unlabelled channels")
+            } else {
+                format!("{n} channels in another layout")
+            }
+        },
+        str::to_owned,
+    );
+    Some(format!(
+        "opus stores {n} channels in one layout only ({}) and this stream is {words}",
+        wanted
+            .name()
+            .map_or_else(|| format!("its own {n}-channel order"), str::to_owned)
+    ))
+}
+
+/// The encoder for `channels` (1 to 8) at the default settings, from which the header and the
+/// pre-skip are read.
+fn config(channels: u8) -> EncoderConfig {
+    let mut config = EncoderConfig::default();
+    config.channels = channels;
+    config.bitrate = default_bitrate(channels);
+    config
+}
+
+/// The family of the header and the packets for `channels`.
+fn family(channels: u8) -> u8 {
+    u8::from(channels > 2)
+}
+
 /// The pre-skip every stream this adapter writes carries: the encoder's lookahead.
 pub fn pre_skip() -> u16 {
     // The lookahead does not depend on the configuration.
-    crossfade_opus::Encoder::new(&EncoderConfig::default()).map_or(312, |e| e.lookahead() as u16)
+    MultistreamEncoder::new(&config(2), 0).map_or(312, |e| e.lookahead() as u16)
 }
 
-/// Bits per second for the whole stream when the job names none: 96 kb/s for mono, 128 kb/s
-/// for stereo.
-pub fn default_bitrate(channels: u8) -> u32 {
-    if channels == 1 { 96_000 } else { 128_000 }
-}
-
-/// The `OpusHead` (RFC 7845 5.1) of a mono or stereo stream (mapping family 0): version 1, the
-/// pre-skip, `input_sample_rate` (informational) and a gain of 0.
+/// The `OpusHead` (RFC 7845 5.1) of a stream of `channels` channels (1 to 8): version 1, the
+/// pre-skip, `input_sample_rate` (informational) and a gain of 0, with mapping family 0 for mono
+/// and stereo and family 1 (the streams, the coupled pairs and the channel table) past that.
 pub fn head(channels: u8, input_sample_rate: u32) -> Vec<u8> {
-    let mut h = Vec::with_capacity(19);
-    h.extend_from_slice(b"OpusHead");
-    h.push(1);
-    h.push(channels);
-    h.extend_from_slice(&pre_skip().to_le_bytes());
-    h.extend_from_slice(&input_sample_rate.to_le_bytes());
-    h.extend_from_slice(&0i16.to_le_bytes());
-    h.push(0);
-    h
+    MultistreamEncoder::new(&config(channels), family(channels))
+        .map(|e| e.head(input_sample_rate).to_bytes())
+        .unwrap_or_default()
 }
 
 struct OpusEncoder {
-    inner: crossfade_opus::Encoder,
+    inner: MultistreamEncoder,
     channels: usize,
+    /// For each Vorbis-order channel, the channel of the frames sent that feeds it; `None` for
+    /// mono and stereo.
+    order: Option<Vec<usize>>,
+    frame: Vec<f32>,
     frame_size: usize,
     /// Samples taken in and not coded yet.
     queued: Vec<f32>,
@@ -82,23 +151,31 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
             spec.sample_rate()
         )));
     }
-    let channels = match spec.layout().channels() {
-        c @ (1 | 2) => c as u8,
-        c => {
-            return Err(unsupported(format!(
-                "surround opus is not written yet ({c} channels); use --channels stereo or mono"
-            )));
-        }
-    };
-    let mut config = EncoderConfig::default();
-    config.channels = channels;
-    config.bitrate = options.bitrate.unwrap_or_else(|| default_bitrate(channels));
+    if let Some(problem) = layout_problem(spec.layout()) {
+        return Err(unsupported(problem));
+    }
+    let channels = spec.layout().channels() as u8;
+    let mut config = config(channels);
+    config.bitrate = options.bitrate.unwrap_or(config.bitrate);
     config.vbr = !options.constant_bitrate;
-    let inner = crossfade_opus::Encoder::new(&config).map_err(map)?;
+    let inner = MultistreamEncoder::new(&config, family(channels)).map_err(map)?;
+    let order = (channels > 2)
+        .then(|| {
+            let positions = spec.layout().positions()?;
+            speakers(channels)?
+                .iter()
+                .map(|c| positions.iter().position(|p| p == c))
+                .collect::<Option<Vec<usize>>>()
+        })
+        .flatten();
+    if channels > 2 && order.is_none() {
+        return Err(unsupported("opus: no speaker order for this layout"));
+    }
     Ok(Box::new(OpusEncoder {
         channels: usize::from(channels),
         frame_size: inner.frame_size(),
-        inner,
+        order,
+        frame: Vec::new(),
         queued: Vec::new(),
         total: 0,
         next_pts: -i64::from(pre_skip()),
@@ -106,7 +183,10 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         pending: VecDeque::new(),
         drained: false,
         failed: None,
-        extradata: head(channels, options.input_sample_rate.unwrap_or(SAMPLE_RATE)),
+        extradata: inner
+            .head(options.input_sample_rate.unwrap_or(SAMPLE_RATE))
+            .to_bytes(),
+        inner,
     }))
 }
 
@@ -116,9 +196,17 @@ impl OpusEncoder {
     fn code(&mut self, duration: u64) -> Result<(), Error> {
         let whole = self.frame_size * self.channels;
         self.queued.resize(self.queued.len().max(whole), 0.0);
-        self.inner
-            .encode(&self.queued[..whole], &mut self.scratch)
-            .map_err(map)?;
+        let pcm = match &self.order {
+            None => &self.queued[..whole],
+            Some(order) => {
+                self.frame.clear();
+                for f in self.queued[..whole].chunks_exact(self.channels) {
+                    self.frame.extend(order.iter().map(|&o| f[o]));
+                }
+                &self.frame
+            }
+        };
+        self.inner.encode(pcm, &mut self.scratch).map_err(map)?;
         self.queued.drain(..whole);
         self.pending.push_back(Packet {
             stream: 0,

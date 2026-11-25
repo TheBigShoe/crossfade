@@ -290,7 +290,7 @@ fn a_surround_header_is_family_1_with_its_streams_and_mapping() {
     assert_eq!((h.channels, h.pre_skip, h.mapping.family), (6, 312, 1));
     assert_eq!((h.mapping.streams, h.mapping.coupled), (4, 2));
     assert_eq!(h.mapping.table.len(), 6);
-    assert_eq!(head(6, 44_100), e.extradata().to_vec().as_slice().to_vec());
+    assert_eq!(head(6, 48_000), e.extradata());
     assert_eq!(default_bitrate(3), 160_000);
     assert_eq!(default_bitrate(6), 320_000);
     assert_eq!(default_bitrate(8), 416_000);
@@ -315,7 +315,17 @@ fn at(x: &[f32], ch: usize, c: usize, hz: f64) -> f64 {
 fn every_channel_comes_back_in_its_place_with_its_own_tone() {
     for n in 3..=8usize {
         // A different tone on each channel, none a harmonic of another.
-        let tones: Vec<f64> = (0..n).map(|c| 700.0 + 530.0 * c as f64).collect();
+        // The LFE channel is coded low-passed, so its tone is a low one.
+        let layout = ChannelLayout::vorbis_order(n as u8).unwrap();
+        let tones: Vec<f64> = (0..n)
+            .map(|c| {
+                if layout.positions().unwrap()[c] == crossfade_core::Channel::Lfe {
+                    90.0
+                } else {
+                    700.0 + 530.0 * c as f64
+                }
+            })
+            .collect();
         let frames = 14_400;
         let pcm: Vec<f32> = (0..frames)
             .flat_map(|i| {
