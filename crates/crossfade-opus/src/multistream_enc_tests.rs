@@ -1,6 +1,6 @@
 use super::*;
 use crate::encoder::tests::{config, signal};
-use crate::{FrameDuration, MultistreamDecoder, Packet};
+use crate::{FrameDuration, MultistreamDecoder, Packet, Signal};
 
 /// `seconds` of a different note on each of `channels` channels (so that a channel in the
 /// wrong place shows), with a beat of noise, interleaved.
@@ -207,9 +207,10 @@ fn cbr_totals_are_exact_and_vbr_totals_near_the_bitrate() {
             let (packets, _) = round_trip(&vbr, 1, &pcm);
             let rate = packets.iter().map(Vec::len).sum::<usize>() as f64 * 8.0;
             assert!(
-                // Measured: -7% (8 ch at 64 kb/s) to +33% (5.1 at 64 kb/s, CELT's open-loop
-                // VBR on the rear pair's noise bursts); +2% to +15% from 192 kb/s.
-                (rate / f64::from(bitrate) - 1.0).abs() < 0.4,
+                // Measured: +4% (8 ch at 64 kb/s) to +58% (5.1 at 64 kb/s): CELT's open-loop
+                // VBR, whose target the tonality analysis raises on these steady notes and the
+                // surround masks steer (libopus gives the same on other surround files).
+                (0.0..0.7).contains(&(rate / f64::from(bitrate) - 1.0)),
                 "{channels} ch {bitrate}: {rate}"
             );
         }
@@ -218,11 +219,11 @@ fn cbr_totals_are_exact_and_vbr_totals_near_the_bitrate() {
 
 #[test]
 fn surround_quality_rises_with_the_bitrate() {
-    // The mean SNR over 5.1's five full-range channels: measured 23.8, 27.2 and 29.9 dB,
+    // The mean SNR over 5.1's five full-range channels: measured 21.8, 28.3 and 30.6 dB,
     // less 1 dB.
     let pcm = surround(6, 1.0);
     let mut last = f64::MIN;
-    for (bitrate, min) in [(128_000u32, 22.8), (256_000, 26.2), (448_000, 28.9)] {
+    for (bitrate, min) in [(128_000u32, 20.8), (256_000, 27.3), (448_000, 29.6)] {
         let cfg = config(6, bitrate, true, FrameDuration::Ms20);
         let (_, out) = round_trip(&cfg, 1, &pcm);
         let mean = [0, 1, 2, 4, 5]
@@ -270,7 +271,8 @@ fn reset_starts_the_streams_afresh() {
 
 #[test]
 fn surround_gives_the_same_bytes_on_every_platform() {
-    // Frozen: a change here changes the encoder's output, which must be on purpose.
+    // Frozen: a change here changes the encoder's output, which must be on purpose (last:
+    // the surround masks).
     let mut cases = vec![];
     for (channels, bitrate, vbr) in [
         (6u8, 256_000u32, true),
@@ -301,9 +303,92 @@ fn surround_gives_the_same_bytes_on_every_platform() {
     assert_eq!(
         cases,
         [
-            (13912, 12513354539588341673),
-            (8000, 1453688392283971629),
-            (17779, 16932559918747612100)
+            (17221, 12284992326031008237),
+            (8000, 927794366396315995),
+            (20529, 6301685194127560904)
         ]
     );
+}
+
+/// One second of 5.1: a tone per channel and bursts of noise, the rear pair at `rear` times
+/// the others' level.
+fn surround_with_rear(rear: f32) -> Vec<f32> {
+    let tau = 2.0 * std::f32::consts::PI;
+    let mut seed = 0x2468_ace1u32;
+    let mut out = Vec::with_capacity(48_000 * 6);
+    for i in 0..48_000 {
+        let t = i as f32 / 48_000.0;
+        for ch in 0..6 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = ((seed >> 8) as f32 / (1 << 24) as f32) * 2.0 - 1.0;
+            let f = 200.0 * (ch + 1) as f32 + 37.0;
+            let env = (1.0 - (i % 24_000) as f32 / 1200.0).max(0.0);
+            let g = if ch == 3 || ch == 4 { rear } else { 1.0 };
+            out.push(g * (0.25 * libm::sinf(tau * f * t) + 0.05 * env * noise));
+        }
+    }
+    out
+}
+
+/// The mean bytes of each stream's part of the packets (the self-delimited lengths
+/// included).
+fn stream_bytes(packets: &[Vec<u8>], streams: usize) -> Vec<f64> {
+    let mut sum = vec![0usize; streams];
+    for p in packets {
+        let mut rest = p.as_slice();
+        for (s, total) in sum.iter_mut().enumerate() {
+            let parsed = if s + 1 < streams {
+                Packet::parse_self_delimited(rest).expect("parses")
+            } else {
+                Packet::parse(rest).expect("parses")
+            };
+            *total += parsed.byte_len();
+            rest = &rest[parsed.byte_len()..];
+        }
+    }
+    sum.iter()
+        .map(|&b| b as f64 / packets.len() as f64)
+        .collect()
+}
+
+#[test]
+fn the_surround_masks_move_bits_to_the_unmasked_channels() {
+    // In VBR a loud rear pair masks the front: libopus 1.5.2 then gives the front pair 233
+    // bytes a packet instead of 364 (and the centre 134 instead of 264) on this signal, the
+    // rear pair more. Without the masks the front took the same either way.
+    let cfg = config(6, 256_000, true, FrameDuration::Ms20);
+    let quiet = stream_bytes(&round_trip(&cfg, 1, &surround_with_rear(0.1)).0, 4);
+    let loud = stream_bytes(&round_trip(&cfg, 1, &surround_with_rear(1.0)).0, 4);
+    assert!(loud[0] < 0.8 * quiet[0], "front: {quiet:?} then {loud:?}");
+    assert!(loud[2] < 0.8 * quiet[2], "centre: {quiet:?} then {loud:?}");
+    assert!(loud[1] > quiet[1], "rear: {quiet:?} then {loud:?}");
+}
+
+#[test]
+fn a_hybrid_frame_whose_silk_takes_every_bit_codes_celt_at_the_most() {
+    // Unmasked bands raise SILK's rate in VBR; when that leaves CELT 500 b/s or less (here
+    // about 170), libopus's CELT refuses the bitrate and keeps the frame's maximum: the frame
+    // fills the packet (as the centre of 7.1 at 128 kb/s does in libopus 1.5.2, in hybrid).
+    let mut cfg = config(1, 20_000, true, FrameDuration::Ms20);
+    cfg.signal = Signal::Voice;
+    let pcm = signal("music", 1, 0.4);
+    let mut enc = Encoder::new(&cfg).expect("valid");
+    let mut dec = crate::Decoder::new(1).expect("decoder");
+    let mut out = vec![];
+    let mut p = vec![];
+    let mut sizes = vec![];
+    for f in pcm.as_chunks::<960>().0 {
+        enc.set_energy_mask(Some([0.45; 42]));
+        enc.encode(f, &mut p).expect("encodes");
+        dec.decode(Some(&p), &mut out).expect("decodes");
+        assert_eq!(dec.final_range(), enc.final_range());
+        sizes.push((Packet::parse(&p).expect("parses").toc().mode(), p.len()));
+    }
+    let hybrid: Vec<usize> = sizes
+        .iter()
+        .filter(|(m, _)| *m == Mode::Hybrid)
+        .map(|&(_, n)| n)
+        .collect();
+    assert!(!hybrid.is_empty(), "{sizes:?}");
+    assert!(hybrid.iter().all(|&n| n > 1000), "{sizes:?}");
 }

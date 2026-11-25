@@ -76,7 +76,7 @@ pub(crate) fn speech(channels: usize, seconds: f32) -> Vec<f32> {
 }
 
 /// The mode and bandwidth of each packet.
-fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
+pub(super) fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
     packets
         .iter()
         .map(|p| {
@@ -87,7 +87,7 @@ fn modes(packets: &[Vec<u8>]) -> Vec<(Mode, Bandwidth)> {
 }
 
 /// The mode and bandwidth most packets of the last half second have.
-fn steady(cfg: &EncoderConfig, pcm: &[f32]) -> (Mode, Bandwidth) {
+pub(super) fn steady(cfg: &EncoderConfig, pcm: &[f32]) -> (Mode, Bandwidth) {
     let (packets, _) = encode_and_decode(cfg, pcm);
     let per_second = 48_000 / cfg.frame_duration.samples();
     let tail = modes(&packets[packets.len() - per_second / 2..]);
@@ -105,24 +105,24 @@ fn steady(cfg: &EncoderConfig, pcm: &[f32]) -> (Mode, Bandwidth) {
 fn the_mode_and_bandwidth_follow_the_bitrate_and_the_signal() {
     use Bandwidth::*;
     use Mode::*;
-    // libopus without its analysis assumes a little voice (Auto): SILK and hybrid below
-    // about 18 kb/s (mono; less for wide stereo), CELT above; Voice keeps SILK and hybrid
-    // to about 64 kb/s, Music goes CELT from 10 kb/s.
+    // On this speech the analysis finds voice (Auto), as libopus's does: SILK and hybrid up
+    // to and past 24 kb/s mono and 32 kb/s stereo, as with Voice, which keeps SILK and
+    // hybrid to about 64 kb/s; Music goes CELT from 10 kb/s.
     let cases: [(u8, Signal, u32, (Mode, Bandwidth)); 17] = [
         (1, Signal::Auto, 6_000, (Silk, Narrow)),
         (1, Signal::Auto, 9_000, (Silk, Narrow)),
-        (1, Signal::Auto, 12_000, (Hybrid, SuperWide)),
+        (1, Signal::Auto, 12_000, (Silk, Wide)),
         (1, Signal::Auto, 16_000, (Hybrid, Full)),
-        (1, Signal::Auto, 24_000, (Celt, Full)),
+        (1, Signal::Auto, 24_000, (Hybrid, Full)),
         (1, Signal::Auto, 64_000, (Celt, Full)),
         (1, Signal::Voice, 12_000, (Silk, Wide)),
         (1, Signal::Voice, 24_000, (Hybrid, Full)),
         (1, Signal::Voice, 48_000, (Hybrid, Full)),
         (1, Signal::Voice, 96_000, (Celt, Full)),
         (1, Signal::Music, 12_000, (Celt, SuperWide)),
-        (2, Signal::Auto, 12_000, (Hybrid, SuperWide)),
+        (2, Signal::Auto, 12_000, (Silk, Wide)),
         (2, Signal::Auto, 16_000, (Hybrid, Full)),
-        (2, Signal::Auto, 32_000, (Celt, Full)),
+        (2, Signal::Auto, 32_000, (Hybrid, Full)),
         (2, Signal::Voice, 32_000, (Hybrid, Full)),
         (2, Signal::Voice, 64_000, (Celt, Full)),
         (2, Signal::Music, 16_000, (Celt, Full)),
@@ -438,9 +438,8 @@ fn dtx_sends_silence_as_toc_bytes() {
 
 #[test]
 fn speech_quality_at_low_rates() {
-    // The segmental SNR of mono speech at SILK and hybrid rates, measured less 0.5 dB. Through
-    // opusdec on 6 s, libopus 1.4's opusenc at complexity 9 with --speech gives the same
-    // within 0.1 dB (README).
+    // The segmental SNR of mono speech at SILK and hybrid rates, measured less 0.5 dB.
+    // libopus 1.5.2's float build gives the same within 0.1 dB on speech (README).
     let pcm = speech(1, 2.0);
     let mut got = vec![];
     for bitrate in [8_000, 12_000, 16_000, 24_000, 32_000] {
@@ -449,7 +448,7 @@ fn speech_quality_at_low_rates() {
         let (_, out) = encode_and_decode(&cfg, &pcm);
         got.push((bitrate, seg_snr(&pcm, &out, 1, 312)));
     }
-    // Measured: 8.95 (SILK NB), 8.40 (SILK WB), 8.43, 8.68 and 8.85 (hybrid FB) dB.
+    // Measured: 8.95 (SILK NB), 8.32 (SILK WB), 8.42, 8.69 and 8.80 (hybrid FB) dB.
     for ((bitrate, snr), min) in got.iter().zip([8.4, 7.9, 7.9, 8.1, 8.3]) {
         assert!(*snr > min, "{bitrate}: {snr} dB");
     }
@@ -630,8 +629,8 @@ proptest::proptest! {
 
 #[test]
 fn silk_and_hybrid_give_the_same_bytes_on_every_platform() {
-    // Frozen: a change here changes the encoder's output, which must be on purpose. SILK is
-    // integer arithmetic, CELT float through libm only.
+    // Frozen: a change here changes the encoder's output, which must be on purpose (last:
+    // the tonality analysis). SILK is integer arithmetic, CELT float through libm only.
     let mut cases = vec![];
     let mut add = |channels: u8, bitrate, vbr, d, f: &dyn Fn(&mut EncoderConfig)| {
         let mut cfg = config(channels, bitrate, vbr, d);
@@ -666,12 +665,12 @@ fn silk_and_hybrid_give_the_same_bytes_on_every_platform() {
     assert_eq!(
         cases,
         [
-            (697, 7107422012473052099),
-            (1559, 2013836080188151404),
-            (2400, 10663908940347596749),
-            (1047, 17564393564395574519),
-            (2760, 477757030767389309),
-            (4800, 289040657716010392),
+            (693, 11736134073601484034),
+            (1556, 7782954769236046977),
+            (2400, 16023036227370905054),
+            (1043, 14814359666415212676),
+            (2709, 7930724760705322200),
+            (4800, 10451175142009782759),
             (1332, 15683301958387451202)
         ]
     );
