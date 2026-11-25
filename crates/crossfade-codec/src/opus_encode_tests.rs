@@ -337,7 +337,9 @@ fn a_layout_that_differs_only_in_its_surround_name_or_has_none_is_accepted_with_
     );
     assert_eq!(
         layout_note(&ChannelLayout::unpositioned(6).unwrap()).as_deref(),
-        Some("6 unlabelled channels taken as 5.1 with back surrounds: opus's layout for 6 channels")
+        Some(
+            "6 unlabelled channels taken as 5.1 with back surrounds: opus's layout for 6 channels"
+        )
     );
     // Opus's own layout, and mono and stereo (any layout), need no note.
     assert_eq!(layout_note(&ChannelLayout::vorbis_order(6).unwrap()), None);
