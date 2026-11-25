@@ -11,6 +11,7 @@ mod encoder;
 mod error;
 pub mod head;
 mod multistream;
+mod multistream_enc;
 pub mod packet;
 pub mod range;
 pub mod range_enc;

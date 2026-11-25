@@ -1,7 +1,7 @@
 //! The encoder's SILK-only, hybrid and CELT-only modes together: the decisions, the framing of
 //! long packets, the switches between modes and bandwidths, FEC, DTX and the rate.
 
-use super::tests::{config, encode_and_decode, signal};
+use super::tests::{config, digest, encode_and_decode, recipe_frame, signal};
 use super::*;
 use crate::{Decoder, Packet};
 
@@ -607,7 +607,7 @@ proptest::proptest! {
         let mut dec = Decoder::new(ch).expect("decoder");
         let mut out = vec![];
         for (i, (r, raw)) in frames.iter().enumerate() {
-            let pcm = super::tests::recipe_frame(n, ch, *r, raw, &mut seed);
+            let pcm = recipe_frame(n, ch, *r, raw, &mut seed);
             enc.set_bitrate(bitrates[i % bitrates.len()]).expect("a bitrate");
             enc.set_mode_and_bandwidth(modes[i % modes.len()], bandwidth);
             let mut p = vec![];
@@ -637,25 +637,25 @@ fn silk_and_hybrid_give_the_same_bytes_on_every_platform() {
         let mut cfg = config(channels, bitrate, vbr, d);
         f(&mut cfg);
         let pcm = speech(usize::from(channels), 0.6);
-        cases.push(super::tests::digest(&cfg, &pcm));
+        cases.push(digest(&cfg, &pcm));
     };
     add(1, 12_000, true, FrameDuration::Ms20, &|c| {
-        c.signal = Signal::Voice
+        c.signal = Signal::Voice;
     });
     add(1, 24_000, true, FrameDuration::Ms20, &|c| {
-        c.signal = Signal::Voice
+        c.signal = Signal::Voice;
     });
     add(2, 32_000, false, FrameDuration::Ms10, &|c| {
-        c.signal = Signal::Voice
+        c.signal = Signal::Voice;
     });
     add(1, 16_000, true, FrameDuration::Ms60, &|c| {
-        c.mode = Some(Mode::Silk)
+        c.mode = Some(Mode::Silk);
     });
     add(2, 48_000, true, FrameDuration::Ms40, &|c| {
-        c.mode = Some(Mode::Hybrid)
+        c.mode = Some(Mode::Hybrid);
     });
     add(1, 64_000, false, FrameDuration::Ms40, &|c| {
-        c.mode = Some(Mode::Celt)
+        c.mode = Some(Mode::Celt);
     });
     add(1, 20_000, true, FrameDuration::Ms20, &|c| {
         c.signal = Signal::Voice;
