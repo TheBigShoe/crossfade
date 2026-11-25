@@ -60,7 +60,7 @@ fn typing_an_m4a_name_switches_to_it() {
     }
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .oga, .ogg, .aiff and .m4a files."
+        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
     );
 }
 
@@ -152,4 +152,48 @@ fn a_layout_alac_cannot_store_is_a_problem_in_plain_words() {
                 .into()
         )]
     );
+}
+
+#[test]
+fn every_writable_extension_maps_to_its_own_container() {
+    use crossfade_graph::writable_extensions;
+    let mut s = sheet("in.wav", SampleFormat::S16);
+    for ext in writable_extensions() {
+        let want = match *ext {
+            "wav" => Container::Wav,
+            "flac" => Container::Flac,
+            "aiff" | "aif" | "aifc" => Container::Aiff,
+            "oga" | "ogg" => Container::OggFlac,
+            "m4a" | "mp4" | "m4b" => Container::Mp4,
+            other => panic!("{other} has no container here: add it to this test and the sheet"),
+        };
+        s.set_container(Container::Wav);
+        s.set_output(format!("x.{ext}"));
+        assert_eq!(s.container(), want, "{ext}");
+        assert!(s.problems(&nothing_exists).is_empty(), "{ext}");
+    }
+}
+
+#[test]
+fn the_bad_extension_message_lists_every_writable_extension() {
+    let message = Problem::Extension.message();
+    for ext in crossfade_graph::writable_extensions() {
+        assert!(
+            message.contains(&format!(".{ext}")),
+            "{ext} missing from {message}"
+        );
+    }
+}
+
+#[test]
+fn an_m4a_job_plans_alac_in_mp4() {
+    let mut s = sheet("in.wav", SampleFormat::S16);
+    s.apply_preset("alac");
+    let request = s.build(&nothing_exists).unwrap();
+    let out = &request.job.outputs[0];
+    let mut io = wav_io("in.wav", SampleFormat::S16, ChannelLayout::stereo());
+    let stream = entry_of(&mut io, "in.wav").stream().unwrap().clone();
+    let plan = crossfade_graph::validate(&stream, &out.path, &out.audio).unwrap();
+    assert_eq!(plan.output_format, crossfade_format::FormatId::Mp4);
+    assert_eq!(plan.output.codec, crossfade_core::CodecId::Alac);
 }

@@ -330,7 +330,7 @@ fn typing_a_writable_extension_switches_the_container() {
     assert_eq!(s.problems(&nothing_exists), [Problem::Extension]);
     assert_eq!(
         Problem::Extension.message(),
-        "Crossfade can save .wav, .flac, .oga, .ogg, .aiff and .m4a files."
+        "Crossfade can save .wav, .flac, .aiff, .aif, .aifc, .oga, .ogg, .m4a, .mp4 and .m4b files."
     );
 }
 

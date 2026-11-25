@@ -81,7 +81,8 @@ impl Container {
             "flac" => Some(Self::Flac),
             "oga" | "ogg" => Some(Self::OggFlac),
             "m4a" | "mp4" | "m4b" => Some(Self::Mp4),
-            _ => Some(Self::Aiff),
+            "aiff" | "aif" | "aifc" => Some(Self::Aiff),
+            _ => None,
         }
     }
 }
@@ -185,7 +186,12 @@ impl Problem {
                 "That file already exists. Turn on replace to overwrite it.".into()
             }
             Self::Extension => {
-                "Crossfade can save .wav, .flac, .oga, .ogg, .aiff and .m4a files.".into()
+                let all: Vec<String> = writable_extensions()
+                    .iter()
+                    .map(|e| format!(".{e}"))
+                    .collect();
+                let (last, rest) = all.split_last().expect("some extension is writable");
+                format!("Crossfade can save {} and {last} files.", rest.join(", "))
             }
             Self::Source(text) | Self::Adjust { message: text, .. } => text.clone(),
         }
