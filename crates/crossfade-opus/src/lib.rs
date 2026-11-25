@@ -1,7 +1,8 @@
-//! Opus decoding (RFC 6716, updated by RFC 8251) in pure Rust, depending only on `libm`.
+//! Opus (RFC 6716, updated by RFC 8251) in pure Rust, depending only on `libm`: the
+//! [`Decoder`] (SILK, CELT, hybrid, multistream) and the [`Encoder`] (CELT-only for now).
 //!
-//! A port of the reference decoder: see the crate's `COPYING` (3-clause BSD) for the notice
-//! and the royalty-free patent licences that cover Opus.
+//! A port of the reference decoder and of libopus: see the crate's `COPYING` (3-clause BSD)
+//! for the notice and the royalty-free patent licences that cover Opus.
 #![forbid(unsafe_code)]
 
 mod celt;

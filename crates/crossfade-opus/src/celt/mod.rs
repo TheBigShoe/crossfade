@@ -40,6 +40,17 @@
 //!   (with `out` left in any state: the top level truncates). The range decoder's error flag
 //!   is not an error by itself: the reference carries on.
 //!
+//! # The encoder
+//!
+//! [`CeltEncoder`] (`encoder.rs`, a port of libopus 1.5.2's `celt_encoder.c`) codes what the
+//! decoder reads, symbol for symbol, with the same budgets; its band shapes (`bands_enc.rs`),
+//! energies (`quant_bands.rs`), PVQ (`vq.rs`, `cwrs.rs`), allocation (`rate.rs`'s
+//! `AllocCoder`, whose decisions the decoder reads and the encoder makes), transforms
+//! (`mdct.rs`, `fft.rs`: the forward twins, from libopus 1.1, whose tables these are) and
+//! pitch analysis (`pitch.rs`) sit beside the decoder's. Its contract with the top level is in
+//! `encoder.rs`. Its analysis need not match libopus bit for bit, only be the same bits on
+//! every platform: the decoder is the judge of what it writes.
+//!
 //! # Arithmetic
 //!
 //! Port the FLOAT build of libopus (`opus_val16`/`opus_val32`/`celt_sig` are `f32`, `celt_norm`
