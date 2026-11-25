@@ -45,7 +45,7 @@ const SPREAD_AGGRESSIVE: i32 = 3;
 /// The reference encoder's default (`OPUS_SET_COMPLEXITY(9)` in `opus_encoder_init`): every
 /// CELT tool is on from 8.
 const COMPLEXITY: i32 = 9;
-/// The input's depth the float API claims (`lsb_depth`).
+/// The input's depth `dynalloc_analysis` assumes (`lsb_depth`).
 const LSB_DEPTH: i32 = 24;
 /// Samples by which CELT's output lags its input (`Fs/400`, the overlap).
 pub(crate) const DELAY: usize = OVERLAP;
@@ -89,6 +89,8 @@ pub(crate) struct CeltEncoder {
     force_intra: bool,
     /// `OPUS_SET_LFE`: a low-frequency effects channel, everything in the first bands.
     lfe: bool,
+    /// `OPUS_SET_LSB_DEPTH`: the input's depth in bits, 8 to 24.
+    lsb_depth: i32,
     // From here on, what OPUS_RESET_STATE clears.
     rng: u32,
     spread_decision: i32,
@@ -1092,6 +1094,7 @@ impl CeltEncoder {
             disable_pf: false,
             force_intra: false,
             lfe: false,
+            lsb_depth: 24,
             rng: 0,
             spread_decision: SPREAD_NORMAL,
             delayed_intra: 1.0,
@@ -1129,6 +1132,7 @@ impl CeltEncoder {
             disable_pf: self.disable_pf,
             force_intra: self.force_intra,
             lfe: self.lfe,
+            lsb_depth: self.lsb_depth,
             ..Self::new(self.channels)
         };
     }
@@ -1149,6 +1153,11 @@ impl CeltEncoder {
     /// other channels of a surround mix mask (log2 units).
     pub(crate) fn set_energy_mask(&mut self, mask: Option<&[f32; 2 * NB_EBANDS]>) {
         self.energy_mask = mask.copied();
+    }
+
+    /// `OPUS_SET_LSB_DEPTH`: the input's depth in bits, 8 to 24.
+    pub(crate) fn set_lsb_depth(&mut self, bits: u8) {
+        self.lsb_depth = i32::from(bits.clamp(8, 24));
     }
 
     /// `OPUS_SET_LFE`.
@@ -1366,7 +1375,7 @@ impl CeltEncoder {
         let mut sample_max = self.overlap_max.max(maxabs(&pcm[..head]));
         self.overlap_max = maxabs(&pcm[head..head + c * OVERLAP]);
         sample_max = sample_max.max(self.overlap_max);
-        let mut silence = sample_max <= 1.0 / (1 << LSB_DEPTH) as f32;
+        let mut silence = sample_max <= 1.0 / (1 << self.lsb_depth) as f32;
         if tell == 1 {
             enc.enc_bit_logp(silence, 15);
         } else {

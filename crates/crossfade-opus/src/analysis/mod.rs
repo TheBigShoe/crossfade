@@ -233,13 +233,25 @@ impl TonalityAnalysis {
     /// `run_analysis` for 48 kHz input: analyses `pcm` (`frame_size` samples of `channels`,
     /// interleaved, full scale 1.0, mixed down to mono) in 20 ms steps, then reads the
     /// result for the frame.
-    pub(crate) fn run(&mut self, pcm: &[f32], channels: usize, frame_size: usize) -> AnalysisInfo {
+    pub(crate) fn run(
+        &mut self,
+        pcm: &[f32],
+        channels: usize,
+        frame_size: usize,
+        lsb_depth: u8,
+    ) -> AnalysisInfo {
         let analysis_frame_size = frame_size - (frame_size & 1);
         let analysis_frame_size = analysis_frame_size.min((DETECT_SIZE - 5) * 960);
         let mut pcm_len = analysis_frame_size as i64 - self.analysis_offset as i64;
         let mut offset = self.analysis_offset;
         while pcm_len > 0 {
-            self.tonality_analysis(pcm, channels, (pcm_len as usize).min(960), offset);
+            self.tonality_analysis(
+                pcm,
+                channels,
+                (pcm_len as usize).min(960),
+                offset,
+                i32::from(lsb_depth),
+            );
             offset += 960;
             pcm_len -= 960;
         }
@@ -285,7 +297,14 @@ impl TonalityAnalysis {
 
     /// `tonality_analysis`: buffers `len` samples (at 48 kHz) of `pcm` from `offset`, and
     /// analyses a frame once 30 ms (at 24 kHz) are in.
-    fn tonality_analysis(&mut self, pcm: &[f32], channels: usize, len: usize, offset: usize) {
+    fn tonality_analysis(
+        &mut self,
+        pcm: &[f32],
+        channels: usize,
+        len: usize,
+        offset: usize,
+        lsb_depth: i32,
+    ) {
         const N: usize = 480;
         const N2: usize = 240;
         if !self.initialized {
@@ -316,7 +335,7 @@ impl TonalityAnalysis {
         }
 
         let sample_max = maxabs(&self.inmem);
-        let is_silence = sample_max <= 1.0 / (1 << LSB_DEPTH) as f32;
+        let is_silence = sample_max <= 1.0 / (1 << lsb_depth) as f32;
 
         let mut input = [Cpx::default(); N];
         for i in 0..N2 {
