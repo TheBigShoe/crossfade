@@ -49,14 +49,37 @@ impl Cfg {
 pub(super) struct Coded {
     pub(super) packet: Vec<u8>,
     pub(super) rng: u32,
+    /// The frame overran its budget (as libopus's can, near the smallest budgets it gives
+    /// SILK) and is sent as a TOC byte alone, which a decoder conceals.
+    pub(super) overrun: bool,
 }
 
-/// Encodes `pcm` (48 kHz, interleaved) packet by packet as SILK-only Opus packets.
+/// The packet's byte budget, as libopus's Opus layer sets it: the bitrate's share in CBR,
+/// the largest packet otherwise. libopus never asks SILK for less than about 6 kb/s per
+/// channel (more for 10 ms frames, and its bandwidth choice wants more for MB and WB): at
+/// smaller budgets its own encoder can overrun the packet. The budget stays above that.
+pub(super) fn max_bytes(cfg: Cfg) -> usize {
+    if cfg.cbr {
+        let per_channel = match cfg.khz {
+            8 => 6000,
+            12 => 8000,
+            _ => 10000,
+        };
+        let floor = per_channel * if cfg.ms == 10 { 3 } else { 2 } / 2 * cfg.channels as i32;
+        let floor_bytes = (floor * cfg.ms + 7999) / 8000;
+        (cfg.bitrate * cfg.ms / 8000).max(floor_bytes).min(1275) as usize
+    } else {
+        1275
+    }
+}
+
+/// Encodes `pcm` (48 kHz, interleaved) packet by packet as SILK-only Opus packets (CBR ones
+/// not padded to their budget).
 pub(super) fn encode(cfg: Cfg, pcm: &[i16]) -> Vec<Coded> {
     let mut e = SilkEncoder::new();
     let mut c = cfg.control();
     let n = 48 * cfg.ms as usize * cfg.channels;
-    let max_bytes = 1275usize;
+    let max_bytes = max_bytes(cfg);
     pcm.chunks_exact(n)
         .map(|frame| {
             let mut enc = RangeEncoder::new(max_bytes - 1);
@@ -67,11 +90,16 @@ pub(super) fn encode(cfg: Cfg, pcm: &[i16]) -> Vec<Coded> {
             let nb = ((enc.tell() + 7) >> 3) as usize;
             let rng = enc.rng();
             let mut packet = vec![cfg.toc(c.internal_sample_rate)];
-            if bytes > 0 {
+            let overrun = nb > max_bytes - 1;
+            if bytes > 0 && !overrun {
                 let body = enc.done().expect("fits");
                 packet.extend_from_slice(&body[..nb]);
             }
-            Coded { packet, rng }
+            Coded {
+                packet,
+                rng,
+                overrun,
+            }
         })
         .collect()
 }
@@ -369,6 +397,178 @@ proptest::proptest! {
         let len = 3 * 48 * ms as usize * channels;
         let x = random_input(seed, shape, amp, len);
         let coded = encode(cfg, &x);
+        // Only a CBR budget can be overrun.
+        proptest::prop_assert!(cbr || coded.iter().all(|c| !c.overrun));
         decode_checked(cfg, &coded);
+    }
+}
+
+/// The delay (in samples at 48 kHz) that best lines `out` up with `x`, and the SNR and
+/// segmental SNR (20 ms segments, each clamped to -10..35 dB) after it, in dB, skipping the
+/// first 100 ms.
+pub(super) fn quality(x: &[i16], out: &[f32]) -> (usize, f64, f64) {
+    let y: Vec<f64> = out.iter().map(|&v| f64::from(v) * 32768.0).collect();
+    let skip = 4800;
+    let n = x.len().min(y.len()) - 1000;
+    let mut best = (0, f64::MIN);
+    for d in 0..600 {
+        let c: f64 = (skip..n).map(|i| f64::from(x[i]) * y[i + d]).sum();
+        if c > best.1 {
+            best = (d, c);
+        }
+    }
+    let d = best.0;
+    let (mut sig, mut err) = (0.0, 0.0);
+    let mut seg = Vec::new();
+    for s in (skip..n - 960).step_by(960) {
+        let (mut ss, mut ee) = (0.0, 0.0);
+        for i in s..s + 960 {
+            let e = f64::from(x[i]) - y[i + d];
+            ss += f64::from(x[i]) * f64::from(x[i]);
+            ee += e * e;
+        }
+        sig += ss;
+        err += ee;
+        if ss > 1e3 {
+            seg.push((10.0 * libm::log10(ss / ee.max(1e-9))).clamp(-10.0, 35.0));
+        }
+    }
+    let snr = 10.0 * libm::log10(sig / err.max(1e-9));
+    let segsnr = seg.iter().sum::<f64>() / seg.len().max(1) as f64;
+    (d, snr, segsnr)
+}
+
+#[test]
+#[ignore]
+fn measure_quality_and_rate() {
+    let len = 48_000 * 4;
+    let x = voiced(len, 140.0, 12000.0);
+    for (khz, ms, bitrate) in [
+        (8, 20, 8000),
+        (8, 20, 12000),
+        (12, 20, 12000),
+        (12, 20, 16000),
+        (16, 20, 12000),
+        (16, 20, 16000),
+        (16, 20, 24000),
+        (16, 20, 32000),
+        (16, 20, 40000),
+        (16, 60, 24000),
+        (16, 10, 24000),
+    ] {
+        for cbr in [false, true] {
+            let cfg = Cfg {
+                channels: 1,
+                khz,
+                ms,
+                bitrate,
+                complexity: 10,
+                cbr,
+            };
+            let coded = encode(cfg, &x);
+            let out = decode_checked(cfg, &coded);
+            let (d, snr, seg) = quality(&x, &out);
+            let bytes: usize = coded.iter().map(|c| c.packet.len()).sum();
+            let kbps = bytes as f64 * 8.0 / (len as f64 / 48_000.0) / 1000.0;
+            let (mn, mx) = coded
+                .iter()
+                .map(|c| c.packet.len())
+                .fold((usize::MAX, 0), |(a, b), l| (a.min(l), b.max(l)));
+            eprintln!(
+                "{khz} kHz {ms} ms {bitrate} cbr {cbr}: delay {d} snr {snr:.1} seg {seg:.1} rate {kbps:.2} kb/s packets {mn}..{mx}"
+            );
+        }
+    }
+}
+
+/// Voiced-speech-like input decodes close to the input, the more so the higher the rate:
+/// segmental SNR floors, measured (complexity 10, VBR) with about 2.5 dB of margin.
+#[test]
+fn voiced_input_decodes_above_quality_floors() {
+    let len = 48_000 * 2;
+    let x = voiced(len, 140.0, 12000.0);
+    let mut last = f64::MIN;
+    for (khz, bitrate, floor) in [
+        (8, 8000, 9.0),
+        (12, 16000, 12.5),
+        (16, 24000, 15.0),
+        (16, 40000, 19.5),
+    ] {
+        let cfg = Cfg {
+            channels: 1,
+            khz,
+            ms: 20,
+            bitrate,
+            complexity: 10,
+            cbr: false,
+        };
+        let out = decode_checked(cfg, &encode(cfg, &x));
+        let (delay, _, seg) = quality(&x, &out);
+        assert!((300..=320).contains(&delay), "{cfg:?}: delay {delay}");
+        assert!(seg > floor, "{cfg:?}: segmental SNR {seg:.1} dB");
+        if khz == 16 {
+            assert!(seg > last, "{cfg:?}: {seg:.1} dB, not above {last:.1}");
+            last = seg;
+        }
+    }
+}
+
+/// CBR fills each 20 ms packet's budget to within 15 % without exceeding it; VBR spends
+/// less on a predictable signal and more on noise, around the target.
+#[test]
+fn packet_sizes_track_the_bitrate() {
+    let len = 48_000 * 2;
+    let voice = voiced(len, 140.0, 12000.0);
+    let hiss = noise(len, 21, 6000);
+    for (khz, bitrate) in [(8, 8000), (12, 12000), (16, 16000), (16, 32000)] {
+        let cfg = Cfg {
+            channels: 1,
+            khz,
+            ms: 20,
+            bitrate,
+            complexity: 9,
+            cbr: true,
+        };
+        let budget = max_bytes(cfg);
+        for x in [&voice, &hiss] {
+            let coded = encode(cfg, x);
+            decode_checked(cfg, &coded);
+            let sizes: Vec<usize> = coded.iter().skip(5).map(|c| c.packet.len()).collect();
+            let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+            assert!(
+                sizes.iter().all(|&s| s <= budget),
+                "{cfg:?}: {sizes:?} over {budget}"
+            );
+            assert!(
+                mean > 0.85 * budget as f64,
+                "{cfg:?}: mean {mean:.1} of {budget}"
+            );
+        }
+    }
+    for (khz, bitrate) in [(8, 10000), (16, 24000)] {
+        let cfg = Cfg {
+            channels: 1,
+            khz,
+            ms: 20,
+            bitrate,
+            complexity: 9,
+            cbr: false,
+        };
+        let rate = |x: &[i16]| {
+            let coded = encode(cfg, x);
+            decode_checked(cfg, &coded);
+            let bytes: usize = coded.iter().map(|c| c.packet.len()).sum();
+            bytes as f64 * 8.0 / (x.len() as f64 / 48_000.0)
+        };
+        let (rv, rn) = (rate(&voice), rate(&hiss));
+        let target = f64::from(bitrate);
+        assert!(
+            rv > 0.35 * target && rv < target,
+            "{cfg:?}: voice at {rv:.0} b/s"
+        );
+        assert!(
+            rn > 0.75 * target && rn < 1.4 * target,
+            "{cfg:?}: noise at {rn:.0} b/s"
+        );
     }
 }
