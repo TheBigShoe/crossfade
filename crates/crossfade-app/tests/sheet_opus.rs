@@ -212,10 +212,10 @@ fn a_surround_source_that_is_not_opuss_is_refused_in_words_that_name_no_flag() {
     let [Problem::Source(text)] = problems.as_slice() else {
         panic!("{problems:?}");
     };
-    assert_eq!(
-        text,
-        "Opus holds at most 8 channels, got 9. Choose Mono or Stereo under Channels."
-    );
+    // Nine unlabelled channels have no standard mix to stereo, so no choice is advised.
+    assert_eq!(text, "Opus holds at most 8 channels, got 9.");
+    s.set_channels(parse_channels("stereo").ok());
+    assert!(!s.problems(&nothing_exists).is_empty());
 }
 
 #[test]

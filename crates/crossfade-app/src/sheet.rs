@@ -867,6 +867,27 @@ impl ConvertSheet {
         Some(parts.join(" \u{b7} "))
     }
 
+    /// `problem`, then the Channels choices that plan cleanly with it, when there are any.
+    fn with_channel_advice(&self, problem: String) -> String {
+        let ways: Vec<String> = self
+            .channel_options()
+            .into_iter()
+            .flatten()
+            .filter(|c| {
+                let audio = AudioSettings {
+                    channels: Some(c.clone()),
+                    ..self.audio()
+                };
+                self.check(self.container, &audio).is_ok()
+            })
+            .map(|c| Self::channel_label(&Some(c)))
+            .collect();
+        if ways.is_empty() {
+            return problem;
+        }
+        format!("{problem} Choose {} under Channels.", ways.join(" or "))
+    }
+
     fn engine_problem(&self) -> Option<Problem> {
         let error = self.check(self.container, &self.audio()).err()?;
         let what = match error {
@@ -877,7 +898,7 @@ impl ConvertSheet {
         let channels = stream.audio.layout().channels();
         let text = if what.starts_with("opus stores") || what.starts_with("opus holds at most") {
             let problem = what.split("; ").next().unwrap_or(&what);
-            format!("{} Choose Mono or Stereo under Channels.", plain(problem))
+            self.with_channel_advice(plain(problem))
         } else if what.contains("at most 8 channels") {
             let name = if self.container == Container::Mp4 {
                 "Apple Lossless"
@@ -888,7 +909,7 @@ impl ConvertSheet {
         } else if what.starts_with("alac stores") {
             // The rest is advice about a matrix, which the sheet has no way to give.
             let problem = what.split("; ").next().unwrap_or(&what);
-            plain(&problem.replacen("alac", "Apple Lossless", 1))
+            self.with_channel_advice(plain(&problem.replacen("alac", "Apple Lossless", 1)))
         } else {
             plain(&what.replacen("alac", "Apple Lossless", 1))
         };
