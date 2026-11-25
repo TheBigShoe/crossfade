@@ -234,6 +234,11 @@ pub(super) fn parse(ilst: &[u8]) -> Metadata {
     meta
 }
 
+/// An `ilst` body holding `tags`, the inverse of [`parse`].
+pub(super) fn write(_tags: &Tags) -> Result<Vec<u8>, Error> {
+    Ok(Vec::new())
+}
+
 /// The `ilst` inside a `meta` body, which is a full box in MP4 and a plain one in QuickTime.
 pub(super) fn in_meta(meta: &[u8]) -> Result<Option<&[u8]>, Error> {
     let children = match meta.get(4..8) {

@@ -670,6 +670,72 @@ fn ilst_items_map_onto_the_shared_tag_names() {
     );
 }
 
+fn tags_of(pairs: &[(&str, &str)]) -> Tags {
+    let mut t = Tags::new();
+    for (k, v) in pairs {
+        t.push(*k, *v);
+    }
+    t
+}
+
+#[test]
+fn written_ilst_items_read_back_as_the_same_tags() {
+    let tags = tags_of(&[
+        ("TITLE", "Title"),
+        ("ARTIST", "Artist"),
+        ("ARTIST", "Second Artist"),
+        ("ALBUMARTIST", "Album Artist"),
+        ("ALBUM", "Album"),
+        ("DATE", "2026"),
+        ("GENRE", "Ambient"),
+        ("TRACKNUMBER", "3"),
+        ("TRACKTOTAL", "12"),
+        ("DISCNUMBER", "1"),
+        ("DISCTOTAL", "2"),
+        ("COMMENT", "Comment \u{fc}n\u{ef}"),
+        ("COMPOSER", "Composer"),
+        ("ENCODER", "crossfade"),
+        ("REPLAYGAIN_TRACK_GAIN", "-6.5 dB"),
+    ]);
+    let ilst = ilst::write(&tags).unwrap();
+    assert_eq!(ilst::parse(&ilst).tags, tags);
+}
+
+#[test]
+fn ilst_writing_keeps_what_the_reader_would_misread_as_free_form_items() {
+    // Values the 16-bit track and disc fields cannot hold travel as free-form items, a name in
+    // another case reads back in the canonical one, and a total alone is a pair with number 0.
+    let tags = tags_of(&[
+        ("TRACKNUMBER", "3/12"),
+        ("TRACKTOTAL", "70000"),
+        ("Title", "T"),
+        ("DISCTOTAL", "4"),
+    ]);
+    let got = ilst::parse(&ilst::write(&tags).unwrap()).tags;
+    let got: Vec<(&str, &str)> = got
+        .iter()
+        .map(|t| (t.key.as_str(), t.value.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("TRACKNUMBER", "3/12"),
+            ("TRACKTOTAL", "70000"),
+            ("TITLE", "T"),
+            ("DISCTOTAL", "4"),
+        ]
+    );
+}
+
+#[test]
+fn ilst_writing_drops_what_the_reader_could_not_give_back() {
+    // Empty values and names are not items; `iTunSMPB` is the timeline's, not a tag's.
+    let tags = tags_of(&[("TITLE", ""), ("", "x"), ("iTunSMPB", " 0 0 0 0"), ("A", "b")]);
+    let got = ilst::parse(&ilst::write(&tags).unwrap()).tags;
+    assert_eq!(got, tags_of(&[("A", "b")]));
+    assert!(ilst::write(&Tags::new()).unwrap().is_empty());
+}
+
 #[test]
 fn a_quicktime_meta_without_version_is_read_too() {
     let hdlr = full(b"hdlr", 0, &cat(&[&[0; 4], b"mdirappl", &[0; 9]]));
