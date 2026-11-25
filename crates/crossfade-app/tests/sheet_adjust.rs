@@ -173,9 +173,10 @@ fn each_level_mode_keeps_its_own_value() {
     s.set_level_mode(LevelMode::Gain);
     s.set_adjust_text(AdjustField::Level, "-3".into());
     s.set_level_mode(LevelMode::Normalize);
-    assert_eq!(s.adjust_text(AdjustField::Level), "");
-    assert!(filters(&s).is_empty());
-    s.set_adjust_text(AdjustField::Level, "-16".into());
+    // Not the gain's -3: its own default.
+    assert_eq!(s.adjust_text(AdjustField::Level), "-16");
+    assert_eq!(filters(&s), ["normalize -16LUFS"]);
+    s.set_adjust_text(AdjustField::Level, "-14".into());
     s.set_level_mode(LevelMode::Gain);
     assert_eq!(s.adjust_text(AdjustField::Level), "-3");
     assert_eq!(filters(&s), ["gain -3dB"]);

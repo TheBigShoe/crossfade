@@ -146,7 +146,20 @@ fn signed(x: f64) -> String {
     }
 }
 
+/// What choosing Normalize fills in, as the field shows it: the loudness streaming services
+/// use, and what the placeholder used to suggest.
+const NORMALIZE_DEFAULT: &str = "-16";
+
 impl Adjust {
+    /// Choosing Normalize with no target of the person's own fills in the default, so what
+    /// the field shows is what runs.
+    pub(super) fn set_mode(&mut self, mode: LevelMode) {
+        self.mode = mode;
+        if mode == LevelMode::Normalize && self.normalize.trim().is_empty() {
+            self.normalize = NORMALIZE_DEFAULT.to_owned();
+        }
+    }
+
     fn slot(&mut self, field: AdjustField) -> &mut String {
         match (field, self.mode) {
             (AdjustField::Level, LevelMode::Normalize) => &mut self.normalize,
@@ -269,6 +282,17 @@ impl Adjust {
                 curve: Curve::Linear,
             };
             parts[1] = Some((spec, text));
+        }
+        // A level asked for with no value would otherwise do nothing, silently.
+        if self.mode != LevelMode::Off && self.value(AdjustField::Level).is_none() {
+            out.problems.push((
+                AdjustRow::Level,
+                match self.mode {
+                    LevelMode::Normalize => "Enter a loudness target in LUFS, such as -16.",
+                    _ => "Enter a gain in dB, such as -3.",
+                }
+                .to_owned(),
+            ));
         }
         if self.mode != LevelMode::Off
             && let Some([Some(v)]) =
