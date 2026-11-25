@@ -597,15 +597,19 @@ impl WaveformStrip {
         // Measures the lanes' place without painting: the pointer maths and the width.
         let measure = canvas(
             |bounds, _, _| bounds,
-            move |_, bounds, _, cx| {
+            move |_, bounds, window, cx| {
                 left.set(f32::from(bounds.origin.x));
                 let w = f32::from(bounds.size.width).floor() as u32;
-                entity.update(cx, |this, cx| {
-                    if this.strip.view().width() != w {
-                        this.strip.view_mut().set_width(w);
-                        cx.notify();
-                    }
+                let changed = entity.update(cx, |this, _| {
+                    let changed = this.strip.view().width() != w;
+                    this.strip.view_mut().set_width(w);
+                    changed
                 });
+                // This frame drew the old width, and a notify made while drawing schedules
+                // no frame (it showed on Linux as blank lanes until the pointer moved).
+                if changed {
+                    window.request_animation_frame();
+                }
             },
         )
         .absolute()
