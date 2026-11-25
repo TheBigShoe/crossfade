@@ -2,7 +2,7 @@
 //! float build at `OPUS_SET_LSB_DEPTH(16)` on the same kinds of signal).
 
 use super::modes_tests::modes;
-use super::tests::{config, encode_and_decode, signal};
+use super::tests::{config, digest, encode_and_decode, signal};
 use super::*;
 use crate::MultistreamEncoder;
 
@@ -85,11 +85,39 @@ fn celt_spends_less_on_a_quiet_signal_near_the_input_depth_noise_floor() {
     for depth in [24, 16] {
         let cfg = at_depth(depth, config(2, 128_000, true, FrameDuration::Ms20));
         let (packets, _) = encode_and_decode(&cfg, &pcm);
-        assert!(modes(&packets)
-            .iter()
-            .all(|&m| m == (Mode::Celt, Bandwidth::Full)));
+        assert!(
+            modes(&packets)
+                .iter()
+                .all(|&m| m == (Mode::Celt, Bandwidth::Full))
+        );
         totals.push(packets.iter().map(Vec::len).sum::<usize>() as f64);
     }
     let saving = 1.0 - totals[1] / totals[0];
     assert!(saving > 0.1, "{totals:?}");
+}
+
+#[test]
+fn the_same_input_at_16_bits_gives_the_same_bytes_on_every_platform() {
+    // Frozen, as the 24-bit digests: a change here changes the encoder's output.
+    let mut cases = vec![];
+    for (channels, kind, bitrate, scale) in [
+        (2u8, "music", 64_000, 1.0f32),
+        (2, "sweep", 128_000, 1e-3),
+        (1, "noise", 24_000, 1e-4),
+    ] {
+        let pcm: Vec<f32> = signal(kind, usize::from(channels), 0.5)
+            .iter()
+            .map(|v| v * scale)
+            .collect();
+        let cfg = at_depth(16, config(channels, bitrate, true, FrameDuration::Ms20));
+        cases.push(digest(&cfg, &pcm));
+    }
+    assert_eq!(
+        cases,
+        [
+            (5276, 12858322408569349528),
+            (6763, 6916008615797558991),
+            (501, 1910955883017304807)
+        ]
+    );
 }
