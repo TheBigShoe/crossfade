@@ -229,8 +229,9 @@ treat them as rough.
 
 ## Opus decoding
 
-No reference tool is installed here (`opusdec` is not), so there is nothing to race; the
-figures are ours alone, taken while a fuzzer ran on one core.
+The in-process and FLAC-output figures below were taken before a reference was available,
+on the Apple machine, while a fuzzer ran on one core. Against `opusdec` see the next
+section.
 
 - **In process**, one thread, best of 2 s of rounds (`cargo run --release -p crossfade-opus
   --example celt_bench -- <files>`), each RFC 8251 vector decoded to stereo: SILK-only 02,
@@ -242,6 +243,113 @@ figures are ours alone, taken while a fuzzer ran on one core.
   Ogg Opus by `--example opus_ogg`: testvector01 (29.5 s, CELT FB stereo) 0.09 s,
   testvector06 (25.0 s, hybrid FB) 0.06 s, testvector12 (26.6 s, SILK and hybrid mono)
   0.03 s.
+
+## Encoders and Opus decoding, on Linux x86-64
+
+Apple Lossless and Opus encoding, and Opus decoding, against `ffmpeg`, `opusenc` and
+`opusdec`. Everything in this section was measured on one machine, not the Apple M1 Max of
+the sections above, and is never to be compared with them.
+
+- Machine: Intel Xeon Processor @ 2.10 GHz, 4 cores (1 thread per core, AVX2 and AVX-512
+  available), 16 GB, a cloud VM; Linux 6.18.44; Rust 1.98.1, default release profile.
+- References: `opusenc`/`opusdec` from opus-tools 0.2 using libopus 1.4; `ffmpeg` 6.1.1
+  (libavcodec 60.31.102) with `-c:a alac`.
+- Crossfade at commit `f214835` (the scripts are the only later change).
+- Method as above: whole process against whole process, best of 11 runs interleaved, several
+  series, wall time in ms. Opus was encoded at 64 and 128 kbit/s (`--bitrate 64k`, `opusenc
+  --bitrate 64`; VBR, 20 ms frames, the defaults of both). The output of the decoders is a
+  16-bit WAV (`opusdec`'s default; Crossfade's, dithered).
+- The machine is a shared VM. It had no other load of ours, but across series its speed moved
+  by up to 10% (the reported steal time grew by about 6 s during one 4-minute series), both
+  tools' times together); so the ratios are firmer than the milliseconds. The fuzz run that
+  had been using two cores had ended before the first series; the 1-minute load was 0.4
+  before it and about 1 while any series ran (the script itself, one busy process).
+
+Signals ("music" is cut from the IETF FLAC test files, decoded by `crossfade` and joined end
+to end; it is whatever those files hold, not commercial music):
+
+| Name | Content |
+|---|---|
+| `music16` | 256.1 s, 16-bit, 44.1 kHz stereo: 20 of the 44.1 kHz stereo test files |
+| `music24` | 40.7 s, 24-bit, 96 kHz stereo (Opus converts it to 48 kHz first): the five 96 kHz files |
+| `bench16` | 60 s, 16-bit, 44.1 kHz stereo, synthetic: the same signal as the FLAC rows |
+
+### Encode
+
+Wall time in ms of each series' best of 11 (a, b, c, d are successive series; `-t1` is
+`--threads 1`). The table in `performance.md` takes the lowest of each column.
+
+| Output | Signal | crossfade a / b / c / d | crossfade `-t1` a / b / c / d | Reference a / b / c / d | Best ratio |
+|---|---|---|---|---|---|
+| Apple Lossless | `music16` | 6,009 / 6,120 / 6,668 / 6,338 | 5,987 / 6,177 / 6,502 / 6,398 | `ffmpeg` 1,634 / 1,651 / 1,877 / 1,801 | 3.68 |
+| Opus 64 kbit/s | `music16` | 3,232 / 3,474 / 3,567 / 3,627 | 4,125 / 4,378 / 4,379 / 4,317 | `opusenc` 2,924 / 3,156 / 3,190 / 3,089 | 1.11 |
+| Opus 128 kbit/s | `music16` | 3,978 / 4,192 / 4,233 / 4,330 | 4,938 / 4,950 / 5,088 / 5,180 | `opusenc` 3,507 / 3,620 / 3,452 / 3,654 | 1.15 |
+| Apple Lossless | `bench16` | 1,438 / 1,431 | 1,447 / 1,431 | `ffmpeg` 392 / 408 | 3.65 |
+| Opus 64 kbit/s | `bench16` | 738 / 775 | 963 / 947 | `opusenc` 691 / 679 | 1.09 |
+| Opus 128 kbit/s | `bench16` | 899 / 980 | 1,092 / 1,199 | `opusenc` 770 / 796 | 1.17 |
+| Apple Lossless, 24-bit | `music24` | 4,051 / 4,049 | 4,041 / 4,106 | `ffmpeg` 692 / 676 | 5.99 |
+| Opus 64 kbit/s | `music24` | 626 / 603 | 951 / 945 | `opusenc` 549 / 541 | 1.11 |
+| Opus 128 kbit/s | `music24` | 744 / 772 | 1,071 / 1,084 | `opusenc` 612 / 606 | 1.23 |
+
+"Best ratio" is Crossfade's best (default settings) over the reference's best, so above 1 is
+slower. Spread between series: Crossfade's Apple Lossless on `music16` 6,009 to 6,668 (11%);
+the ratio itself 3.5 to 3.7 across the four series. Opus 128 on `music16`: ratio 1.13, 1.16,
+1.23, 1.19 across them, so "9 to 23% slower" in `performance.md` is the range of the whole
+table, not noise on one row.
+
+Sizes (bytes; Opus with its bitrate in kbit/s over the signal's length):
+
+| Output | Signal | crossfade | reference |
+|---|---|---|---|
+| Apple Lossless | `music16` | 23,202,608 | 23,319,939 |
+| Apple Lossless | `bench16` | 6,923,701 | 7,030,012 |
+| Apple Lossless, 24-bit | `music24` | 16,507,781 | 16,648,327 |
+| Opus 64 kbit/s | `music16` | 2,291,686 (71.6) | 2,280,537 (71.2) |
+| Opus 128 kbit/s | `music16` | 4,445,369 (138.9) | 4,420,710 (138.1) |
+| Opus 64 kbit/s | `bench16` | 532,396 (71.0) | 529,840 (70.6) |
+| Opus 128 kbit/s | `bench16` | 1,014,070 (135.2) | 1,009,929 (134.7) |
+| Opus 64 kbit/s | `music24` | 338,203 (66.4) | 337,600 (66.3) |
+| Opus 128 kbit/s | `music24` | 681,960 (133.9) | 679,766 (133.5) |
+
+Apple Lossless: Crossfade's file is smaller by 0.5% (`music16`), 1.5% (`bench16`), 0.8%
+(`music24`). Opus: the two tools' sizes agree within 1%. File size is not a quality measure:
+no listening or quality comparison of the Opus outputs was made here.
+
+### Decode
+
+Opus file made by `opusenc --bitrate 128` from the signal, decoded to a 16-bit WAV. Best of
+11, wall ms.
+
+| Signal | crossfade | crossfade `-t1` | `opusdec` |
+|---|---|---|---|
+| `music16`, 256 s, series a | 1,019 | 1,005 | 2,271 |
+| `music16`, series b | 1,009 | 1,018 | 2,258 |
+| `bench16` repeated to 300 s | 1,269 | 1,292 | 2,620 |
+
+2.1 to 2.2 times faster than `opusdec`; the two Crossfade columns match.
+
+### Where the time goes, as far as it was measured
+
+User and system CPU time and wall time of the fastest of 5 runs on `music16`, from
+`getrusage` of the children (ms):
+
+| Command | Wall | User | System |
+|---|---|---|---|
+| `crossfade` Apple Lossless | 6,019 | 5,978 | 16 |
+| `crossfade` Apple Lossless, `--threads 1` | 6,299 | 6,232 | 8 |
+| `ffmpeg` Apple Lossless | 1,756 | 1,346 | 342 |
+| `crossfade` Opus 128 | 4,227 | 5,428 | 58 |
+| `crossfade` Opus 128, `--threads 1` | 5,003 | 4,986 | 24 |
+| `opusenc` 128 | 3,678 | 3,619 | 28 |
+| `crossfade` WAV to WAV, no change | 18 | 12 | 21 |
+
+What this says and no more: Apple Lossless is one busy thread throughout, and reading and
+writing the files costs almost nothing (the last row), so the 6 s is the encoder's own
+computation; `ffmpeg` does the same job in a quarter of the CPU time. For Opus, Crossfade
+with its defaults uses about 0.4 s more CPU than on one thread, and finishes 0.8 s sooner,
+so some of its work does overlap; even so it takes more CPU than `opusenc` on one thread (5.0 s
+against 3.6 s). Which stage of either encoder is responsible has not been profiled, and
+nothing here is a claim about it.
 
 ## MP3 decoding
 
@@ -417,6 +525,8 @@ working buffer when a chain only quantises.
 scripts/compare-with-flac.py                 # bench16 and bench24, levels 0, 5, 8
 scripts/compare-with-flac.py --all           # more synthetic signals
 scripts/compare-with-flac.py --reps 11 a.wav # your own files as well
+scripts/compare-encoders.py --reps 11 [a.wav] # Apple Lossless and Opus encode
+scripts/compare-decoders.py --reps 11 [a.wav] # MP3, AAC, ALAC and Opus decode
 ```
 
 The script builds the release binary, generates the synthetic signals, runs

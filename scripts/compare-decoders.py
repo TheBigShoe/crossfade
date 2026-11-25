@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Times `crossfade convert` decoding MP3, AAC and ALAC against the reference tools, whole
+"""Times `crossfade convert` decoding MP3, AAC, ALAC and Opus against the reference tools, whole
 process against whole process, and prints a Markdown table (see docs/performance.md).
 
     scripts/compare-decoders.py [--reps N] [--seconds S] [WAV]
 
 Builds the release `crossfade` binary with the `aac` feature, makes a test signal (the
 `flac_signals` example's `bench16`, repeated to S seconds) unless a 16-bit WAV is given,
-encodes it with `lame` and `afconvert`, and reports the best wall time of N interleaved
+encodes it with `lame`, `afconvert` and `opusenc`, and reports the best wall time of N interleaved
 runs of each decoder writing a 16-bit WAV.
 
 A development aid, not a test. References: `mpg123` for MP3, macOS's `afconvert` for MP3,
-AAC and ALAC; `lame` only makes the MP3 file. A missing tool leaves its rows or columns
+AAC and ALAC; `opusdec` (opus-tools) for Opus; `lame` and `opusenc` only make the MP3 and
+Opus files. A missing tool leaves its rows or columns
 out. The numbers depend on the machine and on what else it is doing.
 """
 import argparse
@@ -81,9 +82,11 @@ def main():
     ap.add_argument("--seconds", type=int, default=300, help="length of the generated signal")
     ap.add_argument("wav", nargs="?", help="a 16-bit WAV to use instead of the generated signal")
     args = ap.parse_args()
-    lame, mpg123, afconvert = (shutil.which(t) for t in ("lame", "mpg123", "afconvert"))
-    if not (lame or afconvert):
-        sys.exit("neither lame nor afconvert found: nothing can make the test files")
+    lame, mpg123, afconvert, opusenc, opusdec = (
+        shutil.which(t) for t in ("lame", "mpg123", "afconvert", "opusenc", "opusdec")
+    )
+    if not (lame or afconvert or opusenc):
+        sys.exit("none of lame, afconvert and opusenc found: nothing can make the test files")
 
     subprocess.run(["cargo", "build", "--release", "-p", "crossfade-cli", "--features", "aac"], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -101,15 +104,19 @@ def main():
                 ("AAC-LC, 192 kbit/s, M4A", m4a, [afconvert, "-f", "m4af", "-d", "aac", "-b", "192000", wav, m4a], ["afconvert"]),
                 ("ALAC, M4A", alac, [afconvert, "-f", "m4af", "-d", "alac", wav, alac], ["afconvert"]),
             ]
+        if opusenc and opusdec:
+            opus = os.path.join(tmp, "in.opus")
+            cases.append(("Opus, 128 kbit/s (opusenc)", opus, [opusenc, "--quiet", "--bitrate", "128", wav, opus], ["opusdec"]))
         decoders = {
+            "opusdec": lambda src: [opusdec, "--quiet", src, ref] if opusdec else None,
             "mpg123": lambda src: [mpg123, "-q", "-w", ref, src] if mpg123 else None,
             "afconvert": lambda src: [afconvert, "-f", "WAVE", "-d", "LEI16", src, ref] if afconvert else None,
         }
 
         print(f"Signal: {describe(wav)}. Best of {args.reps} interleaved runs, wall time in ms,")
         print("each command decoding to a 16-bit WAV.\n")
-        print("| Input | crossfade | crossfade `--threads 1` | mpg123 | afconvert |")
-        print("|---|---|---|---|---|")
+        print("| Input | crossfade | crossfade `--threads 1` | mpg123 | afconvert | opusdec |")
+        print("|---|---|---|---|---|---|")
         for label, src, make, refs in cases:
             run(make)
             convert = [CROSSFADE, "convert", src, "-o", ours, "--force"]
@@ -118,8 +125,9 @@ def main():
                 convert + ["--threads", "1"],
                 decoders["mpg123"](src) if "mpg123" in refs else None,
                 decoders["afconvert"](src) if "afconvert" in refs else None,
+                decoders["opusdec"](src) if "opusdec" in refs else None,
             ], args.reps)
-            print(f"| {label} | {ms(t[0])} | {ms(t[1])} | {ms(t[2])} | {ms(t[3])} |")
+            print(f"| {label} | {ms(t[0])} | {ms(t[1])} | {ms(t[2])} | {ms(t[3])} | {ms(t[4])} |")
 
 
 if __name__ == "__main__":
