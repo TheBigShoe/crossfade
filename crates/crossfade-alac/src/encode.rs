@@ -31,6 +31,9 @@ const PARAMS: Params = Params {
     pb: PB as u32 * PB_FACTOR / 4,
     kb: KB as u32,
 };
+/// The mixes tried for a pair, Apple's: `res / 4` of the left channel in the first.
+const MIX_BITS: u32 = 2;
+const MAX_MIX_RES: i32 = 4;
 /// Passes over the start of a frame that let the coefficients settle before they are sent.
 const CONVERGE_PASSES: usize = 8;
 const CONVERGE_SHARE: usize = 32;
@@ -81,7 +84,12 @@ pub struct Encoder {
 #[derive(Debug, Clone)]
 struct Work {
     u: Vec<i32>,
+    v: Vec<i32>,
+    /// A pair's channels with their low bytes shifted off, and those bytes.
+    l: Vec<i32>,
+    r: Vec<i32>,
     low: Vec<u32>,
+    low_r: Vec<u32>,
     residual: Vec<i32>,
 }
 
@@ -125,7 +133,11 @@ impl Encoder {
             coefs: vec![[initial_coefs(); ORDERS.len()]; usize::from(config.channels)],
             work: Work {
                 u: vec![0; n],
+                v: vec![0; n],
+                l: vec![0; n],
+                r: vec![0; n],
                 low: vec![0; n],
+                low_r: vec![0; n],
                 residual: vec![0; n],
             },
         })
@@ -178,7 +190,7 @@ impl Encoder {
             w.put(3, tag);
             w.put(4, 0); // element instance tag
             if tag == CPE {
-                self.escape(&mut w, pcm, ch, 2, frames);
+                self.pair(&mut w, pcm, ch, frames);
                 ch += 2;
             } else {
                 self.mono(&mut w, pcm, ch, frames);
@@ -222,7 +234,9 @@ impl Encoder {
         let channels = usize::from(self.config.channels);
         let mut best: Option<(u64, u32, Coding)> = None;
         for &shift in mono_shifts(depth) {
-            let Work { u, low, residual } = &mut self.work;
+            let Work {
+                u, low, residual, ..
+            } = &mut self.work;
             split(
                 pcm,
                 channels,
@@ -255,7 +269,9 @@ impl Encoder {
         self.header(w, frames, shift, false);
         w.put(16, 0); // mixing parameters, unused by one channel
         put_predictor(w, &c);
-        let Work { u, low, residual } = &mut self.work;
+        let Work {
+            u, low, residual, ..
+        } = &mut self.work;
         let (u, low, residual) = (
             &mut u[..frames],
             &mut low[..frames],
@@ -273,6 +289,100 @@ impl Encoder {
         rice::encode(w, PARAMS, chan_bits, residual);
     }
 
+    /// Two channels (a channel pair element): the shift, the mix and the orders that code
+    /// smallest, or the samples as they are.
+    fn pair(&mut self, w: &mut BitWriter<'_>, pcm: &[i32], ch: usize, frames: usize) {
+        let depth = u32::from(self.config.bit_depth);
+        let channels = usize::from(self.config.channels);
+        // Header, the mixing bytes; then per shift its bytes and the two coded channels.
+        let header = self.header_bits(frames) + 16;
+        let mut best: Option<(u64, u32, i32, Coding, Coding)> = None;
+        for &shift in pair_shifts(depth) {
+            let Work {
+                u,
+                v,
+                l,
+                r,
+                low,
+                low_r,
+                residual,
+            } = &mut self.work;
+            let (u, v, l, r) = (
+                &mut u[..frames],
+                &mut v[..frames],
+                &mut l[..frames],
+                &mut r[..frames],
+            );
+            split(pcm, channels, ch, shift, l, low);
+            split(pcm, channels, ch + 1, shift, r, low_r);
+            // The side channel takes a bit more than the samples.
+            let chan_bits = depth - shift * 8 + 1;
+            let (from_u, from_v) = (&self.coefs[ch], &self.coefs[ch + 1]);
+            // The second channel is the right one unmixed, the difference when mixed.
+            let unmixed = search(r, from_v, chan_bits, residual);
+            mix(l, r, 1, u, v);
+            let mixed = search(v, from_v, chan_bits, residual);
+            let bits = header + u64::from(shift * 16) * frames as u64;
+            for res in 0..=MAX_MIX_RES {
+                mix(l, r, res, u, v);
+                let second = if res == 0 { unmixed } else { mixed };
+                let (Some(cv), Some(cu)) = (second, search(u, from_u, chan_bits, residual)) else {
+                    continue;
+                };
+                let total = bits + cu.bits + cv.bits;
+                if best.is_none_or(|(t, ..)| total < t) {
+                    best = Some((total, shift, res, cu, cv));
+                }
+            }
+        }
+        let escape = self.header_bits(frames) + u64::from(depth * 2) * frames as u64;
+        let Some((total, shift, res, cu, cv)) = best else {
+            self.escape(w, pcm, ch, 2, frames);
+            return;
+        };
+        (self.coefs[ch], self.coefs[ch + 1]) = (cu.after, cv.after);
+        if total >= escape {
+            self.escape(w, pcm, ch, 2, frames);
+            return;
+        }
+        self.header(w, frames, shift, false);
+        w.put(8, MIX_BITS);
+        w.put(8, res as u32);
+        put_predictor(w, &cu);
+        put_predictor(w, &cv);
+        let Work {
+            u,
+            v,
+            l,
+            r,
+            low,
+            low_r,
+            residual,
+        } = &mut self.work;
+        let (u, v, l, r) = (
+            &mut u[..frames],
+            &mut v[..frames],
+            &mut l[..frames],
+            &mut r[..frames],
+        );
+        let residual = &mut residual[..frames];
+        split(pcm, channels, ch, shift, l, low);
+        split(pcm, channels, ch + 1, shift, r, low_r);
+        if shift != 0 {
+            for (&a, &b) in low.iter().zip(low_r.iter()).take(frames) {
+                w.put(shift * 8, a);
+                w.put(shift * 8, b);
+            }
+        }
+        mix(l, r, res, u, v);
+        let chan_bits = depth - shift * 8 + 1;
+        for (x, c) in [(&*u, cu), (&*v, cv)] {
+            let mut coefs = c.sent;
+            predict(x, residual, &mut coefs[..c.order], chan_bits, DEN_SHIFT);
+            rice::encode(w, PARAMS, chan_bits, residual);
+        }
+    }
+
     /// An uncompressed element: every sample at the full depth, interleaved within a pair.
     fn escape(&self, w: &mut BitWriter<'_>, pcm: &[i32], ch: usize, width: usize, frames: usize) {
         self.header(w, frames, 0, true);
@@ -283,6 +393,21 @@ impl Encoder {
                 w.put(depth, s as u32);
             }
         }
+    }
+}
+
+/// Apple's generalised mid-side: `u = (res * l + (2^bits - res) * r) >> bits` and
+/// `v = l - r`, which the decoder undoes exactly; `res` 0 leaves the channels as they are.
+fn mix(l: &[i32], r: &[i32], res: i32, u: &mut [i32], v: &mut [i32]) {
+    if res == 0 {
+        u.copy_from_slice(l);
+        v.copy_from_slice(r);
+        return;
+    }
+    let rest = (1 << MIX_BITS) - res;
+    for (((u, v), &l), &r) in u.iter_mut().zip(v.iter_mut()).zip(l).zip(r) {
+        *u = (res * l + rest * r) >> MIX_BITS;
+        *v = l - r;
     }
 }
 
@@ -357,6 +482,16 @@ fn mono_shifts(depth: u32) -> &'static [u32] {
     match depth {
         24 => &[0, 1],
         32 => &[0, 1, 2],
+        _ => &[0],
+    }
+}
+
+/// The shifts worth trying for a pair. A 32-bit pair needs at least one byte off: its side
+/// channel would take 33 bits.
+fn pair_shifts(depth: u32) -> &'static [u32] {
+    match depth {
+        24 => &[0, 1],
+        32 => &[1, 2],
         _ => &[0],
     }
 }
