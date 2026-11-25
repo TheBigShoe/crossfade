@@ -2,6 +2,7 @@ import CrossfadeKit
 import SwiftUI
 
 /// The inspector's sections as they come, each row its label and friendly value.
+@MainActor
 struct InspectorSections: View {
     let sections: [InspectorSection]
 

@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// One licence's full text, as the app bundle carries it.
+@MainActor
 struct LicenceView: View {
     let licence: Licence
 

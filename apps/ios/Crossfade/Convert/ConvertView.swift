@@ -4,6 +4,7 @@ import SwiftUI
 /// The convert form, drawn entirely from the sheet's state: each row as the state shows,
 /// hides, enables and fills it; problems and notes in the library's words; the equivalent
 /// command line; Add to Queue only while the sheet says it can queue.
+@MainActor
 struct ConvertView: View {
     let app: AppModel
     @State private var model: ConvertModel

@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// About Crossfade in the library's words, and the licences the app carries.
+@MainActor
 struct AboutView: View {
     let model: AboutModel
     @Environment(\.dismiss) private var dismiss

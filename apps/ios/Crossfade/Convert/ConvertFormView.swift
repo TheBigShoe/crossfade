@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// The form's sections. Every row comes from `form`; every edit goes to `model.send`.
+@MainActor
 struct ConvertFormView: View {
     let form: ConvertForm
     let model: ConvertModel

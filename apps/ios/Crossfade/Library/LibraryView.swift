@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// The files the person brought in, each with the inspector's line or its problem.
+@MainActor
 struct LibraryView: View {
     let app: AppModel
     @Binding var showingImporter: Bool

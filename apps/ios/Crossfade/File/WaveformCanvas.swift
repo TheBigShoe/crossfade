@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Draws waveform lanes, one column per point: a bar from each column's minimum to its
 /// maximum. Columns not analysed yet (NaN) are left empty.
+@MainActor
 struct WaveformCanvas: View {
     let lanes: [WaveColumns]
     /// The analysis's revision, so a new one redraws even when the lanes compare equal.

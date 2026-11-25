@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The conversions: progress, cancel, retry, remove, clear finished; a finished file can be
 /// shared, shown in Files or added to the library.
+@MainActor
 struct QueueView: View {
     let app: AppModel
     @Environment(\.dismiss) private var dismiss

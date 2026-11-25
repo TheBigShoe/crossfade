@@ -4,6 +4,7 @@ import UIKit
 
 /// One job: its output's name, its state in words, progress while it runs, the engine's whole
 /// message if it failed, and the actions its state allows.
+@MainActor
 struct QueueRowView: View {
     let row: QueueRow
     let app: AppModel

@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// The toolbar's way to the queue, with how many jobs are still to do.
+@MainActor
 struct QueueButton: View {
     let queue: QueueModel
     let action: () -> Void

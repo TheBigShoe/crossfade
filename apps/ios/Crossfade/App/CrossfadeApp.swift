@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 @main
+@MainActor
 struct CrossfadeApp: App {
     @State private var app: AppModel
 

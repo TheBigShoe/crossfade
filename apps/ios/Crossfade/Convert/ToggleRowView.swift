@@ -3,6 +3,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// A switch row, shown and enabled as the sheet says.
+@MainActor
 struct ToggleRowView: View {
     let row: ToggleRow
     let send: (SheetChange) -> Void

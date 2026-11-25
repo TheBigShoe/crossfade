@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Where the file goes: a name in the app's folder (shown in Files as On My iPhone ›
 /// Crossfade), and whether an existing file may be replaced.
+@MainActor
 struct OutputSection: View {
     let form: ConvertForm
     let model: ConvertModel

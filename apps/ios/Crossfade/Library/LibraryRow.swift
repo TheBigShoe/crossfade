@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// One file: its name, and the inspector's summary or why it cannot be read.
+@MainActor
 struct LibraryRow: View {
     let item: LibraryItem
 

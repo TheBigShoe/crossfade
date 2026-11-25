@@ -3,6 +3,7 @@ import SwiftUI
 
 /// One file: the waveform as the hero, the transport, the loudness line, and the inspector's
 /// sections as a grouped list.
+@MainActor
 struct FileView: View {
     let app: AppModel
     let item: LibraryItem

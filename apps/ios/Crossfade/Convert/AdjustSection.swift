@@ -4,6 +4,7 @@ import SwiftUI
 
 /// Level, trim and fade. Open and closed as the sheet holds it; the line under it is the
 /// sheet's processing note: what will be written, or why the controls are off.
+@MainActor
 struct AdjustSection: View {
     let adjust: AdjustForm
     let processingNote: String?

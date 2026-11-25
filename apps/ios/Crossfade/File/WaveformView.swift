@@ -5,6 +5,7 @@ import SwiftUI
 /// The waveform: one lane per channel (a combined lane past stereo, as the library plans),
 /// pinch to zoom, drag to pan once zoomed, tap to seek, touch and hold then drag to scrub, and
 /// the playhead following playback.
+@MainActor
 struct WaveformView: View {
     let analysis: AnalysisModel?
     let player: PlayerModel

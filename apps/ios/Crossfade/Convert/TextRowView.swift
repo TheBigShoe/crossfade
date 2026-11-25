@@ -4,6 +4,7 @@ import SwiftUI
 
 /// A text field of Adjust. Each keystroke goes to the sheet, which keeps the text as typed
 /// and says, under the field, why it cannot be used.
+@MainActor
 struct TextRowView: View {
     let row: TextRow
     let send: (SheetChange) -> Void

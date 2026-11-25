@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Says, at the bottom of the window, why part of the app cannot work (a library built for
 /// another interface version).
+@MainActor
 struct StartupBanner: View {
     let text: String
 

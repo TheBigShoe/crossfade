@@ -4,6 +4,7 @@ import SwiftUI
 /// The app's frame: the library beside the shown file on iPad (a split view), the library then
 /// the file on iPhone (the split view collapses into a stack); the queue, convert and About
 /// screens as sheets.
+@MainActor
 struct RootView: View {
     let app: AppModel
     @State private var showingImporter = false

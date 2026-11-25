@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The loudness line under the waveform, in the library's words, a figure in the warning
 /// colour where it asks; analysis progress while it runs.
+@MainActor
 struct LoudnessReadout: View {
     let analysis: AnalysisModel?
 

@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 /// The equivalent `crossfade convert` command, selectable and copyable.
+@MainActor
 struct CommandLineSection: View {
     let line: String
     @State private var copied = 0

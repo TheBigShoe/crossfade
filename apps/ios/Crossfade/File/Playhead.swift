@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The playhead, redrawn every display frame while playing (the position is a few atomic
 /// loads in the library) and left still otherwise.
+@MainActor
 struct Playhead: View {
     let player: PlayerModel
     let viewport: WaveViewport

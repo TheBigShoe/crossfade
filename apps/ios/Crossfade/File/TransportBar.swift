@@ -2,6 +2,7 @@ import CrossfadeModels
 import SwiftUI
 
 /// Play, pause, stop and ten-second skips, with the desktop's position readout.
+@MainActor
 struct TransportBar: View {
     let player: PlayerModel
 
