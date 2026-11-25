@@ -1,5 +1,6 @@
 //! Which codec a job writes and which containers can hold which codecs.
 
+use crate::job::AudioSettings;
 use crossfade_codec::EncodeOptions;
 use crossfade_core::{CodecId, Error, SampleFormat};
 use crossfade_format::FormatId;
@@ -11,12 +12,7 @@ fn unsupported(what: impl Into<String>) -> Error {
 /// What a container writes, for the end of a refusal of another codec.
 fn writes_only(format: FormatId, codec: &str) -> &'static str {
     match (format, codec) {
-        (FormatId::Ogg, "opus") => {
-            " (encoding opus is not supported yet; an opus stream can be copied with --codec copy)"
-        }
-        (FormatId::Ogg, _) => {
-            " (ogg writes flac only; an opus stream can be copied with --codec copy)"
-        }
+        (FormatId::Ogg, _) => " (ogg writes flac and opus)",
         (FormatId::Mp4, _) => " (mp4 writes alac only; aac and mp3 are not written)",
         _ => "",
     }
@@ -52,6 +48,7 @@ pub fn output_codec(
     match format {
         FormatId::Wav => accept("pcm").map(|()| CodecId::pcm_for(sample_format)),
         FormatId::Aiff => accept("pcm").map(|()| CodecId::pcm_be_for(sample_format)),
+        FormatId::Ogg if requested == Some("opus") => Ok(CodecId::Opus),
         FormatId::Flac | FormatId::Ogg => {
             accept("flac")?;
             integer_only("flac", sample_format)?;
@@ -83,11 +80,11 @@ pub fn can_write(format: FormatId) -> bool {
     )
 }
 
-/// File extensions a front end can offer for an output, canonical spelling first. `.opus` is
-/// left out: it names Ogg Opus, which only a stream copy writes so far.
+/// File extensions a front end can offer for an output, canonical spelling first. `.opus` names
+/// Ogg Opus.
 pub fn writable_extensions() -> &'static [&'static str] {
     &[
-        "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "m4a", "mp4", "m4b",
+        "wav", "flac", "aiff", "aif", "aifc", "oga", "ogg", "opus", "m4a", "mp4", "m4b",
     ]
 }
 
@@ -135,10 +132,24 @@ pub(crate) fn share_threads(
     }
 }
 
-/// The encoder options for `codec`; a level only means something to FLAC.
-pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions, Error> {
-    match level {
-        None => Ok(EncodeOptions::default()),
+/// The encoder options for `codec` from the job's settings; a level only means something to
+/// FLAC, a bitrate and constant bitrate to Opus.
+pub fn encode_options(codec: CodecId, settings: &AudioSettings) -> Result<EncodeOptions, Error> {
+    if codec != CodecId::Opus {
+        if settings.bitrate.is_some() {
+            return Err(unsupported("--bitrate applies to opus only"));
+        }
+        if settings.constant_bitrate {
+            return Err(unsupported("--cbr applies to opus only"));
+        }
+    }
+    let options = EncodeOptions {
+        bitrate: settings.bitrate,
+        constant_bitrate: settings.constant_bitrate,
+        ..EncodeOptions::default()
+    };
+    match settings.compression_level {
+        None => Ok(options),
         Some(_) if codec != CodecId::Flac => {
             Err(unsupported("--compression-level applies to flac only"))
         }
@@ -147,7 +158,7 @@ pub fn encode_options(codec: CodecId, level: Option<u8>) -> Result<EncodeOptions
         ))),
         Some(l) => Ok(EncodeOptions {
             compression_level: Some(l),
-            ..EncodeOptions::default()
+            ..options
         }),
     }
 }
@@ -226,18 +237,22 @@ mod tests {
         );
         assert_eq!(
             what(output_codec(FormatId::Ogg, S16, Some("pcm"))),
-            "codec pcm cannot be written into ogg (ogg writes flac only; an opus stream can be \
-             copied with --codec copy)"
+            "codec pcm cannot be written into ogg (ogg writes flac and opus)"
         );
         assert!(what(output_codec(FormatId::Ogg, F32, None)).contains("floating-point"));
     }
 
     #[test]
-    fn opus_is_not_written_yet_but_the_refusal_says_so() {
+    fn opus_is_written_into_ogg_whatever_the_sample_format() {
+        for f in ALL {
+            assert_eq!(
+                output_codec(FormatId::Ogg, f, Some("opus")),
+                Ok(CodecId::Opus)
+            );
+        }
         assert_eq!(
-            what(output_codec(FormatId::Ogg, S16, Some("opus"))),
-            "codec opus cannot be written into ogg (encoding opus is not supported yet; an opus \
-             stream can be copied with --codec copy)"
+            what(output_codec(FormatId::Wav, S16, Some("opus"))),
+            "codec opus cannot be written into wav"
         );
     }
 
@@ -338,29 +353,66 @@ mod tests {
         }
     }
 
+    fn level(l: Option<u8>) -> AudioSettings {
+        AudioSettings {
+            compression_level: l,
+            ..AudioSettings::default()
+        }
+    }
+
     #[test]
     fn compression_level_applies_to_flac_up_to_8() {
         assert_eq!(
-            encode_options(CodecId::Flac, None),
+            encode_options(CodecId::Flac, &level(None)),
             Ok(EncodeOptions::default())
         );
         for l in 0..=8 {
             assert_eq!(
-                encode_options(CodecId::Flac, Some(l)),
+                encode_options(CodecId::Flac, &level(Some(l))),
                 Ok(EncodeOptions {
                     compression_level: Some(l),
                     ..EncodeOptions::default()
                 })
             );
         }
-        assert!(what(encode_options(CodecId::Flac, Some(9))).contains("0 to 8"));
+        assert!(what(encode_options(CodecId::Flac, &level(Some(9)))).contains("0 to 8"));
         assert_eq!(
-            what(encode_options(CodecId::PcmS16Le, Some(5))),
+            what(encode_options(CodecId::PcmS16Le, &level(Some(5)))),
             "--compression-level applies to flac only"
         );
         assert_eq!(
-            encode_options(CodecId::PcmS16Le, None),
+            encode_options(CodecId::PcmS16Le, &level(None)),
             Ok(EncodeOptions::default())
         );
+    }
+
+    #[test]
+    fn a_bitrate_and_cbr_apply_to_opus_only() {
+        let s = AudioSettings {
+            bitrate: Some(64_000),
+            constant_bitrate: true,
+            ..AudioSettings::default()
+        };
+        assert_eq!(
+            encode_options(CodecId::Opus, &s),
+            Ok(EncodeOptions {
+                bitrate: Some(64_000),
+                constant_bitrate: true,
+                ..EncodeOptions::default()
+            })
+        );
+        assert_eq!(
+            what(encode_options(CodecId::Flac, &s)),
+            "--bitrate applies to opus only"
+        );
+    }
+
+    #[test]
+    fn ogg_holds_opus_when_asked() {
+        assert_eq!(
+            output_codec(FormatId::Ogg, F32, Some("opus")),
+            Ok(CodecId::Opus)
+        );
+        assert!(writable_extensions().contains(&"opus"));
     }
 }

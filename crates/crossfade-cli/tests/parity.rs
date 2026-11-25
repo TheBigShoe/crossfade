@@ -206,6 +206,7 @@ enum Do {
     Preset(&'static str),
     Format(&'static str),
     Level(Option<u8>),
+    Bitrate(Option<u32>),
     Copy,
     Output(&'static str),
 }
@@ -359,6 +360,46 @@ const ROWS: &[Row] = &[
         steps: &[Do::Copy],
         cli: &["-o", "in-copy.wav", "--codec", "copy"],
     },
+    // Opus output: a bitrate, no level, no format, 48 kHz.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("opus")],
+        cli: &["-o", "in.opus"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Opus), Do::Bitrate(Some(96_000))],
+        cli: &["-o", "in.opus", "--bitrate", "96k"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Opus), Do::Bitrate(Some(64_000))],
+        cli: &["-o", "in.opus", "--bitrate", "64kbps"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.opus"), Do::Bitrate(Some(256_000))],
+        cli: &["-o", "typed.opus", "--bitrate", "256000"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Opus), Do::Format("s16")],
+        cli: &["-o", "in.opus"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[
+            Do::Container(Container::Opus),
+            Do::Bitrate(Some(96_000)),
+            Do::Container(Container::Flac),
+        ],
+        cli: &["-o", "in.flac"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("my mix.wav"), Do::Container(Container::Opus)],
+        cli: &["-o", "my mix.opus"],
+    },
     // A container chosen after a path was typed changes only the extension.
     Row {
         input: "in.wav",
@@ -393,6 +434,7 @@ fn flac_aiff_and_copy_intents_build_what_the_cli_builds() {
                 Do::Preset(id) => sheet.apply_preset(id),
                 Do::Format(f) => sheet.set_format(format(f)),
                 Do::Level(l) => sheet.set_level(l),
+                Do::Bitrate(b) => sheet.set_bitrate(b),
                 Do::Copy => sheet.set_copy(true),
                 Do::Output(path) => sheet.set_output(path.into()),
             }

@@ -34,6 +34,13 @@ pub struct AudioSettings {
     /// FLAC only, 0 to 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compression_level: Option<u8>,
+    /// Opus only: bits per second for the whole stream; `None` is the codec's default for the
+    /// channel count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitrate: Option<u32>,
+    /// Opus only: constant instead of variable bitrate.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub constant_bitrate: bool,
     /// Output rate in Hz; `None` keeps the rate the filters leave.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
@@ -47,6 +54,10 @@ pub struct AudioSettings {
     /// Run in order, before the conversions `sample_rate` and `channels` ask for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<FilterSpec>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn is_tpdf(d: &Dither) -> bool {

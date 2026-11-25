@@ -155,3 +155,15 @@ fn a_job_written_before_the_new_fields_still_reads() {
         (None, None)
     );
 }
+
+#[test]
+fn a_bitrate_is_written_only_when_set_and_round_trips() {
+    let mut j = job(None);
+    assert!(!j.to_json_pretty().contains("bitrate"));
+    assert!(!j.to_json_pretty().contains("constant"));
+    j.outputs[0].audio.bitrate = Some(96_000);
+    j.outputs[0].audio.constant_bitrate = true;
+    let json = j.to_json_pretty();
+    assert!(json.contains("\"bitrate\": 96000") && json.contains("\"constant_bitrate\": true"));
+    assert_eq!(Job::from_json(&json).unwrap(), j);
+}

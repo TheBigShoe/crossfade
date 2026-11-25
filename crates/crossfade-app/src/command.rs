@@ -73,6 +73,12 @@ fn subcommand_args(
     if let Some(level) = audio.compression_level {
         args.extend(["--compression-level".to_owned(), level.to_string()]);
     }
+    if let Some(bitrate) = audio.bitrate {
+        args.extend(["--bitrate".to_owned(), bitrate.to_string()]);
+    }
+    if audio.constant_bitrate {
+        args.push("--cbr".to_owned());
+    }
     if let Some(rate) = audio.sample_rate {
         args.extend(["--sample-rate".to_owned(), rate.to_string()]);
     }
@@ -227,6 +233,17 @@ mod tests {
         assert_eq!(
             command_line(&request("", "x.wav", None, false)).unwrap(),
             "crossfade convert '' -o x.wav"
+        );
+    }
+
+    #[test]
+    fn a_bitrate_and_cbr_have_flags_after_the_level() {
+        let mut r = request("a.wav", "b.opus", None, false);
+        r.job.outputs[0].audio.bitrate = Some(96_000);
+        r.job.outputs[0].audio.constant_bitrate = true;
+        assert_eq!(
+            command_line(&r).unwrap(),
+            "crossfade convert a.wav -o b.opus --bitrate 96000 --cbr"
         );
     }
 

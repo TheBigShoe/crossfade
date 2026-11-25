@@ -80,8 +80,14 @@ pub struct ConvertDialog {
     container: Choice,
     format: Choice,
     level: Choice,
+    bitrate: Choice,
     rate: Choice,
     channels: Choice,
+    /// What the container select lists: Ogg is named for what it will hold.
+    container_labels: Vec<String>,
+    /// What the bitrate select lists, and how each item reads.
+    bitrate_items: Vec<Option<u32>>,
+    bitrate_labels: Vec<String>,
     /// What the rate and channel selects list: the model's options for this source.
     rate_items: Vec<Option<u32>>,
     channel_items: Vec<Option<Channels>>,
@@ -115,14 +121,17 @@ impl ConvertDialog {
             window,
             cx,
         );
-        let container = choice(
-            Container::ALL
-                .iter()
-                .map(|c| c.label().to_owned())
-                .collect(),
-            window,
-            cx,
-        );
+        let container_labels: Vec<String> = Container::ALL
+            .iter()
+            .map(|c| sheet.container_label(*c).to_owned())
+            .collect();
+        let container = choice(container_labels.clone(), window, cx);
+        let bitrate_items = sheet.bitrate_options();
+        let bitrate_labels: Vec<String> = bitrate_items
+            .iter()
+            .map(|b| sheet.bitrate_label(*b))
+            .collect();
+        let bitrate = choice(bitrate_labels.clone(), window, cx);
         let format_items = sheet.format_options();
         let format = choice(
             format_items
@@ -237,9 +246,21 @@ impl ConvertDialog {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(label)) = event
-                        && let Some(container) = Container::ALL.iter().find(|c| c.label() == label)
+                        && let Some(at) = this.container_labels.iter().position(|l| l == label)
                     {
-                        this.sheet.set_container(*container);
+                        this.sheet.set_container(Container::ALL[at]);
+                        this.sync(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &bitrate,
+                window,
+                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event
+                        && let Some(at) = this.bitrate_labels.iter().position(|l| l == label)
+                    {
+                        this.sheet.set_bitrate(this.bitrate_items[at]);
                         this.sync(window, cx);
                     }
                 },
@@ -283,8 +304,12 @@ impl ConvertDialog {
             container,
             format,
             level,
+            bitrate,
             rate,
             channels,
+            container_labels,
+            bitrate_items,
+            bitrate_labels,
             rate_items,
             channel_items,
             level_value,
@@ -321,7 +346,22 @@ impl ConvertDialog {
 
     /// What the container select shows.
     pub fn container_label(&self, _: &App) -> &'static str {
-        self.sheet.container().label()
+        self.sheet.container_label(self.sheet.container())
+    }
+
+    /// What the bitrate select shows.
+    pub fn bitrate_label(&self) -> String {
+        self.sheet.bitrate_label(self.sheet.bitrate())
+    }
+
+    /// Whether the bitrate select shows (Opus only).
+    pub fn bitrate_visible(&self) -> bool {
+        self.sheet.bitrate_visible()
+    }
+
+    /// Whether the format select shows (not for Opus).
+    pub fn format_visible(&self) -> bool {
+        self.sheet.format_visible()
     }
 
     /// What the level select shows.
@@ -333,10 +373,8 @@ impl ConvertDialog {
     pub fn select_labels(&self, id: &str, _: &App) -> Vec<String> {
         match id {
             "sheet-preset" => PRESETS.iter().map(|p| p.label.to_owned()).collect(),
-            "sheet-container" => Container::ALL
-                .iter()
-                .map(|c| c.label().to_owned())
-                .collect(),
+            "sheet-container" => self.container_labels.clone(),
+            "sheet-bitrate" => self.bitrate_labels.clone(),
             "sheet-format" => self
                 .format_items
                 .iter()
@@ -364,6 +402,7 @@ impl ConvertDialog {
             "sheet-container" => Some(self.container_label(cx).to_owned()),
             "sheet-format" => Some(self.format_label(cx).to_owned()),
             "sheet-level" => Some(self.level_label(cx).to_owned()),
+            "sheet-bitrate" => Some(self.bitrate_label()),
             "sheet-rate" => Some(ConvertSheet::rate_label(self.sheet.sample_rate())),
             "sheet-channels" => Some(ConvertSheet::channel_label(&self.sheet.channels().cloned())),
             _ => None,
@@ -492,12 +531,49 @@ impl ConvertDialog {
         self.preset.update(cx, |select, cx| {
             select.set_selected_index(preset.map(IndexPath::new), window, cx);
         });
+        let labels: Vec<String> = Container::ALL
+            .iter()
+            .map(|c| self.sheet.container_label(*c).to_owned())
+            .collect();
+        if labels != self.container_labels {
+            self.container_labels = labels.clone();
+            self.container
+                .update(cx, |select, cx| select.set_items(labels, window, cx));
+        }
         let container = Container::ALL
             .iter()
             .position(|c| *c == self.sheet.container());
         self.container.update(cx, |select, cx| {
             select.set_selected_index(container.map(IndexPath::new), window, cx);
         });
+        let labels: Vec<String> = self
+            .bitrate_items
+            .iter()
+            .map(|b| self.sheet.bitrate_label(*b))
+            .collect();
+        if labels != self.bitrate_labels {
+            self.bitrate_labels = labels.clone();
+            self.bitrate
+                .update(cx, |select, cx| select.set_items(labels, window, cx));
+        }
+        let at = self
+            .bitrate_items
+            .iter()
+            .position(|b| *b == self.sheet.bitrate());
+        self.bitrate.update(cx, |select, cx| {
+            select.set_selected_index(at.map(IndexPath::new), window, cx);
+        });
+        let rates = self.sheet.rate_options();
+        if rates != self.rate_items {
+            self.rate_items = rates;
+            let labels = self
+                .rate_items
+                .iter()
+                .map(|r| ConvertSheet::rate_label(*r))
+                .collect();
+            self.rate
+                .update(cx, |select, cx| select.set_items(labels, window, cx));
+        }
         let options = self.sheet.format_options();
         if options != self.format_items {
             self.format_items = options;
@@ -867,18 +943,20 @@ impl Render for ConvertDialog {
                     cx,
                 ),
             )
-            .child(
-                self.row(
-                    "Format",
-                    div().id("sheet-format").test_support().child(
-                        Select::new(&self.format)
-                            .small()
-                            .placeholder("Not available")
-                            .disabled(!self.sheet.format_enabled()),
+            .when(self.sheet.format_visible(), |sheet| {
+                sheet.child(
+                    self.row(
+                        "Format",
+                        div().id("sheet-format").test_support().child(
+                            Select::new(&self.format)
+                                .small()
+                                .placeholder("Not available")
+                                .disabled(!self.sheet.format_enabled()),
+                        ),
+                        cx,
                     ),
-                    cx,
-                ),
-            )
+                )
+            })
             .child(
                 self.row(
                     "Sample rate",
@@ -899,6 +977,19 @@ impl Render for ConvertDialog {
                     cx,
                 ),
             )
+            .when(self.sheet.bitrate_visible(), |sheet| {
+                sheet.child(
+                    self.row(
+                        "Bitrate",
+                        div().id("sheet-bitrate").test_support().child(
+                            Select::new(&self.bitrate)
+                                .small()
+                                .disabled(!self.sheet.bitrate_enabled()),
+                        ),
+                        cx,
+                    ),
+                )
+            })
             .when(self.sheet.level_visible(), |sheet| {
                 sheet.child(
                     self.row(

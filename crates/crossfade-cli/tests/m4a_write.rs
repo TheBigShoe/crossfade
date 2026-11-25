@@ -375,11 +375,24 @@ fn what_alac_cannot_take_is_refused_in_plain_words() {
         "{err}"
     );
     // Not written: the codec names clap accepts stop at the ones that are.
-    for codec in ["aac", "mp3", "opus"] {
+    for codec in ["aac", "mp3"] {
         let out = run(&["convert", &stereo, "--codec", codec, "-o", &o]);
         assert_eq!(out.status.code(), Some(2), "{codec}");
         assert!(text(&out.stderr).contains("possible values"), "{codec}");
     }
+    // Opus is written, but not into mp4.
+    let err = refused(&[
+        "convert",
+        &stereo,
+        "--codec",
+        "opus",
+        "-o",
+        &dir.path("n.m4a"),
+    ]);
+    assert!(
+        err.contains("codec opus cannot be written into mp4"),
+        "{err}"
+    );
 
     // Quad is not ALAC's 4.0 and no standard mix reaches it, so the message says what does.
     let quad_wav = {
@@ -402,13 +415,12 @@ fn what_alac_cannot_take_is_refused_in_plain_words() {
 }
 
 #[test]
-fn an_opus_name_takes_a_stream_copy_only() {
+fn an_opus_name_holds_opus_only() {
     let dir = Dir::new("opus-name");
     let (wav_in, o) = (dir.path("in.wav"), dir.path("o.opus"));
     std::fs::write(&wav_in, mp4_signals::signal("stereo16").wav()).unwrap();
-    let err = refused(&["convert", &wav_in, "-o", &o]);
-    assert!(err.contains("encoding opus is not supported yet"), "{err}");
-    assert!(err.contains("--codec copy"), "{err}");
+    let err = refused(&["convert", &wav_in, "-o", &o, "--codec", "flac"]);
+    assert!(err.contains("an .opus file holds opus"), "{err}");
     assert!(!Path::new(&o).exists());
 }
 
