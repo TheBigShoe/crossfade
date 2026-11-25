@@ -434,3 +434,7 @@ fn stereo_fade(pcm: &mut [f32], g1: f32, g2: f32) {
 #[cfg(test)]
 #[path = "encoder_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "encoder_modes_tests.rs"]
+mod modes_tests;

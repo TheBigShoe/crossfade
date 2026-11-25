@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Decoder, Mode, Packet};
+use crate::{Decoder, Packet};
 
 pub(crate) fn config(channels: u8, bitrate: u32, vbr: bool, d: FrameDuration) -> EncoderConfig {
     EncoderConfig {
@@ -91,8 +91,8 @@ pub(crate) fn quality(want: &[f32], got: &[f32], channels: usize, delay: usize) 
         .q
 }
 
-/// Encodes `pcm`, checking that each packet parses, is CELT and decodes with the encoder's
-/// final range; returns the packets and the decoded audio.
+/// Encodes `pcm`, checking that each packet parses and decodes with the encoder's final range;
+/// returns the packets and the decoded audio.
 pub(crate) fn encode_and_decode(cfg: &EncoderConfig, pcm: &[f32]) -> (Vec<Vec<u8>>, Vec<f32>) {
     let channels = usize::from(cfg.channels);
     let mut enc = Encoder::new(cfg).expect("valid config");
@@ -104,7 +104,6 @@ pub(crate) fn encode_and_decode(cfg: &EncoderConfig, pcm: &[f32]) -> (Vec<Vec<u8
         let mut packet = vec![0xAA; 3];
         enc.encode(frame, &mut packet).expect("encodes");
         let parsed = Packet::parse(&packet).expect("parses");
-        assert_eq!(parsed.toc().mode(), Mode::Celt);
         assert_eq!(parsed.duration(), n);
         let got = dec.decode(Some(&packet), &mut out).expect("decodes");
         assert_eq!(got, n);
@@ -364,7 +363,7 @@ fn unconstrained_vbr_averages_near_the_bitrate() {
 
 /// A frame-sized piece of signal from a recipe: a tone at `freq`, noise, an impulse, at an
 /// amplitude, with some samples replaced by raw bit patterns (NaN, infinities included).
-fn recipe_frame(
+pub(crate) fn recipe_frame(
     n: usize,
     channels: usize,
     (freq, noise, impulse, amp): (f32, f32, bool, f32),

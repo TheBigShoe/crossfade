@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a35db9d3740f493e6f91f279953f74e45ad0953f76b61989e0a85368326d9dfc # shrinks to channels = 1, bitrate = 500, vbr = false, constrained = false, d = Ms10, frames = [((10.0, 0.0, false, 0.0), [])]

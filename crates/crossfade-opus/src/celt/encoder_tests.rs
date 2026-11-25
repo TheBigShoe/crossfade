@@ -389,6 +389,6 @@ fn low_rate_hybrid_codes_weak_transients_as_long_blocks_unless_voiced() {
         let f = hybrid(960, 1, 21, signal_type, 100);
         hybrid_round_trip(&mut CeltEncoder::new(1), &pcm, 1, &f, 12).1
     };
-    assert_eq!(flags(2)[2], true, "voiced");
-    assert_eq!(flags(1)[2], false, "unvoiced");
+    assert!(flags(2)[2], "voiced");
+    assert!(!flags(1)[2], "unvoiced");
 }
