@@ -53,7 +53,7 @@ fn only_alacs_own_layout_for_the_channel_count_is_accepted() {
     }
     let skewed = AudioSpec::new(44100, S16, ChannelLayout::unpositioned(2).unwrap()).unwrap();
     let w = what(encoder(&skewed, &EncodeOptions::default()));
-    assert!(w.contains("--channels"), "{w}");
+    assert!(w.contains("one layout only"), "{w}");
     let nine = AudioSpec::new(44100, S16, ChannelLayout::unpositioned(9).unwrap()).unwrap();
     assert!(what(encoder(&nine, &EncodeOptions::default())).contains("8 channels"));
 }

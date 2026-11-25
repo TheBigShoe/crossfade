@@ -33,7 +33,7 @@ fn request() -> impl Strategy<Value = Request> {
         path(),
         path(),
         prop::option::of(prop::sample::select(FORMATS.to_vec())),
-        prop::option::of(prop::sample::select(vec!["copy", "pcm", "flac"])),
+        prop::option::of(prop::sample::select(vec!["copy", "pcm", "flac", "alac"])),
         prop::option::of(0u8..=8),
         any::<bool>(),
     )

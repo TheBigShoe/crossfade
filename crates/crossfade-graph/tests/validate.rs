@@ -229,6 +229,59 @@ fn validate_names_the_cause() {
     }
 }
 
+/// ALAC has one layout per channel count: a stream in another is refused before anything is
+/// written, with the advice that works (a `--channels` name when a standard mix reaches the
+/// layout, else nothing a flag can do).
+#[test]
+fn alac_refuses_another_layout_and_says_what_would_work() {
+    use crossfade_core::Channel::*;
+    let mut io = MemoryIo::new();
+    let positioned = |positions: Vec<crossfade_core::Channel>| {
+        ChannelLayout::from_positions(positions).unwrap()
+    };
+    for (name, layout) in [
+        ("four.wav", ChannelLayout::unpositioned(4).unwrap()),
+        ("quad.wav", positioned(vec![FrontLeft, FrontRight, BackLeft, BackRight])),
+        ("eight.wav", ChannelLayout::unpositioned(8).unwrap()),
+        ("seven1.wav", ChannelLayout::from_name("7.1").unwrap()),
+        ("five1.wav", ChannelLayout::from_name("5.1").unwrap()),
+    ] {
+        io.insert(name, sine_wav(&spec(8000, SampleFormat::S16, layout), 3000).1);
+    }
+    let limits = Limits::default();
+    let streams: std::collections::HashMap<&str, _> =
+        ["four.wav", "quad.wav", "eight.wav", "seven1.wav", "five1.wav"]
+            .into_iter()
+            .map(|n| (n, probe(n, &mut io, &limits).unwrap().streams[0].clone()))
+            .collect();
+    let text = |input: &str, settings: &AudioSettings| {
+        validate(&streams[input], "o.m4a", settings).map(|p| p.output.audio.layout().clone())
+    };
+    let none = AudioSettings::default();
+    let err = |input: &str| text(input, &none).unwrap_err().to_string();
+    // The standard mixes never invent a position, so only what already has a name works.
+    assert_eq!(
+        err("four.wav"),
+        "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is 4 \
+         unlabelled channels; use --channels 4.0 to convert"
+    );
+    assert_eq!(
+        err("quad.wav"),
+        "unsupported: alac stores 4 channels in one layout only (4.0) and this stream is quad; \
+         no standard mix reaches it, so a mix filter with a matrix is the way"
+    );
+    assert!(err("eight.wav").ends_with("no --channels name selects it"), "{}", err("eight.wav"));
+    assert!(err("seven1.wav").contains("this stream is 7.1;"), "{}", err("seven1.wav"));
+    // What the advice names does work, and so does a layout that is ALAC's own.
+    let channels = |name: &str| AudioSettings {
+        channels: Some(crossfade_graph::filter::parse_channels(name).unwrap()),
+        ..AudioSettings::default()
+    };
+    assert_eq!(text("four.wav", &channels("4.0")).unwrap(), ChannelLayout::from_name("4.0").unwrap());
+    assert!(text("five1.wav", &none).is_ok());
+    assert!(text("seven1.wav", &channels("5.1")).is_ok());
+}
+
 #[test]
 fn codec_limits_surface_without_a_file() {
     let mut io = io();
