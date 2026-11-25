@@ -231,6 +231,17 @@ mod tests {
     }
 
     #[test]
+    fn a_bitrate_and_cbr_have_flags_after_the_level() {
+        let mut r = request("a.wav", "b.opus", None, false);
+        r.job.outputs[0].audio.bitrate = Some(96_000);
+        r.job.outputs[0].audio.constant_bitrate = true;
+        assert_eq!(
+            command_line(&r).unwrap(),
+            "crossfade convert a.wav -o b.opus --bitrate 96000 --cbr"
+        );
+    }
+
+    #[test]
     fn codec_and_compression_level_have_flags_after_the_sample_format() {
         let mut r = request("a.wav", "b.flac", Some(SampleFormat::S24), true);
         r.job.outputs[0].audio.codec = Some("flac".into());
