@@ -23,7 +23,13 @@ pub(crate) fn to_text(report: &ProbeReport) -> String {
             out.push_str(&format!(" ({bits}-bit)"));
         }
         if let (Some(secs), Some(frames)) = (s.duration_seconds, s.frames) {
-            out.push_str(&format!(", {secs:.3} s ({frames} frames)"));
+            // Under a millisecond, three decimals of a second say nothing true.
+            let length = if secs > 0.0 && secs < 0.001 {
+                format!("{:.3} ms", secs * 1000.0)
+            } else {
+                format!("{secs:.3} s")
+            };
+            out.push_str(&format!(", {length} ({frames} frames)"));
         }
         out.push('\n');
     }
