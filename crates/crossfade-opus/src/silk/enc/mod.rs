@@ -11,3 +11,9 @@ mod nlsf_enc;
 mod pitch;
 mod quant;
 mod tables;
+
+use crate::range_enc::RangeEncoder;
+
+#[cfg(test)]
+#[path = "enc_tests.rs"]
+mod tests;
