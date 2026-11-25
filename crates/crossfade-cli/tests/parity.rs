@@ -726,3 +726,61 @@ fn what_the_sheet_refuses_the_command_line_refuses_too() {
     ];
     assert!(request_from_args(args).is_err());
 }
+
+/// A silent 16-bit WAVE_FORMAT_EXTENSIBLE file with `channels` channels and `mask`.
+fn masked_wav(channels: u16, mask: u32) -> Vec<u8> {
+    let data = vec![0u8; 480 * usize::from(channels) * 2];
+    let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    b.extend_from_slice(&channels.to_le_bytes());
+    b.extend_from_slice(&48_000u32.to_le_bytes());
+    b.extend_from_slice(&(48_000 * u32::from(channels) * 2).to_le_bytes());
+    b.extend_from_slice(&(channels * 2).to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&22u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&mask.to_le_bytes());
+    b.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71,
+    ]);
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    b.extend_from_slice(&data);
+    let riff = (b.len() - 8) as u32;
+    b[4..8].copy_from_slice(&riff.to_le_bytes());
+    b
+}
+
+/// A surround file Opus or ALAC takes under another surround name plans the same on the sheet
+/// and on the command line: the same request, the same note, no problem.
+#[test]
+fn a_renamed_surround_pair_plans_the_same_on_the_sheet_and_the_command_line() {
+    for (mask, container, output) in [
+        (0x60F, Container::Opus, "out.opus"),
+        (0x3F, Container::Mp4, "out.m4a"),
+    ] {
+        let mut io = MemoryIo::new();
+        io.insert("in.wav", masked_wav(6, mask));
+        let mut inputs = Inputs::new();
+        inputs.add("in.wav", probe_path("in.wav", &mut io, &Limits::default()));
+        let entry = inputs.entries()[0].clone();
+        let mut sheet = ConvertSheet::for_input(&entry);
+        sheet.set_container(container);
+        sheet.set_output(output.into());
+        let from_sheet = sheet.build(&|_| false).unwrap();
+        let from_cli = request_from_args(["convert", "in.wav", "-o", output])
+            .unwrap()
+            .unwrap();
+        assert_eq!(from_sheet, from_cli, "{output}");
+        let plan = crossfade_graph::describe(
+            entry.stream().unwrap(),
+            output,
+            &from_cli.job.outputs[0].audio,
+        )
+        .unwrap();
+        assert_eq!(sheet.notes(), plan.notes, "{output}");
+        assert_eq!(plan.notes.len(), 1, "{output}: {:?}", plan.notes);
+        assert!(sheet.problems(&|_| false).is_empty(), "{output}");
+    }
+}

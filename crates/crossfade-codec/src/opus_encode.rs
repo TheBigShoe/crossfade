@@ -16,10 +16,13 @@
 //! `crossfade_opus::MultistreamEncoder`, from the one layout the engine calls Vorbis's for their
 //! count (`ChannelLayout::vorbis_order`, the layout the decoder adapter gives): the adapter
 //! reorders the frames from that layout's storage order to Vorbis's channel order, the inverse of
-//! the decoder adapter. Any other layout is refused by [`layout_problem`]; one or two channels
+//! the decoder adapter. The same speakers with the single surround pair named side, and
+//! unlabelled channels, are coded as that layout, channel for channel (`ChannelLayout::fit_to`,
+//! [`layout_note`]); any other layout is refused by [`layout_problem`]; one or two channels
 //! take any layout.
 
 use crate::EncodeOptions;
+use crate::layout;
 use crate::opus::engine_error as map;
 use crate::vorbis::speakers;
 use crossfade_core::{
@@ -64,29 +67,19 @@ pub fn layout_for(channels: u16) -> Option<ChannelLayout> {
 }
 
 /// What is wrong with writing `layout` as Opus, if anything: more than eight channels, or a
-/// layout other than Vorbis's for its count (one and two channels take any layout).
+/// layout other than Vorbis's for its count that is not the same speakers under the other
+/// surround name or unlabelled (one and two channels take any layout).
 pub fn layout_problem(layout: &ChannelLayout) -> Option<String> {
     let n = layout.channels();
     if n > MAX_CHANNELS {
         return Some(format!("opus holds at most 8 channels, got {n}"));
     }
-    let wanted = layout_for(n).filter(|w| w != layout)?;
-    let words = layout.name().map_or_else(
-        || {
-            if layout.positions().is_none() {
-                format!("{n} unlabelled channels")
-            } else {
-                format!("{n} channels in another layout")
-            }
-        },
-        str::to_owned,
-    );
-    Some(format!(
-        "opus stores {n} channels in one layout only ({}) and this stream is {words}",
-        wanted
-            .name()
-            .map_or_else(|| format!("its own {n}-channel order"), str::to_owned)
-    ))
+    layout::problem("opus", layout, &layout_for(n)?)
+}
+
+/// What a front end should say when `layout` is written as Vorbis's by assumption.
+pub fn layout_note(layout: &ChannelLayout) -> Option<String> {
+    layout::note("opus", layout, &layout_for(layout.channels())?)
 }
 
 /// The encoder for `channels` (1 to 8) at the default settings, from which the header and the
@@ -161,7 +154,9 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
     let inner = MultistreamEncoder::new(&config, family(channels)).map_err(map)?;
     let order = (channels > 2)
         .then(|| {
-            let positions = spec.layout().positions()?;
+            // A renamed or unlabelled layout is coded as Vorbis's, channel for channel.
+            let own = layout_for(u16::from(channels))?;
+            let positions = own.positions()?;
             speakers(channels)?
                 .iter()
                 .map(|c| positions.iter().position(|p| p == c))

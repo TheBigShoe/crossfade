@@ -138,20 +138,76 @@ fn an_m4a_source_can_be_copied_and_a_wav_cannot() {
     assert!(!s.copy_available());
 }
 
+/// A silent 16-bit WAVE_FORMAT_EXTENSIBLE file with `channels` channels and `mask`.
+fn labelled_io(path: &str, channels: u16, mask: u32) -> MemoryIo {
+    let data = vec![0u8; 480 * usize::from(channels) * 2];
+    let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    b.extend_from_slice(&channels.to_le_bytes());
+    b.extend_from_slice(&48_000u32.to_le_bytes());
+    b.extend_from_slice(&(48_000 * u32::from(channels) * 2).to_le_bytes());
+    b.extend_from_slice(&(channels * 2).to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&22u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&mask.to_le_bytes());
+    b.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71,
+    ]);
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    b.extend_from_slice(&data);
+    let riff = (b.len() - 8) as u32;
+    b[4..8].copy_from_slice(&riff.to_le_bytes());
+    let mut io = MemoryIo::new();
+    io.insert(path, b);
+    io
+}
+
 #[test]
-fn a_layout_alac_cannot_store_is_a_problem_in_plain_words() {
-    let layout = ChannelLayout::unpositioned(4).unwrap();
-    let mut io = wav_io("four.wav", SampleFormat::S16, layout);
-    let mut s = ConvertSheet::for_input(&entry_of(&mut io, "four.wav"));
+fn a_layout_alac_cannot_store_is_a_problem_in_plain_words_that_name_only_what_works() {
+    // Quad is not ALAC's 4.0, and a matrix is not something the sheet has: the problem alone.
+    let mut io = labelled_io("quad.wav", 4, 0x33);
+    let mut s = ConvertSheet::for_input(&entry_of(&mut io, "quad.wav"));
     s.set_container(Container::Mp4);
     assert_eq!(
         s.problems(&nothing_exists),
         [Problem::Source(
-            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is 4 \
-             unlabelled channels."
+            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is quad."
                 .into()
         )]
     );
+}
+
+#[test]
+fn back_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the_note() {
+    let mut io = labelled_io("back.wav", 6, 0x3F);
+    let mut s = ConvertSheet::for_input(&entry_of(&mut io, "back.wav"));
+    s.set_container(Container::Mp4);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(
+        s.notes(),
+        [
+            "5.1 with back surrounds written as 5.1 with side surrounds: alac names its \
+             surround pair as side speakers"
+        ]
+    );
+    assert!(s.build(&nothing_exists).is_ok());
+    let layout = ChannelLayout::unpositioned(4).unwrap();
+    let mut io = wav_io("four.wav", SampleFormat::S16, layout);
+    let mut s = ConvertSheet::for_input(&entry_of(&mut io, "four.wav"));
+    s.set_container(Container::Mp4);
+    assert!(s.problems(&nothing_exists).is_empty());
+    assert_eq!(
+        s.notes(),
+        ["4 unlabelled channels taken as 4.0: alac's layout for 4 channels"]
+    );
+    // ALAC's own layout needs no note.
+    let mut io = labelled_io("own.wav", 6, 0x60F);
+    let mut s = ConvertSheet::for_input(&entry_of(&mut io, "own.wav"));
+    s.set_container(Container::Mp4);
+    assert!(s.notes().is_empty());
 }
 
 #[test]

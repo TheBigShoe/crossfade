@@ -83,17 +83,24 @@ fn only_48_khz_float_mono_and_stereo_are_encoded_and_the_refusals_say_why() {
     for n in 3..=8 {
         assert!(encoder(&spec(n), &EncodeOptions::default()).is_ok(), "{n}");
     }
-    let side = AudioSpec::new(
+    let other = AudioSpec::new(
         48_000,
         SampleFormat::F32,
-        ChannelLayout::from_name("5.1").unwrap(),
+        ChannelLayout::from_name("4.0").unwrap(),
     )
     .unwrap();
-    let w = what(encoder(&side, &EncodeOptions::default()));
-    assert!(
-        w.contains("opus stores 6 channels in one layout only (5.1-back)") && w.contains("5.1"),
-        "{w}"
+    let w = what(encoder(&other, &EncodeOptions::default()));
+    assert_eq!(
+        w,
+        "opus stores 4 channels in one layout only (quad) and this stream is 4.0"
     );
+    let both = AudioSpec::new(
+        48_000,
+        SampleFormat::F32,
+        ChannelLayout::from_name("7.1").unwrap(),
+    )
+    .unwrap();
+    assert!(encoder(&both, &EncodeOptions::default()).is_ok());
     let nine = AudioSpec::new(
         48_000,
         SampleFormat::F32,
@@ -309,6 +316,58 @@ fn at(x: &[f32], ch: usize, c: usize, hz: f64) -> f64 {
         .max(0.0)
         .sqrt()
         / (x.len() / ch) as f64
+}
+
+#[test]
+fn a_layout_that_differs_only_in_its_surround_name_or_has_none_is_accepted_with_a_note() {
+    let side = ChannelLayout::from_name("5.1").unwrap();
+    assert_eq!(
+        layout_note(&side).as_deref(),
+        Some(
+            "5.1 with side surrounds written as 5.1 with back surrounds: opus names its \
+             surround pair as back speakers"
+        )
+    );
+    assert_eq!(
+        layout_note(&ChannelLayout::from_name("quad-side").unwrap()).as_deref(),
+        Some(
+            "quad with side surrounds written as quad with back surrounds: opus names its \
+             surround pair as back speakers"
+        )
+    );
+    assert_eq!(
+        layout_note(&ChannelLayout::unpositioned(6).unwrap()).as_deref(),
+        Some(
+            "6 unlabelled channels taken as 5.1 with back surrounds: opus's layout for 6 channels"
+        )
+    );
+    // Opus's own layout, and mono and stereo (any layout), need no note.
+    assert_eq!(layout_note(&ChannelLayout::vorbis_order(6).unwrap()), None);
+    assert_eq!(layout_note(&ChannelLayout::unpositioned(2).unwrap()), None);
+    // Both pairs: nothing to rename; and 8 unlabelled channels are 7.1.
+    assert_eq!(layout_note(&ChannelLayout::from_name("7.1").unwrap()), None);
+    assert_eq!(
+        layout_note(&ChannelLayout::unpositioned(8).unwrap()).as_deref(),
+        Some("8 unlabelled channels taken as 7.1: opus's layout for 8 channels")
+    );
+}
+
+/// The coder takes a renamed or unlabelled layout as Vorbis's: the same packets as for the
+/// layout Opus names, so every channel is coded where its index says.
+#[test]
+fn a_renamed_or_unlabelled_layout_is_coded_exactly_as_opuss_own() {
+    let pcm = chirp(4800, 6);
+    let own = spec(6);
+    let (want, head) = encode_with(&own, &EncodeOptions::default(), &pcm, 4800);
+    for layout in [
+        ChannelLayout::from_name("5.1").unwrap(),
+        ChannelLayout::unpositioned(6).unwrap(),
+    ] {
+        let s = AudioSpec::new(48_000, SampleFormat::F32, layout.clone()).unwrap();
+        let (packets, got_head) = encode_with(&s, &EncodeOptions::default(), &pcm, 4800);
+        assert_eq!(packets, want, "{layout:?}");
+        assert_eq!(got_head, head);
+    }
 }
 
 #[test]

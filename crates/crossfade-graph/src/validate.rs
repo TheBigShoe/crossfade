@@ -231,8 +231,8 @@ fn check_opus_settings(output_format: FormatId, settings: &AudioSettings) -> Res
 fn check_opus_stream(layout: &ChannelLayout, settings: &AudioSettings) -> Result<(), Error> {
     let channels = layout.channels();
     if let Some(problem) = opus_layout_problem(layout) {
-        // No standard mix goes between surround layouts that differ only in their names for
-        // the same speakers (side and back), so the way to keep the channels is a matrix.
+        // A standard mix never invents a position, so what is left to keep the channels is a
+        // matrix.
         let keep = if channels > 8 {
             "a mix filter with a matrix can bring them down to 8 or fewer"
         } else {
@@ -353,6 +353,8 @@ fn output_plan(
     } else {
         depth
     };
+    let (out_spec, layout_note) = settle_layout(codec, out_spec)?;
+    all.extend(layout_note);
     if codec == CodecId::Alac {
         check_alac_layout(out_spec.layout())?;
     }
@@ -375,6 +377,30 @@ fn output_plan(
         copy: false,
         notes: all,
     })
+}
+
+/// What a codec that stores one layout per channel count makes of `spec`'s layout: the codec's
+/// own when it is the same speakers under the other surround name or has no labels (with the
+/// note that says so), else the spec unchanged for the checks to refuse. The one place the plan
+/// applies `ChannelLayout::fit_to`; the encoder adapters apply it to what they are given.
+fn settle_layout(codec: CodecId, spec: AudioSpec) -> Result<(AudioSpec, Option<String>), Error> {
+    let layout = spec.layout();
+    let (wanted, note) = match codec {
+        CodecId::Alac => (
+            layout_for(layout.channels()),
+            crossfade_codec::alac_encode::layout_note(layout),
+        ),
+        CodecId::Opus => (
+            crossfade_codec::opus_encode::layout_for(layout.channels()),
+            crossfade_codec::opus_encode::layout_note(layout),
+        ),
+        _ => return Ok((spec, None)),
+    };
+    let (Some(wanted), Some(note)) = (wanted, note) else {
+        return Ok((spec, None));
+    };
+    let settled = AudioSpec::new(spec.sample_rate(), spec.format(), wanted)?;
+    Ok((settled, Some(note)))
 }
 
 /// Refuses a layout ALAC cannot store, saying what would work: a `--channels` name when a

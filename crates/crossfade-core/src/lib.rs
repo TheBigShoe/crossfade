@@ -15,7 +15,7 @@ mod rational;
 mod tags;
 mod time;
 
-pub use audio::{AudioSpec, Channel, ChannelLayout, SampleFormat};
+pub use audio::{AudioSpec, Channel, ChannelLayout, Fit, SampleFormat};
 pub use clock::{Clock, SystemClock};
 pub use codec::CodecId;
 pub use engine::{Decoder, Demuxer, Encoder, Filter, Muxer};

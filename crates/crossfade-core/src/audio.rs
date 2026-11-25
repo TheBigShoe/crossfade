@@ -301,6 +301,63 @@ impl ChannelLayout {
     pub fn positions(&self) -> Option<&[Channel]> {
         self.positions.as_deref()
     }
+
+    /// Whether this layout can be written as `wanted`, the one layout a codec stores for this
+    /// many channels, with every channel kept in place (see [`Fit`]). The one rule for the
+    /// codecs that cannot store a mask.
+    pub fn fit_to(&self, wanted: &Self) -> Fit {
+        if self.count != wanted.count {
+            return Fit::Different;
+        }
+        if self == wanted {
+            return Fit::Same;
+        }
+        let (Some(have), Some(want)) = (self.positions(), wanted.positions()) else {
+            return if self.positions.is_none() {
+                Fit::Unlabelled
+            } else {
+                Fit::Different
+            };
+        };
+        let (back, side) = (
+            [Channel::BackLeft, Channel::BackRight],
+            [Channel::SideLeft, Channel::SideRight],
+        );
+        let has = |pair: &[Channel; 2]| pair.iter().all(|c| have.contains(c));
+        let lacks = |pair: &[Channel; 2]| pair.iter().all(|c| !have.contains(c));
+        let swap = if has(&back) && lacks(&side) {
+            [back, side]
+        } else if has(&side) && lacks(&back) {
+            [side, back]
+        } else {
+            return Fit::Different;
+        };
+        let renamed = have
+            .iter()
+            .map(|c| match swap[0].iter().position(|s| s == c) {
+                Some(i) => swap[1][i],
+                None => *c,
+            });
+        if renamed.eq(want.iter().copied()) {
+            Fit::Renamed
+        } else {
+            Fit::Different
+        }
+    }
+}
+
+/// How a source layout stands to the one a codec stores for its channel count
+/// ([`ChannelLayout::fit_to`]). Everything but `Different` writes the channels in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    Same,
+    /// The same speakers, the single surround pair named side where the codec says back (or the
+    /// other way round), each channel at the same index.
+    Renamed,
+    /// No positions at all, taken to be the codec's layout.
+    Unlabelled,
+    /// Another count, other speakers, or both surround pairs: not for a rename to settle.
+    Different,
 }
 
 /// Fields are private so a spec can only exist in a valid state.
