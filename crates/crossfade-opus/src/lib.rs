@@ -11,16 +11,16 @@ mod encoder;
 mod error;
 pub mod head;
 mod multistream;
-mod repacketizer;
 pub mod packet;
 pub mod range;
 pub mod range_enc;
+mod repacketizer;
 mod silk;
 #[doc(hidden)]
 pub mod testing;
 
 pub use decoder::Decoder;
-pub use encoder::{Encoder, EncoderConfig, FrameDuration};
+pub use encoder::{Application, Encoder, EncoderConfig, FrameDuration, Signal};
 pub use error::{Error, Result};
 pub use head::{ChannelMapping, OpusHead, OpusTags};
 pub use multistream::MultistreamDecoder;
