@@ -6,7 +6,7 @@ use crossfade_alac::{Config, Decoder, Encoder, EncoderConfig, Error};
 /// Deterministic test signals, integer or plain IEEE arithmetic only.
 mod signal {
     /// A full-scale-ish sinusoid from a resonator (no `sin`, so the same on every platform).
-    pub fn sine(frames: usize, depth: u8, step: f64, level: f64) -> Vec<i32> {
+    pub(crate) fn sine(frames: usize, depth: u8, step: f64, level: f64) -> Vec<i32> {
         let max = f64::from((1u32 << (depth - 1)) - 1) * level;
         let c = 2.0 - step * step;
         let (mut a, mut b) = (0.0f64, step);
@@ -20,7 +20,7 @@ mod signal {
     }
 
     /// SplitMix64 noise spread over the whole range of `depth` bits.
-    pub fn noise(frames: usize, depth: u8, seed: u64) -> Vec<i32> {
+    pub(crate) fn noise(frames: usize, depth: u8, seed: u64) -> Vec<i32> {
         let mut s = seed;
         (0..frames)
             .map(|_| {
@@ -35,7 +35,7 @@ mod signal {
     }
 
     /// The most negative and most positive values, in runs and alternating.
-    pub fn extremes(frames: usize, depth: u8) -> Vec<i32> {
+    pub(crate) fn extremes(frames: usize, depth: u8) -> Vec<i32> {
         let max = ((1i64 << (depth - 1)) - 1) as i32;
         let min = (-(1i64 << (depth - 1))) as i32;
         (0..frames)
@@ -49,7 +49,7 @@ mod signal {
     }
 
     /// Channels side by side, interleaved.
-    pub fn interleave(channels: &[Vec<i32>]) -> Vec<i32> {
+    pub(crate) fn interleave(channels: &[Vec<i32>]) -> Vec<i32> {
         let frames = channels[0].len();
         (0..frames)
             .flat_map(|i| channels.iter().map(move |c| c[i]))
@@ -100,7 +100,10 @@ fn signals(depth: u8, channels: u8, frames: usize) -> Vec<(&'static str, Vec<i32
             "noise",
             per_channel(&|c| signal::noise(frames, depth, c as u64)),
         ),
-        ("extremes", per_channel(&|_| signal::extremes(frames, depth))),
+        (
+            "extremes",
+            per_channel(&|_| signal::extremes(frames, depth)),
+        ),
     ]
 }
 
@@ -171,7 +174,9 @@ fn the_cookie_describes_the_stream_as_apple_writes_it() {
         }
     );
     // Before any packet there is nothing to count.
-    let fresh = Encoder::new(EncoderConfig::new(8000, 1, 20)).unwrap().config();
+    let fresh = Encoder::new(EncoderConfig::new(8000, 1, 20))
+        .unwrap()
+        .config();
     assert_eq!(
         (fresh.max_frame_bytes, fresh.avg_bit_rate, fresh.sample_rate),
         (0, 0, 8000)

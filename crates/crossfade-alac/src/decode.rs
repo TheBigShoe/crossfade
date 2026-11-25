@@ -12,14 +12,14 @@ use crate::predictor::{integrate, unpredict};
 use crate::rice::{self, Params};
 use crate::{Config, Error, Result};
 
-const SCE: u32 = 0;
-const CPE: u32 = 1;
+pub(crate) const SCE: u32 = 0;
+pub(crate) const CPE: u32 = 1;
 const CCE: u32 = 2;
 const LFE: u32 = 3;
 const DSE: u32 = 4;
 const PCE: u32 = 5;
 const FIL: u32 = 6;
-const END: u32 = 7;
+pub(crate) const END: u32 = 7;
 
 /// Decodes the packets of one stream. Packets are independent: any packet can be decoded at
 /// any time, so there is nothing to reset after a seek.

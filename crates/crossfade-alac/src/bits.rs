@@ -90,6 +90,44 @@ impl<'a> Bits<'a> {
     }
 }
 
+/// A big-endian bit writer appending to a packet.
+pub(crate) struct BitWriter<'a> {
+    out: &'a mut Vec<u8>,
+    /// Bits not yet a whole byte, in the low `pending` bits.
+    acc: u64,
+    pending: u32,
+}
+
+impl<'a> BitWriter<'a> {
+    pub(crate) fn new(out: &'a mut Vec<u8>) -> Self {
+        Self {
+            out,
+            acc: 0,
+            pending: 0,
+        }
+    }
+
+    /// The low `n` bits (at most 32) of `v`.
+    #[inline]
+    pub(crate) fn put(&mut self, n: u32, v: u32) {
+        debug_assert!(n <= 32);
+        let v = u64::from(v) & ((1u64 << n) - 1);
+        self.acc = (self.acc << n) | v;
+        self.pending += n;
+        while self.pending >= 8 {
+            self.pending -= 8;
+            self.out.push((self.acc >> self.pending) as u8);
+        }
+    }
+
+    /// Zeros up to the next byte.
+    pub(crate) fn align(&mut self) {
+        if self.pending > 0 {
+            self.put(8 - self.pending, 0);
+        }
+    }
+}
+
 /// The low `bits` of `v` as a signed value; 32 or more leaves it alone.
 #[inline]
 pub(crate) fn sign_extend(v: i32, bits: u32) -> i32 {
