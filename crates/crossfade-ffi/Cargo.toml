@@ -22,6 +22,8 @@ serde_json.workspace = true
 # The parity tests: a sheet driven through the C functions must build the CLI's request.
 crossfade-cli.workspace = true
 crossfade-testkit.workspace = true
+# Builds an Ogg Vorbis file for the inspector's test.
+crossfade-vorbis.workspace = true
 insta.workspace = true
 proptest.workspace = true
 

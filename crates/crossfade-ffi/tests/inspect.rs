@@ -81,6 +81,46 @@ fn every_readable_kind_is_described_as_the_inspector_shows_it() {
 }
 
 #[test]
+fn ogg_vorbis_ogg_opus_and_aac_are_described_too() {
+    use crossfade_vorbis::testing::{self as w, OggLayout};
+    let dir = Dir::new("inspect-lossy");
+    let s = w::sample_stream(2, "SSLLSLSSSLLLS", 3);
+    let vorbis = w::ogg_file(
+        [&s.headers[0], &s.headers[1], &s.headers[2]],
+        &s.audio,
+        &OggLayout::default(),
+    );
+    let vorbis_path = dir.path("v.ogg");
+    std::fs::write(&vorbis_path, vorbis).unwrap();
+    assert_eq!(check(&vorbis_path)["readable"], true);
+
+    // The engine's own Opus encoder makes the Ogg Opus file.
+    let wav = common::write_wav(&dir, "a.wav", 48_000, 2, 9_600);
+    let opus_path = dir.path("a.opus");
+    let args = ["convert", wav.as_str(), "-o", opus_path.as_str()];
+    let outcome = crossfade_cli::run_command(
+        args,
+        &mut FsIo::new(),
+        &crossfade_graph::CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert!(matches!(outcome, crossfade_cli::Outcome::Done(_)));
+    let opus = check(&opus_path);
+    assert!(
+        opus["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("Ogg \u{b7} 48 kHz")
+    );
+
+    // Reading AAC's headers needs no decoder, so these describe in every build.
+    for rel in ["adts/tone_44k_stereo.aac", "mp4/aac-stereo16.m4a"] {
+        assert_eq!(check(&fixture(rel))["readable"], true, "{rel}");
+    }
+}
+
+#[test]
 fn a_generated_wav_reads_with_its_summary() {
     let dir = Dir::new("inspect-wav");
     let path = common::write_wav(&dir, "a.wav", 48_000, 2, 48_000 * 62 + 12_000);
