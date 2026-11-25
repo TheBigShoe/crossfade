@@ -18,9 +18,11 @@ and a GPUI desktop app (`crossfade-gui`).
 3. **Pure Rust engine.** The engine crates (core, flac, alac, aac, mp3, vorbis, opus, loudness, resample, format, codec, dsp, graph)
    may not depend, under any feature, on anything that links a native library
    or compiles C/assembly. Enforced by `engine_is_pure_rust`. Every crate
-   carries `#![forbid(unsafe_code)]`.
+   carries `#![forbid(unsafe_code)]`, except `crossfade-ffi`, the C binding the mobile
+   apps call: the owner exempted it (25 Nov 2026), and its `unsafe` stays at the ABI
+   edge, each block with its reason.
 4. **Dependency direction:** core, flac, alac, loudness, resample, mp3 and the codec crates <- codec, dsp
-   <- format <- graph <- app <- cli, ui. Standalone crates (`crossfade-flac` first, then
+   <- format <- graph <- app <- cli, ui, ffi. Standalone crates (`crossfade-flac` first, then
    `crossfade-loudness`, and the codec crates `crossfade-alac`, `crossfade-aac`, `crossfade-mp3`,
    `crossfade-vorbis` and `crossfade-opus`, the same way) depend on
    nothing in the workspace and not even on core; `codec` wraps them in thin
@@ -61,6 +63,7 @@ and a GPUI desktop app (`crossfade-gui`).
 | `crossfade-app` | What every front end shares, GUI-free: `FsIo` (file I/O never lives in the engine), `Request`, command-line rendering, `ThreadRunner`, and the screen models (`Inputs`, `inspector`, `ConvertSheet` (containers WAV, FLAC, AIFF, Ogg FLAC, Apple Lossless and Opus; a level only for the two FLAC ones, a bitrate only for Opus, which has no format row and offers 48 kHz only; `notes()` are the plan's, the ones the CLI prints, whether or not processing was asked for; `container_label` names Ogg "Ogg" while a stream copy carries a non-FLAC stream), `Queue`, and the waveform strip's `WaveView` and `Strip`), plus the background `Analyzer` that feeds the waveform and loudness readout, and the preview `player` (`Player` over an `AudioSink`: a decode thread writes converted `f32` ahead into an `rtrb` ring per load or seek, `Feed::fill` is the wait-free device side, the position counts what was pulled; `VirtualSink` for tests; `Follow` for the playhead) |
 | `crossfade-cli` | The `crossfade` binary and a small library (`request_from_args`) the parity tests call: `probe`, `convert`, `concat` |
 | `crossfade-ui` | The desktop app: GPUI views over the `crossfade-app` models (the waveform strip's transport too), `audio_out` (the default output device through `cpal`), the `crossfade-gui` binary, headless UI tests, `examples/screenshots.rs` |
+| `crossfade-ffi` | The C binding the native mobile apps (SwiftUI first, Kotlin later) call: a hand-written header (`include/crossfade.h`), opaque handles over the `crossfade-app` models (inspect, `ConvertSheet`, `Queue` with `ThreadRunner`, `Analyzer`, `Player`), state and changes as JSON, the player's wait-free `Feed::fill` for the platform's audio callback; `staticlib`, `cdylib` and `rlib`; its `unsafe` only at the ABI edge |
 | `appconfig` | App-agnostic config layer extracted from Serialist (no GPUI, no `crossfade-*` deps): config paths, layered JSONC settings, comment-preserving editor, Zed-format keymaps and themes, watcher |
 | `crossfade-corpus` | Conformance corpus tool: `corpus.toml` manifest (single files and `[[archive]]` members; `expect = "data"` for reference files), fetch/seed/verify into `.corpus-cache` (`--only <id prefix>`, repeatable), `require(id)` and `require_all(prefix)` for tier-3 tests (not an engine crate) |
 | `crossfade-audit` | Workspace policy checks, e.g. the purity gate (test-only, unpublished) |

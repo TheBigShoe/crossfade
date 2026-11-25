@@ -556,3 +556,13 @@ fn a_failed_measuring_pass_is_not_left_measuring() {
     q.apply(a, RunnerEvent::Cancelled);
     assert!(!q.get(a).unwrap().measuring);
 }
+
+#[test]
+fn a_job_id_reads_as_the_number_a_foreign_caller_holds() {
+    let mut q = Queue::new();
+    let a = q.enqueue(request("a"));
+    let b = q.enqueue(request("b"));
+    assert_ne!(a.value(), b.value());
+    assert_eq!(q.find(b.value()).map(|i| i.id), Some(b));
+    assert!(q.find(u64::MAX).is_none());
+}

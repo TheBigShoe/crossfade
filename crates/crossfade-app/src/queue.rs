@@ -8,6 +8,13 @@ use crossfade_graph::{CancelToken, Normalization};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JobId(u64);
 
+impl JobId {
+    /// The number a front end across a language boundary holds; [`Queue::find`] reads it back.
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobState {
     Pending,
@@ -256,6 +263,11 @@ impl Queue {
 
     pub fn get(&self, id: JobId) -> Option<&QueueItem> {
         self.items.iter().find(|i| i.id == id)
+    }
+
+    /// The job whose [`JobId::value`] is `value`.
+    pub fn find(&self, value: u64) -> Option<&QueueItem> {
+        self.items.iter().find(|i| i.id.0 == value)
     }
 
     fn item_mut(&mut self, id: JobId) -> Option<&mut QueueItem> {

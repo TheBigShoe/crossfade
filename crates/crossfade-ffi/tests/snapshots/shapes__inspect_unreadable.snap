@@ -1,0 +1,12 @@
+---
+source: crates/crossfade-ffi/tests/shapes.rs
+expression: "shown(inspect(&junk), &root)"
+---
+{
+  "name": "junk.wav",
+  "path": "<dir>/junk.wav",
+  "problem": "unrecognised format",
+  "readable": false,
+  "sections": [],
+  "summary": null
+}
