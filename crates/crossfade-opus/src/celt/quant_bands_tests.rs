@@ -64,6 +64,117 @@ fn fine_and_final_bits_refine_by_halves() {
     assert_eq!(old[0], 0.4375);
 }
 
+/// Band energies of a frame: a spectral tilt, a wobble, and every `jump`-th band far off.
+fn energies(seed: u32, jump: usize) -> [f32; 2 * NB_EBANDS] {
+    let mut e = [0.0f32; 2 * NB_EBANDS];
+    for (i, v) in e.iter_mut().enumerate() {
+        let band = (i % NB_EBANDS) as f32;
+        *v = 8.0 - 0.4 * band + libm::sinf(seed as f32 + i as f32 * 1.7) * 3.0;
+        if jump > 0 && i % jump == 0 {
+            *v += if seed.is_multiple_of(2) { 25.0 } else { -30.0 };
+        }
+    }
+    e
+}
+
+#[test]
+fn quantised_energies_are_what_the_decoder_reads_back() {
+    for c in [1, 2] {
+        for lm in 0..4 {
+            for (storage, two_pass) in [(200, true), (40, true), (12, false), (3, true)] {
+                let mut old_enc = [0.0f32; 2 * NB_EBANDS];
+                let mut old_dec = old_enc;
+                let mut delayed = 1.0f32;
+                for frame in 0..6u32 {
+                    let target = energies(frame + 7 * lm as u32, (frame as usize % 3) * 4);
+                    let mut enc = RangeEncoder::new(storage);
+                    let mut error = [0.0f32; 2 * NB_EBANDS];
+                    let coarse = Coarse {
+                        start: 0,
+                        end: 21,
+                        eff_end: 21,
+                        budget: storage as i32 * 8,
+                        c,
+                        lm,
+                        nb_available_bytes: storage as i32,
+                        force_intra: frame == 0,
+                        two_pass,
+                    };
+                    quant_coarse_energy(
+                        &coarse,
+                        &target,
+                        &mut old_enc,
+                        &mut error,
+                        &mut enc,
+                        &mut delayed,
+                    );
+                    let mut fine = [0; NB_EBANDS];
+                    let mut prio = [0; NB_EBANDS];
+                    for i in 0..NB_EBANDS {
+                        fine[i] = (i as i32 + frame as i32) % 4;
+                        prio[i] = (i % 2) as i32;
+                    }
+                    let room = |enc: &RangeEncoder| storage as i32 * 8 - enc.tell();
+                    if room(&enc) > 21 * 3 * c as i32 + 8 {
+                        quant_fine_energy(&mut old_enc, &mut error, 0, 21, &fine, &mut enc, c);
+                    } else {
+                        fine = [0; NB_EBANDS];
+                    }
+                    let left = room(&enc);
+                    quant_energy_finalise(
+                        &mut old_enc,
+                        &mut error,
+                        0,
+                        21,
+                        &fine,
+                        &prio,
+                        left,
+                        &mut enc,
+                        c,
+                    );
+                    let rng = enc.rng();
+                    let bytes = enc.done().expect("fits");
+                    let mut dec = RangeDecoder::new(&bytes);
+                    let mut ec = Ec::new(&mut dec);
+                    let intra = ec.tell() + 3 <= storage as i32 * 8 && ec.bit_logp(3);
+                    unquant_coarse_energy(&mut old_dec, 0, 21, intra, &mut ec, c, lm);
+                    unquant_fine_energy(&mut old_dec, 0, 21, &fine, &mut ec, c);
+                    let left = storage as i32 * 8 - ec.tell();
+                    unquant_energy_finalise(&mut old_dec, 0, 21, &fine, &prio, left, &mut ec, c);
+                    let what = format!("c {c} lm {lm} storage {storage} frame {frame}");
+                    assert_eq!(old_enc, old_dec, "{what}");
+                    assert_eq!(rng, ec.rng(), "{what}");
+                    if storage == 200 && frame == 0 {
+                        // Plenty of bits, no sudden drop: within half a step of the target.
+                        for ch in 0..c {
+                            for i in 0..21 {
+                                let k = ch * NB_EBANDS + i;
+                                assert!((old_enc[k] - target[k]).abs() <= 0.5, "{what} band {k}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn log_energies_are_relative_to_the_band_means() {
+    let mut band_e = [0.0f32; 2 * NB_EBANDS];
+    band_e[0] = 1.0;
+    band_e[3] = 8.0;
+    band_e[NB_EBANDS + 3] = 0.5;
+    let mut log_e = [0.0f32; 2 * NB_EBANDS];
+    amp2_log2(&band_e, &mut log_e, 17, 19, 2);
+    assert_eq!(log_e[0], -E_MEANS[0]);
+    assert!((log_e[3] - (3.0 - E_MEANS[3])).abs() < 1e-6);
+    assert!((log_e[NB_EBANDS + 3] - (-1.0 - E_MEANS[3])).abs() < 1e-6);
+    assert_eq!(log_e[17], -14.0);
+    assert_eq!(log_e[NB_EBANDS + 18], -14.0);
+    assert_eq!(log_e[19], 0.0);
+}
+
 #[test]
 fn amplitudes_are_capped_and_zero_outside_the_coded_bands() {
     let mut old = [0.0; 2 * NB_EBANDS];

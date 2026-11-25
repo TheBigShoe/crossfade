@@ -131,23 +131,24 @@ impl RangeEncoder {
 
     /// Symbol `s` of an inverse-CDF table of `ftb` bits.
     pub fn enc_icdf(&mut self, s: usize, icdf: &[u8], ftb: u32) {
-        let icdf: Vec<u32> = icdf.iter().map(|&v| u32::from(v)).collect();
-        self.icdf(s, &icdf, ftb);
+        let at = |k: usize| u32::from(icdf[k]);
+        self.icdf(s, at(s.saturating_sub(1)), at(s), ftb);
     }
 
     /// [`enc_icdf`](Self::enc_icdf) with a 16-bit table.
     pub fn enc_icdf16(&mut self, s: usize, icdf: &[u16], ftb: u32) {
-        let icdf: Vec<u32> = icdf.iter().map(|&v| u32::from(v)).collect();
-        self.icdf(s, &icdf, ftb);
+        let at = |k: usize| u32::from(icdf[k]);
+        self.icdf(s, at(s.saturating_sub(1)), at(s), ftb);
     }
 
-    fn icdf(&mut self, s: usize, icdf: &[u32], ftb: u32) {
+    /// The symbol `s` of an inverse CDF whose entries `s - 1` and `s` are `below` and `at`.
+    fn icdf(&mut self, s: usize, below: u32, at: u32, ftb: u32) {
         let r = self.rng >> ftb;
         if s > 0 {
-            self.val += self.rng - r * icdf[s - 1];
-            self.rng = r * (icdf[s - 1] - icdf[s]);
+            self.val += self.rng - r * below;
+            self.rng = r * (below - at);
         } else {
-            self.rng -= r * icdf[s];
+            self.rng -= r * at;
         }
         self.normalize();
     }
@@ -221,6 +222,17 @@ impl RangeEncoder {
 
     pub fn tell(&self) -> i32 {
         self.nbits_total - ilog(self.rng) as i32
+    }
+
+    /// Counts every bit up to `total` as written (CELT's silence: the rest of the frame is
+    /// zeros, which the initial buffer already holds).
+    pub fn mark_written_to(&mut self, total: i32) {
+        self.nbits_total += total - self.tell();
+    }
+
+    /// The frame's size in bytes.
+    pub fn storage(&self) -> usize {
+        self.storage
     }
 
     pub fn tell_frac(&self) -> u32 {

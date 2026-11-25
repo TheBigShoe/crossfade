@@ -40,6 +40,86 @@ fn unquant_gives_a_vector_of_the_gain_and_its_collapse_mask() {
     assert!((x[0] - 0.5 * 2.0 / 5f32.sqrt()).abs() < 1e-6);
 }
 
+/// A band's worth of unit-norm-ish shapes: smooth, spiky, flat, alternating.
+fn shapes(n: usize) -> Vec<Vec<f32>> {
+    let mut out = vec![];
+    let smooth: Vec<f32> = (0..n).map(|i| libm::sinf(i as f32 * 0.7 + 0.3)).collect();
+    let mut spiky = vec![0.01f32; n];
+    spiky[n / 3] = -1.0;
+    let flat = vec![0.5f32; n];
+    let alt: Vec<f32> = (0..n)
+        .map(|i| if i % 2 == 0 { 0.3 } else { -0.2 })
+        .collect();
+    for x in [smooth, spiky, flat, alt] {
+        let e = norm(&x);
+        out.push(x.iter().map(|v| v / e).collect());
+    }
+    out
+}
+
+#[test]
+fn quant_resynthesises_what_unquant_decodes() {
+    for (n, k, spread, b) in [
+        (2, 1, 2, 1),
+        (4, 3, 0, 1),
+        (8, 1, 1, 2),
+        (8, 20, 2, 4),
+        (16, 5, 3, 1),
+        (24, 9, 2, 8),
+        (32, 6, 2, 1),
+        (48, 5, 2, 1),
+        (96, 2, 1, 2),
+        (176, 4, 2, 1),
+    ] {
+        for (s, shape) in shapes(n).into_iter().enumerate() {
+            let mut x = shape.clone();
+            let mut enc = RangeEncoder::new(256);
+            let mask = alg_quant(&mut x, k, spread, b, &mut enc, 0.75);
+            let frame = enc.done().expect("fits");
+            let mut dec = RangeDecoder::new(&frame);
+            let mut ec = Ec::new(&mut dec);
+            let mut y = vec![0.0f32; n];
+            let want = alg_unquant(&mut y, k, spread, b, &mut ec, 0.75);
+            assert_eq!(mask, want, "n {n} k {k} shape {s}");
+            assert_eq!(x, y, "n {n} k {k} shape {s}");
+            // The quantised shape points the way the input did.
+            let dot: f32 = shape.iter().zip(&y).map(|(a, b)| a * b).sum::<f32>() / 0.75;
+            assert!(dot > 0.2, "n {n} k {k} shape {s}: {dot}");
+        }
+    }
+}
+
+#[test]
+fn quant_survives_degenerate_input() {
+    for x0 in [[0.0f32; 8], [f32::NAN; 8], [f32::INFINITY; 8], [1e30; 8]] {
+        for k in [1, 3, 8, 30] {
+            let mut x = x0;
+            let mut enc = RangeEncoder::new(64);
+            alg_quant(&mut x, k, 2, 1, &mut enc, 1.0);
+            let frame = enc.done().expect("fits");
+            let mut dec = RangeDecoder::new(&frame);
+            let mut ec = Ec::new(&mut dec);
+            let mut y = [0.0f32; 8];
+            alg_unquant(&mut y, k, 2, 1, &mut ec, 1.0);
+            assert_eq!(x, y, "k {k} from {x0:?}");
+        }
+    }
+}
+
+#[test]
+fn itheta_is_the_angle_of_side_over_mid() {
+    let x: Vec<f32> = (0..16).map(|i| libm::sinf(i as f32)).collect();
+    let zero = vec![0.0f32; 16];
+    let neg: Vec<f32> = x.iter().map(|v| -v).collect();
+    // Mono split: all energy in the first half is 0, all in the second 16384.
+    assert_eq!(stereo_itheta(&x, &zero, false), 0);
+    assert_eq!(stereo_itheta(&zero, &x, false), 16384);
+    assert!((stereo_itheta(&x, &x, false) - 8192).abs() <= 8);
+    // Stereo: identical channels are all mid, opposite ones all side.
+    assert_eq!(stereo_itheta(&x, &x, true), 0);
+    assert_eq!(stereo_itheta(&x, &neg, true), 16384);
+}
+
 #[test]
 fn renormalise_scales_to_the_gain_and_leaves_zero_finite() {
     let mut x = [3.0, 4.0];

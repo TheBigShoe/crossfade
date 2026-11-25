@@ -10,6 +10,11 @@ pub(super) fn exp2(x: f32) -> f32 {
     libm::exp(std::f64::consts::LN_2 * f64::from(x)) as f32
 }
 
+/// `celt_log2`: `log2(e) * ln(x)` in double.
+pub(super) fn log2(x: f32) -> f32 {
+    (std::f64::consts::LOG2_E * libm::log(f64::from(x))) as f32
+}
+
 /// `celt_cos_norm`: `cos(PI / 2 * x)`, the product in float, the cosine in double.
 pub(super) fn cos_norm(x: f32) -> f32 {
     libm::cos(f64::from((0.5 * PI) * x)) as f32
