@@ -130,8 +130,10 @@ fn read_f32(path: &str) -> Vec<f32> {
         let len = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
         if &bytes[pos..pos + 4] == b"data" {
             return bytes[pos + 8..pos + 8 + len]
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
                 .collect();
         }
         pos += 8 + len + (len & 1);
