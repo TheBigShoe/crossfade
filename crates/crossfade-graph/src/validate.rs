@@ -12,6 +12,7 @@ use crossfade_dsp::filters::mix::{assumption, standard_matrix};
 /// Stands in for a normalising job's gain when only checking that the job builds.
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
 use crossfade_codec::alac_encode::{coded_depth, layout_for, layout_problem};
+use crossfade_codec::opus_encode::layout_problem as opus_layout_problem;
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
     is_threaded_encoder,
@@ -224,20 +225,21 @@ fn check_opus_settings(output_format: FormatId, settings: &AudioSettings) -> Res
     Ok(())
 }
 
-/// Refuses what Opus cannot code, saying what would work: more than two channels (a
-/// `--channels stereo` conversion, when a standard mix reaches it) and a bitrate outside
+/// Refuses what Opus cannot code, saying what would work: a layout that is not Vorbis's for
+/// its count (a `--channels` name when a standard mix reaches it) and a bitrate outside
 /// 6 to 256 kb/s per channel.
 fn check_opus_stream(layout: &ChannelLayout, settings: &AudioSettings) -> Result<(), Error> {
     let channels = layout.channels();
-    if channels > 2 {
+    if let Some(problem) = opus_layout_problem(layout) {
+        // No standard mix goes between surround layouts that differ only in their names for
+        // the same speakers (side and back), so the way to keep the channels is a matrix.
+        let keep = "a mix filter with a matrix puts the channels in that layout";
         let advice = if standard_matrix(layout, &ChannelLayout::stereo()).is_ok() {
-            "use --channels stereo to convert"
+            format!("use --channels stereo to mix down, or {keep}")
         } else {
-            "no standard mix reaches stereo, so a mix filter with a matrix is the way"
+            keep.to_owned()
         };
-        return Err(unsupported(format!(
-            "surround opus is not written yet ({channels} channels): {advice}"
-        )));
+        return Err(unsupported(format!("{problem}; {advice}")));
     }
     if let Some(b) = settings.bitrate {
         let (lo, hi) = (6_000 * u32::from(channels), 256_000 * u32::from(channels));

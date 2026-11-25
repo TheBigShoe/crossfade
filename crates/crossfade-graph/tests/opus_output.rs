@@ -209,26 +209,16 @@ fn surround_is_written_from_vorbis_layouts_and_other_layouts_are_refused_with_wh
         assert_eq!((head.channels, head.mapping.family), (n, 1), "{n}");
         assert_eq!(plan.output.audio.layout().channels(), u16::from(n));
     }
-    // 5.1 with side surrounds is not Vorbis's 5.1; a standard mix reaches it.
+    // 5.1 with side surrounds is not Vorbis's 5.1 (back surrounds), and no standard mix goes
+    // between the two: stereo is a conversion away, the rest a matrix.
     let five_one = pcm(48_000, ChannelLayout::from_name("5.1").unwrap());
     let w = refusal(describe(&five_one, "o.opus", &AudioSettings::default()));
     assert_eq!(
         w,
         "opus stores 6 channels in one layout only (5.1-back) and this stream is 5.1; use \
-         --channels 5.1-back to convert"
+         --channels stereo to mix down, or a mix filter with a matrix puts the channels in that \
+         layout"
     );
-    let plan = describe(
-        &five_one,
-        "o.opus",
-        &with(|s| {
-            s.channels = Some(Channels::Layout(
-                ChannelLayout::from_name("5.1-back").unwrap(),
-            ))
-        }),
-    )
-    .unwrap();
-    assert_eq!(plan.output.audio.layout().channels(), 6);
-    // Stereo from surround is a conversion away too.
     let plan = describe(
         &five_one,
         "o.opus",
