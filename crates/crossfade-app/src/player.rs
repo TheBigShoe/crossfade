@@ -255,6 +255,10 @@ impl Player {
                 self.seek(0);
             }
             State::Empty | State::Failed(_) | State::Playing => return,
+            // Parked at the end (End, or a seek there): nothing is left to play.
+            _ if self.scrub.is_none() && self.duration().is_some_and(|d| self.position() >= d) => {
+                self.seek(0);
+            }
             _ => {}
         }
         if let Some(scrub) = &mut self.scrub {
