@@ -90,6 +90,29 @@ impl<'a> Bits<'a> {
     }
 }
 
+/// Where coded bits go: a packet, or a count of what a packet would take.
+pub(crate) trait Sink {
+    /// The low `n` bits (at most 32) of `v`.
+    fn put(&mut self, n: u32, v: u32);
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Count(pub(crate) u64);
+
+impl Sink for Count {
+    #[inline]
+    fn put(&mut self, n: u32, _: u32) {
+        self.0 += u64::from(n);
+    }
+}
+
+impl Sink for BitWriter<'_> {
+    #[inline]
+    fn put(&mut self, n: u32, v: u32) {
+        BitWriter::put(self, n, v);
+    }
+}
+
 /// A big-endian bit writer appending to a packet.
 pub(crate) struct BitWriter<'a> {
     out: &'a mut Vec<u8>,

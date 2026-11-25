@@ -106,6 +106,91 @@ fn fixed<const N: usize>(
     coefs.copy_from_slice(&c);
 }
 
+/// The encoding side of `unpredict`: residuals for `x` into `out` (the same length), adapting
+/// `coefs` exactly as `unpredict` will. `x` holds samples of at most `chan_bits` bits.
+pub(crate) fn predict(
+    x: &[i32],
+    out: &mut [i32],
+    coefs: &mut [i16],
+    chan_bits: u32,
+    den_shift: u32,
+) {
+    let num = x.len().min(out.len());
+    if num == 0 {
+        return;
+    }
+    let (x, out) = (&x[..num], &mut out[..num]);
+    out[0] = x[0];
+    let order = coefs.len();
+    if order == 0 {
+        out.copy_from_slice(x);
+        return;
+    }
+    let warm = if order == FIRST_DIFFERENCE {
+        num - 1
+    } else {
+        order.min(num - 1)
+    };
+    for j in 1..=warm {
+        out[j] = sign_extend(x[j].wrapping_sub(x[j - 1]), chan_bits);
+    }
+    if order == FIRST_DIFFERENCE {
+        return;
+    }
+    let den_half = if den_shift == 0 {
+        0
+    } else {
+        1i32 << (den_shift - 1)
+    };
+    let span = order + 1;
+    for j in span..num {
+        let window = &x[j - span..j];
+        let top = window[0];
+        let taps = &window[1..];
+        let mut sum = 0i32;
+        for (k, c) in coefs.iter().enumerate() {
+            sum =
+                sum.wrapping_add(i32::from(*c).wrapping_mul(taps[order - 1 - k].wrapping_sub(top)));
+        }
+        let predicted = sum.wrapping_add(den_half) >> den_shift;
+        let del = sign_extend(x[j].wrapping_sub(top).wrapping_sub(predicted), chan_bits);
+        out[j] = del;
+        adapt(coefs, taps, top, del, den_shift);
+    }
+}
+
+/// The coefficient step after a residual `del`, shared with the decoding side's order.
+#[inline]
+fn adapt(coefs: &mut [i16], taps: &[i32], top: i32, del: i32, den_shift: u32) {
+    let order = coefs.len();
+    let mut left = del;
+    if del > 0 {
+        for k in (0..order).rev() {
+            let dd = top.wrapping_sub(taps[order - 1 - k]);
+            let sgn = dd.signum();
+            coefs[k] = coefs[k].wrapping_sub(sgn as i16);
+            let weight = (order - k) as i32;
+            left = left.wrapping_sub(weight.wrapping_mul(sgn.wrapping_mul(dd) >> den_shift));
+            if left <= 0 {
+                break;
+            }
+        }
+    } else if del < 0 {
+        for k in (0..order).rev() {
+            let dd = top.wrapping_sub(taps[order - 1 - k]);
+            let sgn = dd.signum();
+            coefs[k] = coefs[k].wrapping_add(sgn as i16);
+            let weight = (order - k) as i32;
+            left = left.wrapping_sub(
+                weight.wrapping_mul(sgn.wrapping_neg().wrapping_mul(dd) >> den_shift),
+            );
+            if left >= 0 {
+                break;
+            }
+        }
+    }
+}
+
 /// In place: each sample becomes itself plus the one before it, wrapped to `chan_bits`.
 pub(crate) fn integrate(buf: &mut [i32], chan_bits: u32) {
     let Some((&mut first, rest)) = buf.split_first_mut() else {
@@ -240,8 +325,14 @@ mod tests {
             let mut dec = coefs[..order].to_vec();
             let mut out = vec![0; x.len()];
             unpredict(&residual, &mut out, &mut dec, bits, den_shift);
-            prop_assert_eq!(out, x);
-            prop_assert_eq!(dec, enc);
+            prop_assert_eq!(&out, &x);
+            prop_assert_eq!(&dec, &enc);
+            // The encoder's own predictor gives the test-side coder's residuals.
+            let mut ours = coefs[..order].to_vec();
+            let mut r = vec![0; x.len()];
+            super::predict(&x, &mut r, &mut ours, bits, den_shift);
+            prop_assert_eq!(r, residual);
+            prop_assert_eq!(ours, enc);
         }
     }
 }
