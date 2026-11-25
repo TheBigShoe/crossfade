@@ -132,6 +132,32 @@ fn the_config_is_checked() {
 }
 
 #[test]
+fn the_input_depth_is_8_to_24_bits_and_24_by_default() {
+    assert_eq!(EncoderConfig::default().lsb_depth, 24);
+    for (lsb_depth, ok) in [(0, false), (7, false), (8, true), (16, true), (24, true), (25, false)] {
+        for channels in [1, 2, 6] {
+            let cfg = EncoderConfig {
+                channels,
+                lsb_depth,
+                ..EncoderConfig::default()
+            };
+            let ms = crate::MultistreamEncoder::new(&cfg, 1);
+            assert_eq!(ms.is_ok(), ok, "{lsb_depth} bits, {channels} channels");
+            if !ok {
+                assert!(matches!(ms, Err(Error::BadArgument(_))));
+            }
+            if channels <= 2 {
+                let single = Encoder::new(&cfg);
+                assert_eq!(single.is_ok(), ok, "{lsb_depth} bits");
+                if !ok {
+                    assert!(matches!(single, Err(Error::BadArgument(_))));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn frame_size_and_lookahead() {
     for (d, n) in [
         (FrameDuration::Ms2_5, 120),
