@@ -60,10 +60,13 @@ struct Lanes {
     planned: usize,
     known: bool,
     columns: usize,
+    /// The key of the last render: a frame that reused the cache left it behind `key`.
+    rendered: Option<LanesKey>,
 }
 
 impl Render for Lanes {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.rendered = self.key.clone();
         let Some(key) = self.key.clone() else {
             return div().into_any_element();
         };
@@ -184,6 +187,7 @@ impl WaveformStrip {
                 planned: 1,
                 known: false,
                 columns: 0,
+                rendered: None,
             }),
             player,
             audio_note,
@@ -200,6 +204,13 @@ impl WaveformStrip {
 
     pub fn view(&self) -> &WaveView {
         self.strip.view()
+    }
+
+    /// The range and width the painted lanes were last rendered for: (start, frames per
+    /// pixel, width).
+    pub fn lanes_painted(&self, cx: &App) -> Option<(u64, u64, u32)> {
+        let key = self.lanes.read(cx).rendered.as_ref()?;
+        Some((key.start, key.fpp, key.width))
     }
 
     pub fn has_analysis(&self) -> bool {
@@ -541,6 +552,7 @@ impl WaveformStrip {
                 planned,
                 known,
                 columns,
+                rendered: l.rendered.take(),
             };
             cx.notify();
         });
