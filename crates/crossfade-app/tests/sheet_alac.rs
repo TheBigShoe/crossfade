@@ -193,10 +193,17 @@ fn a_layout_alac_cannot_store_is_a_problem_in_plain_words_that_name_only_what_wo
     assert_eq!(
         s.problems(&nothing_exists),
         [Problem::Source(
-            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is quad."
+            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is quad. \
+             Choose Mono or Stereo under Channels."
                 .into()
         )]
     );
+    // What it advises really plans, with no problem left and no flag involved.
+    for choice in s.channel_options().into_iter().flatten() {
+        s.set_channels(Some(choice));
+        assert!(s.problems(&nothing_exists).is_empty());
+        assert!(s.build(&nothing_exists).is_ok());
+    }
 }
 
 #[test]
