@@ -268,28 +268,29 @@ fn snr(want: &[f32], got: &[f32], channels: usize, delay: usize) -> f64 {
 #[test]
 fn stereo_quality_rises_with_the_bitrate() {
     // The opus_compare figure and the SNR the music signal must beat, at 20 ms: what was
-    // measured, less 20 (Q swings) and 1 dB. libopus 1.4 forced to CELT at complexity 9 gives
-    // the same within 0.5 dB in CBR (README).
+    // measured, less 20 (Q swings) and 1 dB. libopus 1.5.2's float build gives the same
+    // within 0.5 dB, most packets byte for byte (at 32 kb/s its analysis takes the first
+    // frames for speech, hybrid, as here).
     let pcm = signal("music", 2, 1.0);
     for (vbr, table) in [
         (
             true,
             [
-                (32_000, None, 15.0),
-                (64_000, Some(-75.0), 18.5),
-                (96_000, None, 21.9),
-                (128_000, None, 23.6),
-                (256_000, Some(35.0), 27.2),
+                (32_000, None, 12.9),
+                (64_000, Some(-80.0), 20.2),
+                (96_000, None, 23.0),
+                (128_000, None, 24.8),
+                (256_000, Some(39.0), 28.0),
             ],
         ),
         (
             false,
             [
-                (32_000, None, 14.0),
-                (64_000, Some(-85.0), 17.3),
-                (96_000, None, 20.1),
-                (128_000, None, 22.8),
-                (256_000, Some(-50.0), 26.6),
+                (32_000, None, 11.4),
+                (64_000, Some(-88.0), 17.7),
+                (96_000, None, 20.4),
+                (128_000, None, 23.2),
+                (256_000, Some(-60.0), 27.0),
             ],
         ),
     ] {
@@ -306,13 +307,11 @@ fn stereo_quality_rises_with_the_bitrate() {
             assert!(s > last, "{what}");
             last = s;
             if vbr {
-                // Unconstrained VBR over a second: within 15% (measured: 6 to 10% over).
+                // Unconstrained VBR over a second: this tonal music gets more, as the analysis
+                // raises the target (measured 10 to 34% over; libopus the same).
                 let bytes: usize = packets.iter().map(Vec::len).sum();
-                let rate = bytes as f64 * 8.0;
-                assert!(
-                    (rate / f64::from(bitrate) - 1.0).abs() < 0.15,
-                    "{what}: {rate} b/s"
-                );
+                let rate = bytes as f64 * 8.0 / f64::from(bitrate) - 1.0;
+                assert!((0.05..0.40).contains(&rate), "{what}: {rate}");
             }
         }
     }
@@ -327,7 +326,8 @@ fn average_rate(cfg: &EncoderConfig, pcm: &[f32], seconds: f64) -> f64 {
 #[test]
 fn constrained_vbr_holds_the_bitrate_plus_the_toc_byte() {
     // CELT's reservoir keeps its own bytes at the bitrate; the TOC byte comes on top, as in
-    // libopus (measured identical: +20% at 16 kb/s in 2.5 ms frames, +2.5% in 20 ms).
+    // libopus (measured identical: +20% at 16 kb/s in 2.5 ms frames, +2.5% in 20 ms). Music,
+    // or the analysis takes the noise for speech: hybrid, whose CELT is unconstrained.
     for (channels, kind, bitrate, d, fps) in [
         (1u8, "noise", 48_000u32, FrameDuration::Ms10, 100.0),
         (2, "music", 96_000, FrameDuration::Ms20, 50.0),
@@ -335,6 +335,7 @@ fn constrained_vbr_holds_the_bitrate_plus_the_toc_byte() {
     ] {
         let mut cfg = config(channels, bitrate, true, d);
         cfg.constrained_vbr = true;
+        cfg.signal = Signal::Music;
         let pcm = signal(kind, usize::from(channels), 2.0);
         let rate = average_rate(&cfg, &pcm, 2.0);
         let want = f64::from(bitrate) + 8.0 * fps;
@@ -347,17 +348,17 @@ fn constrained_vbr_holds_the_bitrate_plus_the_toc_byte() {
 
 #[test]
 fn unconstrained_vbr_averages_near_the_bitrate() {
-    // Open loop: only the signal's demands move it. Measured over 20 s at 20 ms: -11% to
-    // +5% on music and noise from 16 to 256 kb/s (a sweep can go 45% over at 32 kb/s, as in
-    // libopus).
-    for (kind, bitrate) in [("music", 64_000u32), ("noise", 128_000)] {
+    // Open loop: only the signal's demands move it, the tonality analysis's among them, as in
+    // libopus (within 0.1% of it on these signals): tonal music takes a third more, noise a
+    // little less.
+    for (kind, bitrate, range) in [
+        ("music", 64_000u32, 0.2..0.45),
+        ("noise", 128_000, -0.15..0.0),
+    ] {
         let cfg = config(2, bitrate, true, FrameDuration::Ms20);
         let pcm = signal(kind, 2, 2.0);
-        let rate = average_rate(&cfg, &pcm, 2.0);
-        assert!(
-            (rate / f64::from(bitrate) - 1.0).abs() < 0.15,
-            "{kind}: {rate}"
-        );
+        let rate = average_rate(&cfg, &pcm, 2.0) / f64::from(bitrate) - 1.0;
+        assert!(range.contains(&rate), "{kind}: {rate}");
     }
 }
 
@@ -459,7 +460,8 @@ pub(crate) fn digest(cfg: &EncoderConfig, pcm: &[f32]) -> (usize, u64) {
 
 #[test]
 fn the_same_input_gives_the_same_bytes_on_every_platform() {
-    // Frozen: a change here changes the encoder's output, which must be on purpose.
+    // Frozen: a change here changes the encoder's output, which must be on purpose (last:
+    // the tonality analysis).
     let mut cases = vec![];
     for (channels, kind, bitrate, vbr, d) in [
         (2u8, "music", 128_000, true, FrameDuration::Ms20),
@@ -474,11 +476,11 @@ fn the_same_input_gives_the_same_bytes_on_every_platform() {
     assert_eq!(
         cases,
         [
-            (8712, 3738388940056785679),
-            (4000, 5718751726521388479),
-            (2064, 7820095403110596320),
-            (6000, 756888785635609228),
-            (1705, 13128124336842510805)
+            (9891, 4856669557145740282),
+            (4000, 9553055121684277053),
+            (1825, 4463705505612809978),
+            (6000, 9833327276562983475),
+            (1418, 2615420988363689140)
         ]
     );
 }
