@@ -5,6 +5,7 @@
 #[cfg(feature = "aac")]
 mod aac;
 pub mod alac;
+pub mod alac_encode;
 pub mod flac;
 pub mod mp3;
 pub mod opus;
