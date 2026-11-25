@@ -10,7 +10,11 @@ fn voiced(len: usize, period: usize, seed: u32) -> Vec<f32> {
         .map(|i| {
             s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let noise = ((s >> 8) as f32 / (1 << 24) as f32) - 0.5;
-            let x = if period > 0 && i % period == 0 { 8000.0 } else { 0.0 } + 50.0 * noise;
+            let x = if period > 0 && i % period == 0 {
+                8000.0
+            } else {
+                0.0
+            } + 50.0 * noise;
             // A resonance near 700 Hz.
             let y = x + 1.8 * y1 - 0.9 * y2;
             y2 = y1;
