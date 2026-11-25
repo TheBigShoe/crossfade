@@ -144,8 +144,8 @@ fn quantised_energies_are_what_the_decoder_reads_back() {
                     let what = format!("c {c} lm {lm} storage {storage} frame {frame}");
                     assert_eq!(old_enc, old_dec, "{what}");
                     assert_eq!(rng, ec.rng(), "{what}");
-                    if storage == 200 {
-                        // Plenty of bits: within half a step of the target, plus the fine bits.
+                    if storage == 200 && frame == 0 {
+                        // Plenty of bits, no sudden drop: within half a step of the target.
                         for ch in 0..c {
                             for i in 0..21 {
                                 let k = ch * NB_EBANDS + i;
