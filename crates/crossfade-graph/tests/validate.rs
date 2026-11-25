@@ -313,9 +313,16 @@ fn alac_takes_the_other_surround_name_and_unlabelled_channels_with_a_note() {
         let mut io = MemoryIo::new();
         io.insert(
             "in.wav",
-            sine_wav(&spec(8000, SampleFormat::S16, ChannelLayout::stereo()), 3000).1,
+            sine_wav(
+                &spec(8000, SampleFormat::S16, ChannelLayout::stereo()),
+                3000,
+            )
+            .1,
         );
-        let mut s = probe("in.wav", &mut io, &Limits::default()).unwrap().streams[0].clone();
+        let mut s = probe("in.wav", &mut io, &Limits::default())
+            .unwrap()
+            .streams[0]
+            .clone();
         s.audio = spec(8000, SampleFormat::S16, layout);
         s
     };
@@ -343,7 +350,10 @@ fn alac_takes_the_other_surround_name_and_unlabelled_channels_with_a_note() {
         ["6 unlabelled channels taken as 5.1 with side surrounds: alac's layout for 6 channels"]
     );
     let p = plan(ChannelLayout::unpositioned(4).unwrap());
-    assert_eq!(*p.output.audio.layout(), ChannelLayout::from_name("4.0").unwrap());
+    assert_eq!(
+        *p.output.audio.layout(),
+        ChannelLayout::from_name("4.0").unwrap()
+    );
     assert_eq!(
         p.notes,
         ["4 unlabelled channels taken as 4.0: alac's layout for 4 channels"]
