@@ -2,7 +2,7 @@
 //! and a front end's pre-flight `validate` share this code, so they cannot disagree.
 
 use crate::choice::{can_hold, can_write, encode_options, output_codec, share_threads};
-use crate::filter::{self, ChainPlan};
+use crate::filter::{self, ChainPlan, FilterSpec};
 use crate::job::AudioSettings;
 use crate::two_pass::{Measuring, Pass, for_pass};
 use crossfade_dsp::filters::FilterPlan;
@@ -13,6 +13,7 @@ use crossfade_dsp::filters::mix::{assumption, standard_matrix};
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
 use crossfade_codec::alac_encode::{coded_depth, layout_for, layout_problem};
 use crossfade_codec::opus_encode::layout_problem as opus_layout_problem;
+use crossfade_codec::opus_encode::source_bits_per_sample;
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
     is_threaded_encoder,
@@ -494,6 +495,24 @@ fn refuse_processing_on_copy(input: &StreamInfo, settings: &AudioSettings) -> Re
     Ok(())
 }
 
+/// The depth the Opus encoder is told (`EncodeOptions::source_bits_per_sample`): the source's,
+/// kept through rate and channel conversion as `opusenc` keeps it through its own resampling
+/// and downmix, unless a filter scales the samples (gain, fade, normalize, a mix by matrix):
+/// the source's grid then no longer marks the noise floor, and the encoder takes its default.
+/// A join takes its first input's, as the header takes its rate.
+fn source_depth(source: &StreamInfo, settings: &AudioSettings) -> Option<u8> {
+    let scales = settings.filters.iter().any(|f| match f {
+        FilterSpec::Gain { .. } | FilterSpec::Fade { .. } | FilterSpec::Normalize { .. } => true,
+        FilterSpec::Mix { matrix, .. } => matrix.is_some(),
+        FilterSpec::Trim { .. } | FilterSpec::Resample { .. } => false,
+    });
+    if scales {
+        None
+    } else {
+        source_bits_per_sample(source)
+    }
+}
+
 /// Copy or transcode: the output stream, and the codecs and chain when there is a transcode,
 /// sharing `threads` between the codecs (see `Limits::max_threads` and `share_threads`).
 pub(crate) fn resolve(
@@ -513,6 +532,7 @@ pub(crate) fn resolve(
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
         input_sample_rate: Some(source_rate),
+        source_bits_per_sample: source_depth(input, settings),
         ..encode_options(out.codec, settings)?
     };
     let (decoder_threads, encoder_threads) = codec_threads(threads, input.codec, out.codec);
@@ -749,6 +769,7 @@ pub(crate) fn resolve_join(
     let options = EncodeOptions {
         bits_per_sample: out.bits_per_raw_sample,
         input_sample_rate: Some(inputs[0].audio.sample_rate()),
+        source_bits_per_sample: source_depth(&inputs[0], settings),
         ..encode_options(out.codec, settings)?
     };
     let chain_format = if measuring.is_some() {

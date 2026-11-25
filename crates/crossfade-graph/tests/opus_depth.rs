@@ -42,7 +42,8 @@ fn wav(rate: u32, samples: &[i16], format: SampleFormat) -> Vec<u8> {
     wav_bytes(&spec(rate, format, ChannelLayout::stereo()), &bytes)
 }
 
-/// The bandwidths of `out.opus`'s packets after the first ten (the analysis settles).
+/// The bandwidths of `out.opus`'s packets after the first ten (the analysis settles), less the
+/// last: the end padding is digital silence, which libopus codes fullband.
 fn convert(io: &mut MemoryIo, inputs: &[&str], filters: &str) -> Vec<Bandwidth> {
     let job = Job {
         version: Job::VERSION,
@@ -78,6 +79,7 @@ fn convert(io: &mut MemoryIo, inputs: &[&str], filters: &str) -> Vec<Bandwidth> 
     while d.read_packet(&mut p).unwrap() {
         bandwidths.push(OpusPacket::parse(&p.data).unwrap().toc().bandwidth());
     }
+    bandwidths.pop();
     bandwidths.split_off(10)
 }
 
