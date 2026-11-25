@@ -1,6 +1,6 @@
 """Tests for the iOS app's helper scripts. Run from the repository root:
 
-    python3 -I -m unittest discover -s apps/ios/scripts
+    python3 -I -B -m unittest discover -s apps/ios/scripts
 """
 
 import json
