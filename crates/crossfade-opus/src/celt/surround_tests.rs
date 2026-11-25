@@ -194,12 +194,10 @@ fn the_masks_of_a_5_1_signal_are_libopus_s() {
     for (c, want) in FRAME_10.iter().enumerate() {
         for (i, &w) in want.iter().enumerate() {
             let g = got[10][21 * c + i];
-            // Log2 units: a thousandth is 6 mdB (our MDCT and libopus's differ in the last
-            // bits).
-            assert!(
-                (g - w).abs() < 1e-3,
-                "channel {c} band {i}: {g} against {w}"
-            );
+            // Log2 units (6 dB). Above 12 kHz these bands hold only the tones' leakage, 100 dB
+            // down, where our MDCT's rounding and libopus's part by up to 0.004.
+            let tol = if i < 17 { 1e-4 } else { 1e-2 };
+            assert!((g - w).abs() < tol, "channel {c} band {i}: {g} against {w}");
         }
     }
 }

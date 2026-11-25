@@ -379,7 +379,7 @@ fn compute_mdcts(
 }
 
 /// `compute_band_energies`: each band's amplitude.
-fn compute_band_energies(
+pub(super) fn compute_band_energies(
     freq: &[f32],
     band_e: &mut [f32; 2 * NB_EBANDS],
     end: usize,
