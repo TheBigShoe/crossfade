@@ -288,6 +288,26 @@ fn a_seek_while_paused_moves_the_position_and_stays_paused() {
 }
 
 #[test]
+fn play_from_the_very_end_starts_over() {
+    let bytes = stereo(5000);
+    // End pressed before playing, and End pressed while paused.
+    for paused in [false, true] {
+        let mut r = loaded(bytes.clone(), STEREO_48K);
+        if paused {
+            r.player.play();
+            pull(&r, 1000);
+            r.player.pause();
+        }
+        r.player.seek(5000);
+        r.player.settle();
+        r.player.play();
+        assert_eq!(r.player.state(), State::Playing, "paused: {paused}");
+        assert_eq!(r.player.position(), 0, "paused: {paused}");
+        assert_eq!(pull(&r, 10), expected(&bytes, 0, STEREO_48K)[..20]);
+    }
+}
+
+#[test]
 fn seeks_to_the_start_the_end_and_past_it() {
     let bytes = stereo(10_000);
     let mut r = loaded(bytes.clone(), STEREO_48K);
