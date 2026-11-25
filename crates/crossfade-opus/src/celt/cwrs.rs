@@ -4,6 +4,7 @@
 //! tests' oracle. Exact for every size the pulse cache allows: V(N, K) fits in 32 bits there.
 
 use super::ec::Ec;
+use crate::range_enc::RangeEncoder;
 
 /// The largest pulse count a band codes (`MAX_PULSES` of `rate.h`, `get_pulses(40)`).
 pub(super) const MAX_PULSES: usize = 128;
@@ -170,6 +171,37 @@ fn cwrsi_table(mut n: usize, mut k: usize, mut i: u32, y: &mut [i32]) {
     // n == 1
     let s = -(i as i32);
     y[at + 1] = (k as i32 + s) ^ s;
+}
+
+/// `icwrs` with the table: the index of `y` (n >= 2).
+fn icwrs_table(y: &[i32]) -> u32 {
+    let n = y.len();
+    let mut j = n - 1;
+    let mut i = u32::from(y[j] < 0);
+    let mut k = y[j].unsigned_abs() as usize;
+    loop {
+        j -= 1;
+        i = i.wrapping_add(u(n - j, k));
+        k += y[j].unsigned_abs() as usize;
+        if y[j] < 0 {
+            i = i.wrapping_add(u(n - j, k + 1));
+        }
+        if j == 0 {
+            break;
+        }
+    }
+    i
+}
+
+/// `encode_pulses`: codes `y` (2 to `MAX_N` integers whose absolute values sum to `k`, 1 to
+/// [`MAX_PULSES`]) as its index, uniformly among V(n, k).
+pub(super) fn encode_pulses(y: &[i32], k: usize, enc: &mut RangeEncoder) {
+    let n = y.len();
+    if !(2..=MAX_N).contains(&n) || k == 0 || k > MAX_PULSES {
+        return;
+    }
+    let v = u(n, k).wrapping_add(u(n, k + 1));
+    enc.enc_uint(icwrs_table(y), v);
 }
 
 /// `decode_pulses`: reads the index of a vector of `y.len()` (>= 2) integers whose absolute

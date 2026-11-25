@@ -187,7 +187,7 @@ fn encode_pulses_codes_the_index_decode_pulses_reads() {
                 None => break,
             };
         }
-        let mut enc = crate::range_enc::RangeEncoder::new(1200);
+        let mut enc = RangeEncoder::new(1200);
         for (i, y) in &vectors {
             assert_eq!(icwrs(y), (*i, v), "n {n} k {k}");
             encode_pulses(y, k, &mut enc);
