@@ -200,22 +200,58 @@ fn a_bitrate_means_something_to_opus_only_and_has_a_range() {
 }
 
 #[test]
-fn surround_is_refused_with_the_advice_that_works() {
+fn surround_is_written_from_vorbis_layouts_and_other_layouts_are_refused_with_what_works() {
+    // Vorbis's layout for each count goes in as it is, with a family 1 header.
+    for n in 3..=8u8 {
+        let layout = ChannelLayout::vorbis_order(n).unwrap();
+        let plan = validate(&pcm(48_000, layout), "o.opus", &AudioSettings::default()).unwrap();
+        let head = OpusHead::parse(&plan.output.extradata).unwrap();
+        assert_eq!((head.channels, head.mapping.family), (n, 1), "{n}");
+        assert_eq!(plan.output.audio.layout().channels(), u16::from(n));
+    }
+    // 5.1 with side surrounds is not Vorbis's 5.1; a standard mix reaches it.
     let five_one = pcm(48_000, ChannelLayout::from_name("5.1").unwrap());
     let w = refusal(describe(&five_one, "o.opus", &AudioSettings::default()));
     assert_eq!(
         w,
-        "surround opus is not written yet (6 channels): use --channels stereo to convert"
+        "opus stores 6 channels in one layout only (5.1-back) and this stream is 5.1; use \
+         --channels 5.1-back to convert"
     );
+    let plan = describe(
+        &five_one,
+        "o.opus",
+        &with(|s| {
+            s.channels = Some(Channels::Layout(
+                ChannelLayout::from_name("5.1-back").unwrap(),
+            ))
+        }),
+    )
+    .unwrap();
+    assert_eq!(plan.output.audio.layout().channels(), 6);
+    // Stereo from surround is a conversion away too.
     let plan = describe(
         &five_one,
         "o.opus",
         &with(|s| s.channels = Some(Channels::Layout(ChannelLayout::stereo()))),
     )
     .unwrap();
-    assert_eq!(plan.output.audio.layout().channels(), 2);
-    let head = OpusHead::parse(&plan.output.extradata).unwrap();
-    assert_eq!(head.channels, 2);
+    assert_eq!(OpusHead::parse(&plan.output.extradata).unwrap().channels, 2);
+    // More than eight channels have nothing to be converted to by name but stereo.
+    let nine = pcm(48_000, ChannelLayout::unpositioned(9).unwrap());
+    let w = refusal(describe(&nine, "o.opus", &AudioSettings::default()));
+    assert!(
+        w.starts_with("opus holds at most 8 channels, got 9; "),
+        "{w}"
+    );
+    // The bitrate range follows the channel count.
+    let six = pcm(48_000, ChannelLayout::vorbis_order(6).unwrap());
+    assert!(describe(&six, "o.opus", &with(|s| s.bitrate = Some(36_000))).is_ok());
+    let w = refusal(describe(
+        &six,
+        "o.opus",
+        &with(|s| s.bitrate = Some(35_999)),
+    ));
+    assert!(w.contains("36000 to 1536000 b/s"), "{w}");
 }
 
 #[test]
