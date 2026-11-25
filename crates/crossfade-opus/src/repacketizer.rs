@@ -118,7 +118,6 @@ pub(crate) fn pad(packet: &mut Vec<u8>, new_len: usize) -> Result<()> {
 
 /// A packet's frames framed again (self-delimited for a multistream packet's inner streams),
 /// padded to `maxlen` with `pad`; its own padding dropped.
-#[allow(dead_code)] // the multistream encoder's
 pub(crate) fn reframe(
     packet: &[u8],
     maxlen: usize,

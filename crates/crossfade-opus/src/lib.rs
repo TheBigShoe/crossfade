@@ -25,6 +25,7 @@ pub use encoder::{Application, Encoder, EncoderConfig, FrameDuration, Signal};
 pub use error::{Error, Result};
 pub use head::{ChannelMapping, OpusHead, OpusTags};
 pub use multistream::MultistreamDecoder;
+pub use multistream_enc::MultistreamEncoder;
 pub use packet::{Bandwidth, Mode, Packet, Toc, packet_duration};
 pub use range::RangeDecoder;
 pub use range_enc::RangeEncoder;

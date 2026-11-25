@@ -19,6 +19,7 @@ use crate::celt::{
     CELT_DELAY, CeltEncodeFrame, CeltEncoder, OVERLAP, SilkInfo, WINDOW, exp2 as celt_exp2,
 };
 use crate::error::{Error, Result};
+use crate::head::{ChannelMapping, OpusHead};
 use crate::packet::{Bandwidth, Mode, Packet};
 use crate::range_enc::RangeEncoder;
 use crate::repacketizer::{assemble, pad};
@@ -577,8 +578,34 @@ impl Encoder {
         self.final_range = 0;
     }
 
+    /// The `OpusHead` for a stream of these packets (family 0, pre-skip from the lookahead,
+    /// no gain), recording `input_sample_rate` (informational: what the audio was before
+    /// resampling to 48 kHz, 0 if unknown). Its [`OpusHead::to_bytes`] is the first packet of
+    /// an Ogg Opus stream.
+    pub fn head(&self, input_sample_rate: u32) -> OpusHead {
+        let channels = self.config.channels;
+        OpusHead {
+            version: 1,
+            channels,
+            pre_skip: self.lookahead() as u16,
+            input_sample_rate,
+            output_gain: 0,
+            mapping: ChannelMapping {
+                family: 0,
+                streams: 1,
+                coupled: channels - 1,
+                table: (0..channels).collect(),
+            },
+        }
+    }
+
+    /// `OPUS_SET_LFE` for the multistream encoder: CELT-only narrowband in CELT's LFE mode.
+    pub(crate) fn set_lfe(&mut self, lfe: bool) {
+        self.lfe = lfe;
+        self.celt.set_lfe(lfe);
+    }
+
     /// `OPUS_SET_FORCE_CHANNELS` for the multistream encoder.
-    #[allow(dead_code)] // the multistream encoder's
     pub(crate) fn set_force_channels(&mut self, channels: Option<usize>) {
         self.force_channels = channels;
     }
@@ -595,7 +622,6 @@ impl Encoder {
     }
 
     /// `OPUS_SET_FORCE_MODE` and `OPUS_SET_BANDWIDTH` for the multistream encoder.
-    #[allow(dead_code)] // the multistream encoder's
     pub(crate) fn set_mode_and_bandwidth(&mut self, mode: Option<Mode>, bw: Option<Bandwidth>) {
         self.config.mode = mode;
         self.config.bandwidth = bw;
