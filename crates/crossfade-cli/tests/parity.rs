@@ -3,7 +3,7 @@
 
 use crossfade_app::inputs::{InputEntry, Inputs, probe_path};
 use crossfade_app::sheet::{
-    AdjustField, Container, ConvertSheet, FormatChoice, LevelMode, Problem,
+    AdjustField, Container, ConvertSheet, FormatChoice, LevelMode, Problem, plain_note,
 };
 use crossfade_cli::request_from_args;
 use crossfade_core::{Limits, SampleFormat};
@@ -779,7 +779,9 @@ fn a_renamed_surround_pair_plans_the_same_on_the_sheet_and_the_command_line() {
             &from_cli.job.outputs[0].audio,
         )
         .unwrap();
-        assert_eq!(sheet.notes(), plan.notes, "{output}");
+        assert_eq!(sheet.engine_notes(), plan.notes, "{output}");
+        let shown: Vec<String> = plan.notes.iter().map(|n| plain_note(n)).collect();
+        assert_eq!(sheet.notes(), shown, "{output}");
         assert_eq!(plan.notes.len(), 1, "{output}: {:?}", plan.notes);
         assert!(sheet.problems(&|_| false).is_empty(), "{output}");
     }

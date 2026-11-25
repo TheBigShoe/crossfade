@@ -229,6 +229,35 @@ pub fn plain(what: &str) -> String {
     out
 }
 
+/// An engine note as the sheet shows it: codecs by the names the sheet uses and the command
+/// line's `--sample-format` as the Format row. A note it does not know stays as written.
+pub fn plain_note(note: &str) -> String {
+    const NAMES: [(&str, &str); 6] = [
+        ("vorbis", "Vorbis"),
+        ("opus", "Opus"),
+        ("alac", "Apple Lossless"),
+        ("flac", "FLAC"),
+        ("mp3", "MP3"),
+        ("aac", "AAC"),
+    ];
+    let mut text = note.replacen(
+        "; choose --sample-format to change",
+        "; choose a Format to change it",
+        1,
+    );
+    for (codec, name) in NAMES {
+        // Where the engine puts a codec's name: first, after a colon, or as an owner.
+        if let Some(rest) = text.strip_prefix(&format!("{codec} ")) {
+            text = format!("{name} {rest}");
+        }
+        text = text
+            .replace(&format!(": {codec} "), &format!(": {name} "))
+            .replace(&format!(": {codec}'s"), &format!(": {name}'s"))
+            .replace(&format!(" as {codec}'s"), &format!(" as {name}'s"));
+    }
+    text
+}
+
 #[derive(Debug, Clone)]
 pub struct ConvertSheet {
     input: String,
@@ -631,21 +660,26 @@ impl ConvertSheet {
         format!("{} kHz", khz.trim_end_matches('0').trim_end_matches('.'))
     }
 
-    /// The rates to choose from: the source's own is what "Same as source" means.
+    /// Opus is always coded at 48 kHz, so "Same as source" would say something untrue.
+    fn fixed_rate(&self) -> bool {
+        self.container == Container::Opus && !self.copy()
+    }
+
+    /// The rates to choose from: the source's own is what "Same as source" means. Opus has
+    /// the one.
     pub fn rate_options(&self) -> Vec<Option<u32>> {
+        if self.fixed_rate() {
+            return vec![Some(OPUS_RATE)];
+        }
         let own = self.stream.as_ref().map(|s| s.audio.sample_rate());
-        let rates: &[u32] = if self.container == Container::Opus {
-            &[OPUS_RATE]
-        } else {
-            &RATES
-        };
         std::iter::once(None)
-            .chain(rates.iter().copied().filter(|r| Some(*r) != own).map(Some))
+            .chain(RATES.iter().copied().filter(|r| Some(*r) != own).map(Some))
             .collect()
     }
 
+    /// The rate the row shows. The request only names one when the person chose it.
     pub fn sample_rate(&self) -> Option<u32> {
-        self.sample_rate
+        self.sample_rate.or(self.fixed_rate().then_some(OPUS_RATE))
     }
 
     pub fn set_sample_rate(&mut self, rate: Option<u32>) {
@@ -796,8 +830,13 @@ impl ConvertSheet {
     }
 
     /// The assumptions the plan makes, such as "treating 6 unlabelled channels as 5.1" or "mp3
-    /// has no bit depth: writing 16-bit": the same notes the command line prints.
+    /// has no bit depth: writing 16-bit": the notes the command line prints, in the sheet's words.
     pub fn notes(&self) -> Vec<String> {
+        self.engine_notes().iter().map(|n| plain_note(n)).collect()
+    }
+
+    /// The plan's notes exactly as the engine wrote them.
+    pub fn engine_notes(&self) -> Vec<String> {
         self.plan().map(|p| p.notes).unwrap_or_default()
     }
 
@@ -828,6 +867,27 @@ impl ConvertSheet {
         Some(parts.join(" \u{b7} "))
     }
 
+    /// `problem`, then the Channels choices that plan cleanly with it, when there are any.
+    fn with_channel_advice(&self, problem: String) -> String {
+        let ways: Vec<String> = self
+            .channel_options()
+            .into_iter()
+            .flatten()
+            .filter(|c| {
+                let audio = AudioSettings {
+                    channels: Some(c.clone()),
+                    ..self.audio()
+                };
+                self.check(self.container, &audio).is_ok()
+            })
+            .map(|c| Self::channel_label(&Some(c)))
+            .collect();
+        if ways.is_empty() {
+            return problem;
+        }
+        format!("{problem} Choose {} under Channels.", ways.join(" or "))
+    }
+
     fn engine_problem(&self) -> Option<Problem> {
         let error = self.check(self.container, &self.audio()).err()?;
         let what = match error {
@@ -838,7 +898,7 @@ impl ConvertSheet {
         let channels = stream.audio.layout().channels();
         let text = if what.starts_with("opus stores") || what.starts_with("opus holds at most") {
             let problem = what.split("; ").next().unwrap_or(&what);
-            format!("{} Choose Mono or Stereo under Channels.", plain(problem))
+            self.with_channel_advice(plain(problem))
         } else if what.contains("at most 8 channels") {
             let name = if self.container == Container::Mp4 {
                 "Apple Lossless"
@@ -849,7 +909,7 @@ impl ConvertSheet {
         } else if what.starts_with("alac stores") {
             // The rest is advice about a matrix, which the sheet has no way to give.
             let problem = what.split("; ").next().unwrap_or(&what);
-            plain(&problem.replacen("alac", "Apple Lossless", 1))
+            self.with_channel_advice(plain(&problem.replacen("alac", "Apple Lossless", 1)))
         } else {
             plain(&what.replacen("alac", "Apple Lossless", 1))
         };

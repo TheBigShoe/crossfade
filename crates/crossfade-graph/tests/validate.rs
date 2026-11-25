@@ -5,7 +5,8 @@ mod common;
 use common::{job, sine_wav, spec};
 use crossfade_core::{ChannelLayout, Limits, SampleFormat};
 use crossfade_graph::{
-    AudioSettings, CancelToken, Pipeline, describe, probe, run, validate, writable_extensions,
+    AudioSettings, CancelToken, Pipeline, describe, describe_concat, probe, run, validate,
+    validate_concat, writable_extensions,
 };
 use crossfade_opus::testing::ogg::{self as w, OggLayout};
 use crossfade_testkit::memory::MemoryIo;
@@ -102,11 +103,14 @@ fn table() -> Vec<Case> {
         ("s16.m4a", "o.flac", settings(None, None, None)),
         ("in.opus", "o.opus", settings(None, Some("copy"), None)),
         ("in.opus", "o.ogg", settings(None, Some("copy"), None)),
+        ("in.opus", "o.oga", settings(None, Some("copy"), None)),
+        ("s16.flac", "o.ogg", settings(None, Some("copy"), None)),
         ("in.opus", "o.opus", settings(None, None, None)),
         ("in.opus", "o.ogg", settings(None, Some("opus"), None)),
         ("s16.wav", "o.opus", settings(None, None, None)),
         ("hi.wav", "o.opus", settings(None, None, None)),
         // Refusals.
+        ("s16.flac", "o.opus", settings(None, Some("copy"), None)),
         ("f32.wav", "o.flac", settings(None, None, None)),
         ("s16.wav", "o.flac", settings(Some(F64), None, None)),
         ("wide.wav", "o.flac", settings(None, None, None)),
@@ -169,7 +173,36 @@ fn validate_and_open_agree_on_every_case() {
             (a, b) => panic!("{case}: validate {:?}, open {:?}", a.err(), b.err()),
         }
     }
-    assert_eq!(refused, 29, "the table keeps its refusals");
+    assert_eq!(refused, 30, "the table keeps its refusals");
+}
+
+#[test]
+fn copying_into_opus_says_what_an_opus_file_holds() {
+    let mut io = io();
+    let limits = Limits::default();
+    let flac = probe("s16.flac", &mut io, &limits).unwrap().streams[0].clone();
+    let copy = settings(None, Some("copy"), None);
+    let said = "unsupported: flac cannot be copied into .opus (an .opus file holds opus): use \
+                .oga or .ogg to copy it, or leave out --codec copy to encode it as opus";
+    for name in ["o.opus", "O.OPUS"] {
+        assert_eq!(validate(&flac, name, &copy).unwrap_err().to_string(), said);
+        assert_eq!(describe(&flac, name, &copy).unwrap_err().to_string(), said);
+    }
+    // A join never copies, so it says its own reason, the same in every entry point.
+    let joined = "unsupported: --codec copy cannot join inputs (joining decodes them)";
+    let two = [flac.clone(), flac];
+    assert_eq!(
+        validate_concat(&two, "o.opus", &copy)
+            .unwrap_err()
+            .to_string(),
+        joined
+    );
+    assert_eq!(
+        describe_concat(&two, "o.opus", &copy)
+            .unwrap_err()
+            .to_string(),
+        joined
+    );
 }
 
 #[test]

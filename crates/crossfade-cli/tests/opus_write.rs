@@ -537,3 +537,39 @@ fn the_help_names_opus_and_the_bitrate() {
         assert!(out.contains(want), "{want}");
     }
 }
+
+#[test]
+fn copying_flac_into_dot_opus_is_refused_and_leaves_no_file() {
+    let dir = Dir::new("copy-flac");
+    let (wav, _) = convert_in(&dir, 48_000, 2, 9_600);
+    let flac = dir.path("in.flac");
+    ok(&["convert", &wav, "-o", &flac]);
+    let out = dir.path("x.opus");
+    let why = refused(&["convert", &flac, "--codec", "copy", "-o", &out]);
+    assert!(
+        why.contains(
+            "flac cannot be copied into .opus (an .opus file holds opus): use .oga or .ogg"
+        ),
+        "{why}"
+    );
+    assert!(!std::path::Path::new(&out).exists());
+    // What it names works, and the encode it suggests too.
+    let oga = dir.path("x.oga");
+    ok(&["convert", &flac, "--codec", "copy", "-o", &oga]);
+    assert!(ok(&["probe", &oga]).contains("flac,"));
+    ok(&["convert", &flac, "-o", &out]);
+    assert!(ok(&["probe", &out]).contains("opus,"));
+}
+
+#[test]
+fn opus_copies_into_opus_ogg_and_oga_names() {
+    let dir = Dir::new("copy-opus");
+    let (wav, _) = convert_in(&dir, 48_000, 2, 9_600);
+    let src = dir.path("src.opus");
+    ok(&["convert", &wav, "-o", &src]);
+    for name in ["a.opus", "a.ogg", "a.oga"] {
+        let out = dir.path(name);
+        ok(&["convert", &src, "--codec", "copy", "-o", &out]);
+        assert!(ok(&["probe", &out]).contains("opus,"), "{name}");
+    }
+}

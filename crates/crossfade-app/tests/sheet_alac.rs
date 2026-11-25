@@ -193,10 +193,17 @@ fn a_layout_alac_cannot_store_is_a_problem_in_plain_words_that_name_only_what_wo
     assert_eq!(
         s.problems(&nothing_exists),
         [Problem::Source(
-            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is quad."
+            "Apple Lossless stores 4 channels in one layout only (4.0) and this stream is quad. \
+             Choose Mono or Stereo under Channels."
                 .into()
         )]
     );
+    // What it advises really plans, with no problem left and no flag involved.
+    for choice in s.channel_options().into_iter().flatten() {
+        s.set_channels(Some(choice));
+        assert!(s.problems(&nothing_exists).is_empty());
+        assert!(s.build(&nothing_exists).is_ok());
+    }
 }
 
 #[test]
@@ -208,8 +215,8 @@ fn back_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the
     assert_eq!(
         s.notes(),
         [
-            "5.1 with back surrounds written as 5.1 with side surrounds: alac names its \
-             surround pair as side speakers"
+            "5.1 with back surrounds written as 5.1 with side surrounds: Apple Lossless names \
+             its surround pair as side speakers"
         ]
     );
     assert!(s.build(&nothing_exists).is_ok());
@@ -220,7 +227,7 @@ fn back_surrounds_and_unlabelled_channels_are_no_problem_and_the_sheet_shows_the
     assert!(s.problems(&nothing_exists).is_empty());
     assert_eq!(
         s.notes(),
-        ["4 unlabelled channels taken as 4.0: alac's layout for 4 channels"]
+        ["4 unlabelled channels taken as 4.0: Apple Lossless's layout for 4 channels"]
     );
     // ALAC's own layout needs no note.
     let mut io = labelled_io("own.wav", 6, 0x60F);
