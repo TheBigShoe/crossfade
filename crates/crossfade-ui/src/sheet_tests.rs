@@ -1192,7 +1192,8 @@ fn opus_has_a_bitrate_and_neither_a_format_nor_a_level(cx: &mut TestAppContext) 
     let items = labels(cx, &rig, "sheet-bitrate");
     assert_eq!(items[0], "Default (128 kb/s)");
     assert!(items.contains(&"64 kb/s".to_owned()));
-    assert_eq!(labels(cx, &rig, "sheet-rate"), ["Same as source"]);
+    // Opus is always 48 kHz: the row says so, as its only choice.
+    assert_eq!(labels(cx, &rig, "sheet-rate"), ["48 kHz"]);
     assert!(!disabled(cx, rig.window, "dialog-ok"));
     type_output(cx, &rig, &rig.dir.path("again.flac"));
     assert!(!has(cx, rig.window, "sheet-bitrate"));
