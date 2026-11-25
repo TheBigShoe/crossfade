@@ -40,16 +40,36 @@ fn sound(
     boxed(kind, &[&head, children])
 }
 
+/// Core Audio's layout tag for ALAC's layout at each channel count 3 to 8 (the values
+/// `afconvert` writes: layout number in the high half, channels in the low).
+fn alac_layout_tag(channels: u8) -> Option<u32> {
+    let layout = match channels {
+        3 => 114,
+        4 => 116,
+        5 => 120,
+        6 => 124,
+        7 => 142,
+        8 => 127,
+        _ => return None,
+    };
+    Some(layout << 16 | u32::from(channels))
+}
+
 fn alac(stream: &StreamInfo, cookie: &[u8]) -> Result<Vec<u8>, Error> {
     let config = crossfade_alac::Config::parse(cookie).map_err(|e| Error::Unsupported {
         what: format!("mp4: {e}"),
     })?;
     let inner = full(b"alac", 0, 0, &[&cookie[..crossfade_alac::Config::LEN]])?;
+    // Mono and stereo are what a reader assumes; more channels need their layout said.
+    let chan = match alac_layout_tag(config.channels) {
+        Some(tag) => full(b"chan", 0, 0, &[&tag.to_be_bytes(), &[0; 8]])?,
+        None => Vec::new(),
+    };
     sound(
         b"alac",
         u16::from(config.channels),
         u16::from(config.bit_depth),
         stream.audio.sample_rate(),
-        &inner,
+        &[inner, chan].concat(),
     )
 }
