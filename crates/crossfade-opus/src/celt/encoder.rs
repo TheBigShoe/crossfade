@@ -1610,8 +1610,14 @@ impl CeltEncoder {
                 base_target += self.vbr_offset >> lm_diff;
             }
             let mut target = if hybrid {
-                // The hybrid targets need SILK's signal type: left to the hybrid encoder.
-                base_target + ((tf_estimate - 0.25) * (50 << BITRES) as f32) as i32
+                // Not yet the reference's whole: it also moves the target by SILK's
+                // quantisation offset (tonal frames up, noisy ones down).
+                let mut t = base_target + ((tf_estimate - 0.25) * (50 << BITRES) as f32) as i32;
+                // A strong transient gets enough to fold rather than fill the first bands.
+                if tf_estimate > 0.7 {
+                    t = t.max(50 << BITRES);
+                }
+                t
             } else {
                 compute_vbr(
                     base_target,
