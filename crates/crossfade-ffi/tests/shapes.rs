@@ -49,7 +49,22 @@ fn shown(mut v: Value, dir: &str) -> String {
             (env!("CARGO_PKG_VERSION"), "<version>"),
         ],
     );
-    serde_json::to_string_pretty(&v).unwrap()
+    serde_json::to_string_pretty(&sorted(v)).unwrap()
+}
+
+/// The document with every object's keys in order. A whole-workspace build turns on
+/// serde_json's `preserve_order` (GPUI asks for it), which would otherwise print the keys in
+/// the order they were inserted and make these snapshots depend on what else was built.
+fn sorted(v: Value) -> Value {
+    match v {
+        Value::Array(a) => Value::Array(a.into_iter().map(sorted).collect()),
+        Value::Object(o) => {
+            let mut entries: Vec<(String, Value)> = o.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().map(|(k, x)| (k, sorted(x))).collect())
+        }
+        other => other,
+    }
 }
 
 fn inspect(path: &str) -> Value {
