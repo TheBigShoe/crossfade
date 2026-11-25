@@ -452,7 +452,7 @@ fn surround_comes_back_with_every_channel_in_its_place() {
                 }
             })
             .collect();
-        let frames = 24_000;
+        let frames = 24_000usize;
         let pcm: Vec<f32> = (0..frames)
             .flat_map(|i| {
                 tones.iter().map(move |hz| {

@@ -326,7 +326,7 @@ fn every_channel_comes_back_in_its_place_with_its_own_tone() {
                 }
             })
             .collect();
-        let frames = 14_400;
+        let frames = 14_400usize;
         let pcm: Vec<f32> = (0..frames)
             .flat_map(|i| {
                 tones.iter().map(move |hz| {
