@@ -77,10 +77,10 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         .ok()
         .filter(|n| (1..=8).contains(n))
         .ok_or_else(|| unsupported(format!("alac holds at most 8 channels, got {count}")))?;
-    let wanted = crossfade_alac::wave_layout(channels)
-        .and_then(|w| ChannelLayout::from_mask(w.mask, count))
+    let wave = crossfade_alac::wave_layout(channels)
         .ok_or_else(|| unsupported("alac has no layout for this channel count"))?;
-    let wave = crossfade_alac::wave_layout(channels).expect("checked above");
+    let wanted = ChannelLayout::from_mask(wave.mask, count)
+        .ok_or_else(|| unsupported("alac has no layout for this channel count"))?;
     if *layout != wanted {
         let advice = match wanted.name() {
             Some(name) => format!("use --channels {name} to convert"),
@@ -102,7 +102,6 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         depth,
     ))
     .map_err(map)?;
-    let width = format.bits() as u32;
     let extradata = inner.config().write().to_vec();
     Ok(Box::new(AlacEncoder {
         inner,
@@ -110,7 +109,7 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
         format,
         channels: usize::from(channels),
         to_alac,
-        shift: width - u32::from(depth),
+        shift: format.bits() as u32 - u32::from(depth),
         frame_length: crossfade_alac::DEFAULT_FRAME_LENGTH as usize,
         queued: Vec::new(),
         scratch: Vec::new(),
@@ -122,22 +121,85 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
     }))
 }
 
+impl AlacEncoder {
+    /// Codes every whole packet queued, and with `all` the short one that is left.
+    fn code(&mut self, all: bool) -> Result<(), Error> {
+        let whole = self.frame_length * self.channels;
+        let mut at = 0;
+        while at < self.queued.len() && (all || self.queued.len() - at >= whole) {
+            let end = (at + whole).min(self.queued.len());
+            self.inner
+                .encode(&self.queued[at..end], &mut self.scratch)
+                .map_err(map)?;
+            let duration = ((end - at) / self.channels) as u64;
+            self.pending.push_back(Packet {
+                stream: 0,
+                pts: self.emitted as i64,
+                duration,
+                data: self.scratch.clone(),
+            });
+            self.emitted += duration;
+            at = end;
+        }
+        self.queued.drain(..at);
+        Ok(())
+    }
+
+    /// Appends `v` (WAVE order) in ALAC's order, `shift` bits down.
+    fn queue<T: Copy + Into<i32>>(&mut self, v: &[T]) {
+        self.queued.reserve(v.len());
+        for frame in v.chunks_exact(self.channels) {
+            let shift = self.shift;
+            self.queued
+                .extend(self.to_alac.iter().map(|&w| frame[w].into() >> shift));
+        }
+    }
+}
+
 impl Encoder for AlacEncoder {
     fn send_frame(&mut self, frame: &AudioFrame) -> Result<(), Error> {
-        let _ = (
-            self.rate,
-            self.format,
-            self.channels,
-            &self.to_alac,
-            self.shift,
-            self.frame_length,
-            &self.queued,
-            &self.scratch,
-            self.emitted,
-            self.drained,
-            frame,
-        );
-        Err(unsupported("alac frames are not coded yet"))
+        if frame.samples.format() != self.format
+            || frame.sample_rate != self.rate
+            || usize::from(frame.layout.channels()) != self.channels
+        {
+            return Err(unsupported(format!(
+                "frame is {} Hz x {} ch {} but the encoder is {} Hz x {} ch {}",
+                frame.sample_rate,
+                frame.layout.channels(),
+                frame.samples.format().name(),
+                self.rate,
+                self.channels,
+                self.format.name()
+            )));
+        }
+        if self.drained {
+            return Err(unsupported("send_frame after drain"));
+        }
+        if !frame.samples.len().is_multiple_of(self.channels) {
+            return Err(Error::Malformed {
+                what: format!(
+                    "{} samples is not a whole number of {}-channel frames",
+                    frame.samples.len(),
+                    self.channels
+                ),
+            });
+        }
+        match &frame.samples {
+            Samples::S16(v) => self.queue(v),
+            Samples::S32(v) => self.queue(v),
+            Samples::S24(v) => {
+                if v.iter().any(|&x| !(-(1 << 23)..1 << 23).contains(&x)) {
+                    return Err(Error::Malformed {
+                        what: "24-bit sample outside -2^23..2^23-1".into(),
+                    });
+                }
+                self.queue(v);
+            }
+            Samples::U8(_) | Samples::F32(_) | Samples::F64(_) => {
+                unreachable!("the constructor refused these formats")
+            }
+        }
+        self.code(false)
     }
 
     fn receive_packet(&mut self, out: &mut Packet) -> Result<bool, Error> {
@@ -154,8 +216,15 @@ impl Encoder for AlacEncoder {
     }
 
     fn drain(&mut self) {
+        if self.drained {
+            return;
+        }
         self.drained = true;
-        let _ = (&mut self.inner, Samples::S16(Vec::new()));
+        // A failure here cannot be returned; the next `receive_packet` reports it.
+        match self.code(true) {
+            Ok(()) => self.extradata = self.inner.config().write().to_vec(),
+            Err(e) => self.failed = Some(e),
+        }
     }
 
     fn extradata(&self) -> &[u8] {

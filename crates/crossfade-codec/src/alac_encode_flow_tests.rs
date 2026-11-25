@@ -18,7 +18,7 @@ fn signal(frames: usize, channels: usize, depth: u32, width: u32) -> Vec<i32> {
             x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let ramp = i64::from((i / channels) as i32 % 2000) - 1000;
             let noise = i64::from((x >> 20) as i32) - 2048;
-            let v = (ramp << (depth - 12)) + (noise << (depth - 14));
+            let v = (ramp << depth) / 4096 + (noise << depth) / 16384;
             let top = (1i64 << (depth - 1)) - 1;
             (v.clamp(-top - 1, top) as i32) << (width - depth)
         })

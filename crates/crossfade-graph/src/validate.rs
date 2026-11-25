@@ -13,6 +13,7 @@ use crossfade_dsp::filters::mix::assumption;
 const UNITY: GainPlan = GainPlan { linear: 1.0 };
 use crossfade_codec::{
     EncodeOptions, auto_thread_count, decoder_for_threads, encoder_for_threads, is_threaded,
+    is_threaded_encoder,
 };
 use crossfade_core::{
     AudioSpec, CodecId, Decoder, Encoder, Error, SampleFormat, StreamInfo, Tags, TimeBase,
@@ -322,7 +323,7 @@ pub(crate) fn resolve(
 
 /// Threads for a decoder and an encoder from one budget (see `Limits::max_threads`).
 pub(crate) fn codec_threads(threads: usize, input: CodecId, output: CodecId) -> (usize, usize) {
-    match (threads, (is_threaded(input), is_threaded(output))) {
+    match (threads, (is_threaded(input), is_threaded_encoder(output))) {
         // Alone, a codec on an automatic budget picks its own count (a decoder needs fewer).
         (0, (true, false)) => (0, 1),
         (0, (false, true)) => (1, 0),
