@@ -355,3 +355,93 @@ fn correlated_stereo_codes_smaller_than_its_channels_apart() {
         "{together} against {apart}"
     );
 }
+
+/// Tones and a little noise: something like music, the same on every platform.
+fn tones(frames: usize, depth: u8, seed: u64) -> Vec<i32> {
+    let parts = [
+        signal::sine(frames, depth, 0.031 + 0.001 * seed as f64, 0.4),
+        signal::sine(frames, depth, 0.0071, 0.3),
+        signal::sine(frames, depth, 0.17, 0.05),
+        signal::noise(frames, depth - 8, seed),
+    ];
+    (0..frames)
+        .map(|i| parts.iter().map(|p| p[i]).sum())
+        .collect()
+}
+
+#[test]
+fn compressed_sizes_are_frozen() {
+    // Exact sizes, so any change to what the encoder writes shows here; the share of the raw
+    // size beside each says how well it does.
+    let frames = 4096 * 6 + 1234;
+    let cases: [(u8, u8, usize); 4] = [
+        (16, 1, 31708),
+        (16, 2, 61843),
+        (24, 2, 113494),
+        (20, 6, 264873),
+    ];
+    for (depth, channels, want) in cases {
+        let pcm = signal::interleave(
+            &(0..channels)
+                .map(|c| tones(frames, depth, u64::from(c)))
+                .collect::<Vec<_>>(),
+        );
+        let (packets, _) = round_trip(config(depth, channels, 4096), &pcm);
+        let total: usize = packets.iter().map(Vec::len).sum();
+        let raw = pcm.len() * usize::from(depth) / 8;
+        assert_eq!(
+            total,
+            want,
+            "{depth}-bit, {channels} channels: {:.4} of raw",
+            total as f64 / raw as f64
+        );
+    }
+}
+
+mod random {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A channel of one kind: silence, noise over the whole range, a slow random walk,
+    /// extremes, or noise in the low bits only.
+    fn channel(kind: u8, frames: usize, depth: u8, seed: u64) -> Vec<i32> {
+        let max = ((1i64 << (depth - 1)) - 1) as i32;
+        match kind {
+            0 => vec![0; frames],
+            1 => signal::noise(frames, depth, seed),
+            2 => {
+                let steps = signal::noise(frames, 6, seed);
+                let mut at = 0i32;
+                steps
+                    .iter()
+                    .map(|s| {
+                        at = (at + s).clamp(-max - 1, max);
+                        at
+                    })
+                    .collect()
+            }
+            3 => signal::extremes(frames, depth),
+            _ => signal::noise(frames, 9, seed),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+        #[test]
+        fn any_stream_round_trips(
+            depth in prop::sample::select(vec![16u8, 20, 24, 32]),
+            channels in 1u8..=8,
+            frame_length in prop_oneof![1u32..=40, 41u32..=600],
+            frames in 1usize..=1500,
+            kinds in prop::collection::vec(0u8..5, 8),
+            seed in any::<u64>(),
+        ) {
+            let pcm = signal::interleave(
+                &(0..channels)
+                    .map(|c| channel(kinds[usize::from(c)], frames, depth, seed ^ u64::from(c)))
+                    .collect::<Vec<_>>(),
+            );
+            round_trip(config(depth, channels, frame_length), &pcm);
+        }
+    }
+}
