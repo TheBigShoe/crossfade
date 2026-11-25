@@ -43,11 +43,33 @@ pub(crate) fn signal(kind: &str, channels: usize, seconds: f32) -> Vec<f32> {
                     }
                 }
                 "loud" => 4.0 * libm::sinf(tau * 1000.0 * t),
+                "music" => music(t, ch, noise),
                 _ => unreachable!("{kind}"),
             });
         }
     }
     out
+}
+
+/// A few seconds of something like music at `t`: a chord of harmonic notes panned apart, a
+/// kick every half second, a hi-hat on the off-beats, a little hiss.
+fn music(t: f32, ch: usize, noise: f32) -> f32 {
+    let tau = 2.0 * std::f32::consts::PI;
+    let mut v = 0.0;
+    for (k, f0) in [220.0f32, 277.18, 329.63].into_iter().enumerate() {
+        let pan = [0.8f32, 0.5, 0.2][k];
+        let gain = if ch == 0 { pan } else { 1.0 - pan };
+        let mut a = 0.12f32;
+        for h in 1..=8 {
+            v += gain * a * libm::sinf(tau * f0 * h as f32 * t + k as f32);
+            a *= 0.6;
+        }
+    }
+    let beat = t % 0.5;
+    v += 0.5 * libm::expf(-beat * 30.0) * libm::sinf(tau * 60.0 * beat);
+    let off = (t + 0.25) % 0.5;
+    v += 0.15 * libm::expf(-off * 120.0) * noise;
+    v + 0.003 * noise
 }
 
 /// The `opus_compare` quality figure of `got` (decoded, `channels` interleaved, full scale
@@ -216,5 +238,82 @@ fn reset_starts_the_stream_afresh() {
     for (f, want) in pcm.chunks_exact(step).zip(&first) {
         enc.encode(f, &mut p).expect("encodes");
         assert_eq!(&p, want);
+    }
+}
+
+/// The SNR in dB of `got` against `want` through the encoder's 3 Hz DC filter (whose phase
+/// shift alone would cap it), which `got` lags by `delay` samples per channel, past the
+/// first 100 ms.
+fn snr(want: &[f32], got: &[f32], channels: usize, delay: usize) -> f64 {
+    let coef = 6.3 * 3.0 / 48_000.0f32;
+    let mut m = [0.0f32; 2];
+    let filtered: Vec<f32> = want
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| {
+            let c = i % channels;
+            let y = x - m[c];
+            m[c] = coef * x + 1e-30 + (1.0 - coef) * m[c];
+            y
+        })
+        .collect();
+    let (mut sig, mut err) = (0.0f64, 0.0f64);
+    for i in 4800 * channels..got.len() {
+        let w = f64::from(filtered[i - delay * channels]);
+        sig += w * w;
+        err += (w - f64::from(got[i])).powi(2);
+    }
+    10.0 * libm::log10(sig / err.max(1e-30))
+}
+
+#[test]
+fn stereo_quality_rises_with_the_bitrate() {
+    // The opus_compare figure and the SNR the music signal must beat, at 20 ms: what was
+    // measured, less 20 (Q swings) and 1 dB. libopus 1.4 forced to CELT at complexity 9 gives
+    // the same within 0.5 dB in CBR (README).
+    let pcm = signal("music", 2, 1.0);
+    for (vbr, table) in [
+        (
+            true,
+            [
+                (32_000, -100.0, 15.0),
+                (64_000, -75.0, 18.5),
+                (96_000, -50.0, 21.9),
+                (128_000, -50.0, 23.6),
+                (256_000, 35.0, 27.2),
+            ],
+        ),
+        (
+            false,
+            [
+                (32_000, -750.0, 14.0),
+                (64_000, -85.0, 17.3),
+                (96_000, -70.0, 20.1),
+                (128_000, -75.0, 22.8),
+                (256_000, -50.0, 26.6),
+            ],
+        ),
+    ] {
+        let mut last = f64::MIN;
+        for (bitrate, min_q, min_snr) in table {
+            let cfg = config(2, bitrate, vbr, FrameDuration::Ms20);
+            let (packets, out) = encode_and_decode(&cfg, &pcm);
+            let delay = Encoder::new(&cfg).expect("valid").lookahead() as usize;
+            let q = quality(&pcm, &out, 2, delay);
+            let s = snr(&pcm, &out, 2, delay);
+            let what = format!("{bitrate} vbr {vbr}: Q {q}, {s} dB");
+            assert!(q > min_q && s > min_snr, "{what}");
+            assert!(s > last, "{what}");
+            last = s;
+            if vbr {
+                // Unconstrained VBR over a second: within 15% (measured: 6 to 10% over).
+                let bytes: usize = packets.iter().map(Vec::len).sum();
+                let rate = bytes as f64 * 8.0;
+                assert!(
+                    (rate / f64::from(bitrate) - 1.0).abs() < 0.15,
+                    "{what}: {rate} b/s"
+                );
+            }
+        }
     }
 }
