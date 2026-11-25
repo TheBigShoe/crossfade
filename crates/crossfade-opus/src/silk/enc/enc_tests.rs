@@ -263,3 +263,61 @@ fn stereo_packets_decode_with_the_encoders_final_range() {
         }
     }
 }
+
+/// The quantiser runs the decoder's synthesis: after every packet the encoder's
+/// reconstruction (the last 20 ms of `xq`) is the decoder's output at the internal rate
+/// (`out_buf`, before resampling), sample for sample, in each coded channel.
+#[test]
+fn the_encoders_reconstruction_is_the_decoders_output() {
+    use crate::range::RangeDecoder;
+    use crate::silk::{SilkDecoder, SilkFrame};
+    let len = 48_000 / 2;
+    let a = voiced(len, 140.0, 12000.0);
+    let b = noise(len, 3, 5000);
+    for (channels, x) in [(1usize, a.clone()), (2, stereo(&a, &b))] {
+        for (khz, ms, bitrate, complexity) in CONFIGS {
+            let cfg = Cfg {
+                channels,
+                khz,
+                ms,
+                bitrate: bitrate * channels as i32,
+                complexity,
+                cbr: false,
+            };
+            let mut e = SilkEncoder::new();
+            let mut c = cfg.control();
+            let mut d = SilkDecoder::new(channels);
+            let n = 48 * ms as usize * channels;
+            for (i, frame) in x.chunks_exact(n).enumerate() {
+                let mut enc = RangeEncoder::new(1274);
+                c.max_bits = 1274 * 8;
+                e.encode(&mut c, frame, Some(&mut enc), Prefill::No, Some(true))
+                    .expect("encodes");
+                let nb = ((enc.tell() + 7) >> 3) as usize;
+                let body = enc.done().expect("fits");
+                let mut dec = RangeDecoder::new(&body[..nb]);
+                let f = SilkFrame {
+                    frame_size: 48 * ms as usize,
+                    internal_rate: (khz * 1000) as u32,
+                    stream_channels: channels,
+                    fec: false,
+                };
+                let mut out = vec![0.0f32; f.frame_size * channels];
+                d.decode(Some(&mut dec), &f, &mut out).expect("decodes");
+                for ch in 0..channels {
+                    if ch == 1 && e.mid_only(0) {
+                        continue;
+                    }
+                    let enc_st = &e.channels[ch];
+                    let dec_st = &d.state.channels[ch];
+                    let l = enc_st.ltp_mem_length;
+                    assert_eq!(
+                        enc_st.s_nsq.xq[..l],
+                        dec_st.out_buf[..l],
+                        "{cfg:?} packet {i} channel {ch}"
+                    );
+                }
+            }
+        }
+    }
+}
