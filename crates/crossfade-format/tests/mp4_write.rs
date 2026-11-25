@@ -237,6 +237,148 @@ fn packets_must_follow_one_another_on_the_timeline() {
     assert!(e.contains("starts after 0"), "{e}");
 }
 
+/// Where a box's children start in its body, for the boxes that have some.
+fn child_start(kind: &[u8; 4], parent: &[u8; 4]) -> Option<usize> {
+    match (kind, parent) {
+        (b"alac", b"stsd") => Some(28),
+        (b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"dinf" | b"udta" | b"edts", _) => {
+            Some(0)
+        }
+        (b"ilst" | b"----" | b"trkn" | b"\xA9nam", _) => Some(0),
+        (b"meta", _) => Some(4),
+        (b"dref" | b"stsd", _) => Some(8),
+        _ => None,
+    }
+}
+
+/// The box tree as text: a line per box with its size, indented by depth; `children` checks
+/// on the way that every size adds up.
+fn tree(file: &[u8]) -> String {
+    fn walk(body: &[u8], parent: &[u8; 4], depth: usize, out: &mut String) {
+        for (kind, inner) in children(body) {
+            let name = String::from_utf8_lossy(&kind).replace('\u{FFFD}', "(c)");
+            let name = name.trim_end();
+            let (indent, size) = (depth * 2, inner.len() + 8);
+            out.push_str(&format!("{:indent$}{name} {size}\n", ""));
+            if let Some(start) = child_start(&kind, parent) {
+                walk(&inner[start..], &kind, depth + 1, out);
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(file, b"    ", 0, &mut out);
+    out
+}
+
+#[test]
+fn the_written_box_tree_is_well_formed_and_as_expected() {
+    let original = read(fixture("alac-mono16.m4a"));
+    let mut packets = original.packets[..2].to_vec();
+    packets[1].duration = 100;
+    let mut stream = original.stream.clone();
+    stream.frames = Some(4096 + 90);
+    let mut tags = Tags::new();
+    tags.push("TITLE", "T");
+    tags.push("TRACKNUMBER", "1");
+    let file = write(&stream, &packets, &tags);
+    let want = "\
+ftyp 28
+free 8
+mdat 6328
+moov 707
+  mvhd 108
+  trak 473
+    tkhd 92
+    edts 36
+      elst 28
+    mdia 337
+      mdhd 32
+      hdlr 33
+      minf 264
+        smhd 16
+        dinf 36
+          dref 28
+            url 12
+        stbl 204
+          stsd 88
+            alac 72
+              alac 36
+          stts 32
+          stsc 28
+          stsz 28
+          stco 20
+  udta 118
+    meta 110
+      hdlr 33
+      ilst 65
+        (c)nam 25
+          data 17
+        trkn 32
+          data 24
+";
+    let got = tree(&file);
+    assert_eq!(got, want, "{got}");
+}
+
+#[test]
+fn a_long_stream_is_split_into_chunks_and_reads_back_whole() {
+    let original = read(fixture("alac-stereo16.m4a"));
+    // The reader never decodes, so any bytes will do for 4 MiB of packets.
+    let packets: Vec<Packet> = (0..40)
+        .map(|i| Packet {
+            stream: 0,
+            pts: i * 4096,
+            duration: 4096,
+            data: (0..100_000).map(|b| (b * 7 + i) as u8).collect(),
+        })
+        .collect();
+    let mut stream = original.stream.clone();
+    stream.frames = Some(40 * 4096);
+    let file = write(&stream, &packets, &Tags::new());
+    let mut body = child(&file, b"moov");
+    for kind in [b"trak", b"mdia", b"minf", b"stbl"] {
+        body = child(body, kind);
+    }
+    let chunk_count = u32::from_be_bytes(child(body, b"stco")[4..8].try_into().unwrap());
+    assert!(chunk_count > 1, "{chunk_count} chunks");
+    let again = read(file);
+    assert_eq!(again.packets, packets);
+    assert_eq!(again.stream, stream);
+}
+
+#[test]
+fn the_mdat_holds_exactly_the_samples_the_tables_count() {
+    let original = read(fixture("alac-ch6.m4a"));
+    let file = write(&original.stream, &original.packets, &original.tags);
+    let mdat = child(&file, b"mdat");
+    let bytes: usize = original.packets.iter().map(|p| p.data.len()).sum();
+    // The head is ftyp, free, mdat; the data follows the mdat header.
+    assert_eq!(mdat.len(), bytes);
+    assert_eq!(&mdat[..4], &original.packets[0].data[..4]);
+}
+
+#[test]
+fn a_written_file_seeks_as_the_original_does() {
+    let original = fixture("alac-stereo16.m4a");
+    let first = read(original.clone());
+    let file = write(&first.stream, &first.packets, &first.tags);
+    for pts in [-5, 0, 1, 4095, 4096, 5000, 10006, 10007, 20000] {
+        let mut a = open_demuxer(Box::new(Cursor::new(original.clone())), &Limits::default())
+            .unwrap()
+            .1;
+        let mut b = open_demuxer(Box::new(Cursor::new(file.clone())), &Limits::default())
+            .unwrap()
+            .1;
+        assert_eq!(a.seek(pts).unwrap(), b.seek(pts).unwrap(), "seek {pts}");
+        let (mut pa, mut pb) = (Packet::default(), Packet::default());
+        let (more_a, more_b) = (
+            a.read_packet(&mut pa).unwrap(),
+            b.read_packet(&mut pb).unwrap(),
+        );
+        assert_eq!((more_a, &pa), (more_b, &pb), "after seek {pts}");
+    }
+}
+
 /// A sink that cannot seek, like a pipe.
 struct Pipe;
 
