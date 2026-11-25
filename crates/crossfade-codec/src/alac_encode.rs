@@ -166,3 +166,6 @@ impl Encoder for AlacEncoder {
 #[cfg(test)]
 #[path = "alac_encode_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "alac_encode_flow_tests.rs"]
+mod flow_tests;
