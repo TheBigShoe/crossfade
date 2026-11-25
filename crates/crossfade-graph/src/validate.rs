@@ -631,6 +631,32 @@ mod tests {
         assert_eq!(depth_of(&stream(S16, None), "o.flac", Some(S24)), None);
     }
 
+    /// ALAC codes 16, 20, 24 and 32 bits: 20 is the only depth the stream names, and a depth it
+    /// has no name for is written one up, with a note.
+    #[test]
+    fn alac_writes_the_next_depth_up_and_says_so() {
+        use SampleFormat::*;
+        let plan = |input: &StreamInfo| validate(input, "o.m4a", &AudioSettings::default());
+        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", None), Some(20));
+        assert_eq!(depth_of(&stream(S24, Some(18)), "o.m4a", None), Some(20));
+        assert_eq!(depth_of(&stream(S24, Some(24)), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S24, None), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S16, Some(12)), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S32, Some(32)), "o.m4a", None), None);
+        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", Some(S24)), Some(20));
+        assert_eq!(depth_of(&stream(S24, Some(20)), "o.m4a", Some(S16)), None);
+        assert!(plan(&stream(S24, Some(20))).unwrap().notes.is_empty());
+        assert!(plan(&stream(S16, None)).unwrap().notes.is_empty());
+        assert_eq!(
+            plan(&stream(S16, Some(12))).unwrap().notes,
+            ["alac cannot code 12-bit audio: writing 16-bit"]
+        );
+        assert_eq!(
+            plan(&stream(S24, Some(18))).unwrap().notes,
+            ["alac cannot code 18-bit audio: writing 20-bit"]
+        );
+    }
+
     #[test]
     fn stream_copy_never_changes_it() {
         let settings = AudioSettings {
