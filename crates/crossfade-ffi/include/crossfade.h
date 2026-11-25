@@ -237,8 +237,9 @@ int32_t cf_player_wait(const CfPlayer *player, uint64_t since, uint32_t timeout_
                        uint64_t *revision);
 
 /* Stops the decoder thread and frees the player, from the thread that made it
- * (CF_ERR_WRONG_THREAD otherwise, and nothing is freed). A feed taken from it stays valid
- * and plays silence. NULL does nothing and returns CF_OK. */
+ * (CF_ERR_WRONG_THREAD otherwise, and nothing is freed), once no other thread is waiting on
+ * it. A feed taken from it stays valid and plays silence. NULL does nothing and returns
+ * CF_OK. */
 int32_t cf_player_destroy(CfPlayer *player);
 
 /* ---- Feed: the audio callback's side ------------------------------------------------ */

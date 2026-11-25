@@ -57,7 +57,8 @@ Which thread:
   Destroy a handle when no other thread is using it.
 - A player is driven only from the thread that made it (its sink is not `Send` in the app
   layer); other threads get `CF_ERR_WRONG_THREAD`. `cf_player_wait` is the exception: any
-  thread may wait. Use the main thread (a `@MainActor` class in Swift).
+  thread may wait (destroy the player only once none is waiting). Use the main thread (a
+  `@MainActor` class in Swift).
 - A feed is called from the audio thread, one call at a time. `cf_feed_fill` and
   `cf_feed_fill_planar` are real-time safe: no lock, no allocation or free, no blocking, no error
   message (codes only). That is by construction (the app layer's `Feed::fill` touches only

@@ -53,7 +53,8 @@ impl AudioSink for PulledSink {
 
 pub struct NativePlayer {
     owner: ThreadId,
-    signal: Arc<Signal>,
+    /// The one part any thread may touch: the ABI's wait borrows this field alone.
+    pub(crate) signal: Arc<Signal>,
     started: Arc<AtomicBool>,
     feed: RefCell<Option<Feed>>,
     player: RefCell<Player>,
@@ -129,11 +130,6 @@ impl NativePlayer {
         } else {
             Err(wrong_thread())
         }
-    }
-
-    /// The revision counter: the one part any thread may touch.
-    pub(crate) fn signal(&self) -> &Arc<Signal> {
-        &self.signal
     }
 
     /// Runs `f` on the player from its own thread and says it changed.

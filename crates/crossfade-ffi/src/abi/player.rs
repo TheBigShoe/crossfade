@@ -218,18 +218,18 @@ pub unsafe extern "C" fn cf_player_wait(
         if revision.is_null() {
             return Err(Failure::null("the revision pointer"));
         }
-        // SAFETY: a live player (the caller's promise). Only its counter is borrowed, an
-        // `Arc<Signal>` that is `Sync`; the parts that must stay on the owner thread are not
-        // touched.
-        let signal = unsafe { (*player).signal() };
+        // SAFETY: a live player (the caller's promise). Only the counter field is borrowed,
+        // an `Arc<Signal>`, which is `Sync`; no reference to the player itself, whose other
+        // parts stay on the thread that made it, is made here.
+        let signal = unsafe { &(*player).signal };
         let now = NativePlayer::wait(signal, since, Duration::from_millis(u64::from(timeout_ms)));
         // SAFETY: the caller's promise about `revision`.
         unsafe { write_out(revision, now, "the revision pointer") }
     })
 }
 
-/// Stops the decoder and frees the player, from the thread that made it. Null does nothing.
-/// A feed taken from it plays silence afterwards.
+/// Stops the decoder and frees the player, from the thread that made it, once no other thread
+/// is waiting on it. Null does nothing. A feed taken from it plays silence afterwards.
 ///
 /// # Safety
 /// `player` is null or a player from `cf_player_new` not yet destroyed.
