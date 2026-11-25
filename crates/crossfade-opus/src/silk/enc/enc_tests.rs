@@ -73,20 +73,52 @@ pub(super) fn max_bytes(cfg: Cfg) -> usize {
     }
 }
 
+/// What the Opus layer may ask of SILK beyond [`Cfg`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Opts {
+    /// In-band FEC (LBRR) in every packet, for this loss percentage.
+    pub(super) lbrr_loss: Option<i32>,
+    pub(super) dtx: bool,
+    /// The lowest internal rate in kHz, when below the configured one.
+    pub(super) min_khz: Option<i32>,
+    /// From this packet on, the desired internal rate in kHz.
+    pub(super) switch_to: Option<(usize, i32)>,
+}
+
 /// Encodes `pcm` (48 kHz, interleaved) packet by packet as SILK-only Opus packets (CBR ones
 /// not padded to their budget).
 pub(super) fn encode(cfg: Cfg, pcm: &[i16]) -> Vec<Coded> {
+    encode_with(cfg, Opts::default(), pcm)
+}
+
+/// [`encode`], with `opts`; the Opus layer's bandwidth switch follows SILK's `switch_ready`.
+pub(super) fn encode_with(cfg: Cfg, opts: Opts, pcm: &[i16]) -> Vec<Coded> {
     let mut e = SilkEncoder::new();
     let mut c = cfg.control();
+    if let Some(loss) = opts.lbrr_loss {
+        c.lbrr_coded = true;
+        c.packet_loss_percentage = loss;
+    }
+    c.use_dtx = opts.dtx;
+    if let Some(k) = opts.min_khz {
+        c.min_internal_sample_rate = k * 1000;
+    }
     let n = 48 * cfg.ms as usize * cfg.channels;
     let max_bytes = max_bytes(cfg);
     pcm.chunks_exact(n)
-        .map(|frame| {
+        .enumerate()
+        .map(|(i, frame)| {
             let mut enc = RangeEncoder::new(max_bytes - 1);
             c.max_bits = (max_bytes as i32 - 1) * 8;
+            if let Some((at, khz)) = opts.switch_to
+                && at == i
+            {
+                c.desired_internal_sample_rate = khz * 1000;
+            }
             let bytes = e
                 .encode(&mut c, frame, Some(&mut enc), Prefill::No, Some(true))
                 .expect("encodes");
+            c.opus_can_switch = c.switch_ready;
             let nb = ((enc.tell() + 7) >> 3) as usize;
             let rng = enc.rng();
             let mut packet = vec![cfg.toc(c.internal_sample_rate)];
@@ -117,6 +149,7 @@ pub(super) fn decode_checked(cfg: Cfg, coded: &[Coded]) -> Vec<f32> {
         if c.packet.len() > 1 {
             assert_eq!(d.final_range(), c.rng, "{cfg:?} packet {i}: final range");
         }
+        assert_eq!(out.len(), 48 * cfg.ms as usize * cfg.channels);
         all.extend_from_slice(&out);
     }
     all
@@ -358,11 +391,11 @@ fn random_input(seed: u32, shape: u8, amp: i32, len: usize) -> Vec<i16> {
         1 => n
             .iter()
             .enumerate()
-            .map(|(i, &x)| if (i / 480) % 3 == 0 { x } else { 0 })
+            .map(|(i, &x)| if (i / 480).is_multiple_of(3) { x } else { 0 })
             .collect(),
         2 => (0..len)
             .map(|i| {
-                if (i / (37 + seed as usize % 200)) % 2 == 0 {
+                if (i / (37 + seed as usize % 200)).is_multiple_of(2) {
                     amp as i16
                 } else {
                     -(amp as i16)
@@ -656,4 +689,152 @@ fn packets_for_a_fixed_input_are_frozen() {
         let coded = encode(cfg, x);
         assert_eq!(digest(&coded), want, "{cfg:?}: {:#018x}", digest(&coded));
     }
+}
+
+/// In-band FEC: packets carry the previous packet's LBRR copy, decode with the encoder's
+/// final range, and the decoder's FEC path reads the copy back.
+#[test]
+fn lbrr_packets_decode_and_their_fec_stands_in_for_a_loss() {
+    let len = 48_000;
+    let v = voiced(len, 140.0, 12000.0);
+    let st = stereo(&v, &voiced(len, 190.0, 9000.0));
+    for (cfg, x) in [
+        (
+            Cfg {
+                channels: 1,
+                khz: 16,
+                ms: 20,
+                bitrate: 24000,
+                complexity: 9,
+                cbr: false,
+            },
+            &v,
+        ),
+        (
+            Cfg {
+                channels: 1,
+                khz: 8,
+                ms: 60,
+                bitrate: 14000,
+                complexity: 3,
+                cbr: false,
+            },
+            &v,
+        ),
+        (
+            Cfg {
+                channels: 2,
+                khz: 12,
+                ms: 40,
+                bitrate: 30000,
+                complexity: 6,
+                cbr: false,
+            },
+            &st,
+        ),
+    ] {
+        let opts = Opts {
+            lbrr_loss: Some(20),
+            ..Opts::default()
+        };
+        let coded = encode_with(cfg, opts, x);
+        decode_checked(cfg, &coded);
+        // The first channel's LBRR flag follows its VAD flags in the payload's first bits.
+        let lbrr_bit = 0x80 >> (cfg.ms / 20).max(1);
+        let with_lbrr = coded
+            .iter()
+            .filter(|c| c.packet.len() > 1 && c.packet[1] & lbrr_bit != 0)
+            .count();
+        assert!(
+            with_lbrr > coded.len() / 2,
+            "{cfg:?}: {with_lbrr} packets with LBRR"
+        );
+        let mut d = Decoder::new(cfg.channels).expect("decoder");
+        let mut out = Vec::new();
+        for (i, c) in coded.iter().enumerate() {
+            if i % 5 == 3 {
+                // Lost: the next packet's LBRR copy stands in.
+                let next = &coded[i + 1].packet;
+                let n = d.decode_fec(next, &mut out).expect("fec");
+                assert_eq!(n, 48 * cfg.ms as usize, "{cfg:?} packet {i}");
+            } else {
+                d.decode(Some(&c.packet), &mut out).expect("decodes");
+                assert_eq!(d.final_range(), c.rng, "{cfg:?} packet {i}");
+            }
+        }
+    }
+}
+
+/// DTX: silence after speech is sent as TOC bytes alone (one real packet every 400 ms),
+/// which the decoder conceals; speech packets around them decode with the final range.
+#[test]
+fn dtx_sends_silence_as_toc_bytes() {
+    let len = 48_000 * 4;
+    let v = voiced(len, 140.0, 12000.0);
+    let gated: Vec<i16> = v
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| if (i / 48_000).is_multiple_of(2) { x } else { 0 })
+        .collect();
+    let cfg = Cfg {
+        channels: 1,
+        khz: 16,
+        ms: 20,
+        bitrate: 20000,
+        complexity: 9,
+        cbr: false,
+    };
+    let coded = encode_with(
+        cfg,
+        Opts {
+            dtx: true,
+            ..Opts::default()
+        },
+        &gated,
+    );
+    let empty = coded.iter().filter(|c| c.packet.len() == 1).count();
+    assert!(empty > 50, "{empty} DTX packets");
+    decode_checked(cfg, &coded);
+}
+
+/// A bandwidth switch: asked for a lower rate while it may switch, SILK low-passes through a
+/// transition, says it is ready, steps down (WB, MB, NB), and every packet on the way
+/// decodes with the final range.
+#[test]
+fn a_bandwidth_switch_steps_down_through_the_transition() {
+    let len = 48_000 * 8;
+    let v = voiced(len, 140.0, 12000.0);
+    let gated: Vec<i16> = v
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| {
+            if (i / 24000).is_multiple_of(2) {
+                x
+            } else {
+                x / 300
+            }
+        })
+        .collect();
+    let cfg = Cfg {
+        channels: 1,
+        khz: 16,
+        ms: 20,
+        bitrate: 20000,
+        complexity: 9,
+        cbr: false,
+    };
+    let opts = Opts {
+        min_khz: Some(8),
+        switch_to: Some((20, 8)),
+        ..Opts::default()
+    };
+    let coded = encode_with(cfg, opts, &gated);
+    // The TOC's configuration: 8-11 WB, 4-7 MB, 0-3 NB.
+    let mut bw = coded
+        .iter()
+        .map(|c| (c.packet[0] >> 3) / 4)
+        .collect::<Vec<_>>();
+    bw.dedup();
+    assert_eq!(bw, [2, 1, 0]);
+    decode_checked(cfg, &coded);
 }
