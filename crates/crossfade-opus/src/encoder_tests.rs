@@ -132,6 +132,39 @@ fn the_config_is_checked() {
 }
 
 #[test]
+fn the_input_depth_is_8_to_24_bits_and_24_by_default() {
+    assert_eq!(EncoderConfig::default().lsb_depth, 24);
+    for (lsb_depth, ok) in [
+        (0, false),
+        (7, false),
+        (8, true),
+        (16, true),
+        (24, true),
+        (25, false),
+    ] {
+        for channels in [1, 2, 6] {
+            let cfg = EncoderConfig {
+                channels,
+                lsb_depth,
+                ..EncoderConfig::default()
+            };
+            let ms = crate::MultistreamEncoder::new(&cfg, 1);
+            assert_eq!(ms.is_ok(), ok, "{lsb_depth} bits, {channels} channels");
+            if !ok {
+                assert!(matches!(ms, Err(Error::BadArgument(_))));
+            }
+            if channels <= 2 {
+                let single = Encoder::new(&cfg);
+                assert_eq!(single.is_ok(), ok, "{lsb_depth} bits");
+                if !ok {
+                    assert!(matches!(single, Err(Error::BadArgument(_))));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn frame_size_and_lookahead() {
     for (d, n) in [
         (FrameDuration::Ms2_5, 120),
@@ -411,6 +444,8 @@ proptest::proptest! {
         vbr in proptest::bool::ANY,
         constrained in proptest::bool::ANY,
         d in duration(),
+        lsb_depth in 8u8..=24,
+        quiet in proptest::bool::ANY,
         frames in proptest::collection::vec(
             (
                 (10.0f32..20_000.0, 0.0f32..1.0, proptest::bool::ANY, 0.0f32..4.0),
@@ -421,11 +456,16 @@ proptest::proptest! {
     ) {
         let mut cfg = config(channels, bitrate, vbr, d);
         cfg.constrained_vbr = constrained;
+        cfg.lsb_depth = lsb_depth;
         let n = d.samples();
         let mut seed = bitrate;
+        // Quiet signals reach the silence and noise-floor thresholds of every depth.
+        let scale = if quiet { 1e-4 } else { 1.0 };
         let pcm: Vec<f32> = frames
             .iter()
-            .flat_map(|(r, raw)| recipe_frame(n, usize::from(channels), *r, raw, &mut seed))
+            .flat_map(|((f, nz, imp, amp), raw)| {
+                recipe_frame(n, usize::from(channels), (*f, *nz, *imp, amp * scale), raw, &mut seed)
+            })
             .collect();
         let (_, out) = encode_and_decode(&cfg, &pcm);
         proptest::prop_assert!(out.iter().all(|v| v.is_finite()));

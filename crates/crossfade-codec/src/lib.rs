@@ -32,6 +32,12 @@ pub struct EncodeOptions {
     /// Opus: the rate of the audio before it was brought to 48 kHz, recorded in the header
     /// (`None`: 48000). It changes no sample. Other codecs ignore it.
     pub input_sample_rate: Option<u32>,
+    /// Opus: the true depth of the source's integer samples
+    /// ([`opus_encode::source_bits_per_sample`]; `None`: a float or lossy source), the
+    /// encoder's input depth as `opusenc` sets it (`OPUS_SET_LSB_DEPTH`, clamped to 8 to 24;
+    /// `None` is 24). It moves the encoder's silence and noise-floor thresholds, no sample.
+    /// Other codecs ignore it.
+    pub source_bits_per_sample: Option<u8>,
 }
 
 /// What a thread count of 0 ("the machine's parallelism") stands for here.

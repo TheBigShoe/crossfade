@@ -12,6 +12,10 @@
 //! count, and the rate of the audio before the graph brought it to 48 kHz, which only
 //! the caller knows (`EncodeOptions::input_sample_rate`, else 48000).
 //!
+//! Depth. As `opusenc`, the encoder is told the source's depth (`OPUS_SET_LSB_DEPTH`, 8 to 24):
+//! an integer source's true depth, 24 for a float or lossy one
+//! (`EncodeOptions::source_bits_per_sample`, [`source_bits_per_sample`]).
+//!
 //! Surround. Three to eight channels are written as mapping family 1 through
 //! `crossfade_opus::MultistreamEncoder`, from the one layout the engine calls Vorbis's for their
 //! count (`ChannelLayout::vorbis_order`, the layout the decoder adapter gives): the adapter
@@ -26,7 +30,7 @@ use crate::layout;
 use crate::opus::engine_error as map;
 use crate::vorbis::speakers;
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples,
+    AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples, StreamInfo,
 };
 use crossfade_opus::{EncoderConfig, MultistreamEncoder};
 use std::collections::VecDeque;
@@ -80,6 +84,18 @@ pub fn layout_problem(layout: &ChannelLayout) -> Option<String> {
 /// What a front end should say when `layout` is written as Vorbis's by assumption.
 pub fn layout_note(layout: &ChannelLayout) -> Option<String> {
     layout::note("opus", layout, &layout_for(layout.channels())?)
+}
+
+/// The depth `source`'s samples were quantised to, for the Opus encoder's input depth: an
+/// integer source's true depth (`bits_per_raw_sample`, else its format's width), `None` for a
+/// float or lossy one, whose samples sit on no grid.
+pub fn source_bits_per_sample(source: &StreamInfo) -> Option<u8> {
+    let format = source.audio.format();
+    if source.codec.is_lossy() || format.is_float() {
+        return None;
+    }
+    let width = u8::try_from(format.bits()).ok()?;
+    Some(source.bits_per_raw_sample.unwrap_or(width))
 }
 
 /// The encoder for `channels` (1 to 8) at the default settings, from which the header and the
@@ -151,6 +167,9 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
     let mut config = config(channels);
     config.bitrate = options.bitrate.unwrap_or(config.bitrate);
     config.vbr = !options.constant_bitrate;
+    config.lsb_depth = options
+        .source_bits_per_sample
+        .map_or(24, |b| b.clamp(8, 24));
     let inner = MultistreamEncoder::new(&config, family(channels)).map_err(map)?;
     let order = (channels > 2)
         .then(|| {

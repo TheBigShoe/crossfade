@@ -140,6 +140,11 @@ pub struct EncoderConfig {
     /// Discontinuous transmission (`OPUS_SET_DTX`): inactive frames (by the analysis's
     /// activity, or digital silence) are sent as TOC-only packets, one in every 400 ms.
     pub dtx: bool,
+    /// The depth of the input in bits, 8 to 24 (`OPUS_SET_LSB_DEPTH`; anything else is an
+    /// error, as libopus refuses it): what counts as digital silence and the noise floor
+    /// the bandwidth detection and CELT's band allocation assume. 16 for 16-bit sources,
+    /// as `opusenc` sets it.
+    pub lsb_depth: u8,
 }
 
 impl Default for EncoderConfig {
@@ -157,6 +162,7 @@ impl Default for EncoderConfig {
             inband_fec: false,
             packet_loss_percent: 0,
             dtx: false,
+            lsb_depth: 24,
         }
     }
 }
@@ -527,6 +533,9 @@ impl Encoder {
         if config.packet_loss_percent > 100 {
             return Err(Error::BadArgument("a packet loss above 100%"));
         }
+        if !(8..=24).contains(&config.lsb_depth) {
+            return Err(Error::BadArgument("an input depth outside 8 to 24 bits"));
+        }
         let channels = usize::from(config.channels);
         let user_bitrate = i64::from(config.bitrate).clamp(500, 300_000 * channels as i64) as i32;
         let mut enc = Self {
@@ -703,9 +712,11 @@ impl Encoder {
         let mut max_data_bytes = out_data_bytes.min(MAX_FRAME_PACKET) as i32;
         self.final_range = 0;
 
-        let is_silence = maxabs(pcm) <= 1.0 / (1 << 24) as f32;
+        let is_silence = maxabs(pcm) <= 1.0 / (1 << self.config.lsb_depth) as f32;
         let analysis_read_bak = self.analysis.read_position();
-        let analysis_info = self.analysis.run(pcm, ch, frame_size);
+        let analysis_info = self
+            .analysis
+            .run(pcm, ch, frame_size, self.config.lsb_depth);
         // The loudest active frame so far, for the activity of noisy ones.
         if !is_silence && analysis_info.activity_probability > DTX_ACTIVITY_THRESHOLD {
             self.peak_signal_energy = (0.999 * self.peak_signal_energy).max(frame_energy(pcm));
@@ -970,6 +981,7 @@ impl Encoder {
             equiv,
         );
         self.bandwidth = bandwidth;
+        self.celt.set_lsb_depth(self.config.lsb_depth);
         // CELT has no medium band.
         if self.mode == Mode::Celt && self.bandwidth == Bandwidth::Medium {
             self.bandwidth = Bandwidth::Wide;
@@ -1662,3 +1674,7 @@ mod modes_tests;
 #[cfg(test)]
 #[path = "encoder_analysis_tests.rs"]
 mod analysis_tests;
+
+#[cfg(test)]
+#[path = "encoder_depth_tests.rs"]
+mod depth_tests;

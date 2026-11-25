@@ -44,7 +44,11 @@ libopus's, though every decoder reads them):
   (code 3 padding), 40 and 60 ms packets (one SILK frame, or 20 ms CELT and hybrid frames
   through a port of the repacketizer, each frame reading its own analysis), "PLC frames"
   when the rate cannot fund a frame, a forced mode and bandwidth (`OPUS_SET_FORCE_MODE`,
-  `OPUS_SET_BANDWIDTH`), and a frame of NaN, infinite or absurd samples coded as silence;
+  `OPUS_SET_BANDWIDTH`), a frame of NaN, infinite or absurd samples coded as silence, and
+  the input's depth (`EncoderConfig::lsb_depth`, `OPUS_SET_LSB_DEPTH`: 8 to 24 bits, 24 by
+  default, anything else refused), which sets what is digital silence (here, in the
+  analysis and in CELT), the analysis's noise floor for the bandwidth and CELT's for its
+  band boosts and VBR cap;
 - SILK (`silk/enc_API.c` and everything under it, `silk/fixed/` for the analysis): see
   `src/silk/enc/mod.rs`; byte-identical to libopus's fixed-point build where tested;
 - CELT (`celt_encoder.c` and what it calls): pre-emphasis, the pitch pre-filter, transient
@@ -134,7 +138,12 @@ against libopus's float SILK), whence their 1 to 3% (more on noise taken for spe
 estimate and validity the same in every frame, and the surround masks within 5e-5. Before
 the analysis our VBR rates on these music files were 15% under to 8% over libopus's (up to
 1.3 dB less SNR), Auto chose another mode in up to all frames of a run, and surround VBR
-was 37% under to 42% over. `opusdec` (libopus 1.4) decodes every packet of ours (every
+was 37% under to 42% over. At an input depth of 16 bits on both sides (the corpus music, the
+synthetic voices, tones under hiss near the 16-bit noise floor, music at -60 dB, a tone under
+one 16-bit step), 68 runs from 12 to 128 kb/s choose the same mode and bandwidth in every
+frame, and CELT's rates are within 0.04% of libopus's (SILK's differ as at 24 bits); 16 bits
+narrows hissy signals to superwideband at 64 kb/s, codes -60 dB music up to 24% smaller at
+128 kb/s, and a signal under one 16-bit step as silence, as in libopus. `opusdec` (libopus 1.4) decodes every packet of ours (every
 mode, frame size, bitrate sweep across the modes, FEC, 3 to 8 channels) to this crate's
 output within 2e-5, and `opusinfo` reports no problem. The encoder runs at about 76 times
 real time for 128 kb/s stereo in release builds on one core here (87 before the analysis,

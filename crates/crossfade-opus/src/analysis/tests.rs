@@ -141,7 +141,7 @@ fn analyse(kind: &'static str, frames: usize) -> Vec<AnalysisInfo> {
     let mut sig = Signal::new(kind);
     let mut an = TonalityAnalysis::default();
     (0..frames)
-        .map(|_| an.run(&sig.frame(), sig.channels, 960))
+        .map(|_| an.run(&sig.frame(), sig.channels, 960, 24))
         .collect()
 }
 
@@ -480,7 +480,7 @@ fn hostile_input_never_panics_and_gives_finite_info() {
                 } else if k % 3 == 1 {
                     pcm.fill(bad);
                 }
-                let a = an.run(&pcm, channels, size);
+                let a = an.run(&pcm, channels, size, 24);
                 assert!(finite(&a), "{size} {channels} {k}: {a:?}");
             }
         }
@@ -492,12 +492,12 @@ fn reset_forgets() {
     let mut sig = Signal::new("speech");
     let frames: Vec<Vec<f32>> = (0..20).map(|_| sig.frame()).collect();
     let mut an = TonalityAnalysis::default();
-    let fresh: Vec<AnalysisInfo> = frames.iter().map(|f| an.run(f, 1, 960)).collect();
+    let fresh: Vec<AnalysisInfo> = frames.iter().map(|f| an.run(f, 1, 960, 24)).collect();
     let mut noise = Signal::new("noise");
     for _ in 0..7 {
-        an.run(&noise.frame(), 1, 960);
+        an.run(&noise.frame(), 1, 960, 24);
     }
     an.reset();
-    let again: Vec<AnalysisInfo> = frames.iter().map(|f| an.run(f, 1, 960)).collect();
+    let again: Vec<AnalysisInfo> = frames.iter().map(|f| an.run(f, 1, 960, 24)).collect();
     assert_eq!(fresh, again);
 }

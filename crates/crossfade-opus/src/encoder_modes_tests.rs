@@ -581,6 +581,7 @@ proptest::proptest! {
         modes in proptest::collection::vec(any_mode(), 1..4),
         bandwidth in any_bandwidth(),
         (fec, loss, dtx) in (proptest::bool::ANY, 0u8..=100, proptest::bool::ANY),
+        lsb_depth in 8u8..=24,
         frames in proptest::collection::vec(
             (
                 (10.0f32..20_000.0, 0.0f32..1.0, proptest::bool::ANY, 0.0f32..4.0),
@@ -599,6 +600,7 @@ proptest::proptest! {
         cfg.inband_fec = fec;
         cfg.packet_loss_percent = loss;
         cfg.dtx = dtx;
+        cfg.lsb_depth = lsb_depth;
         let ch = usize::from(channels);
         let n = d.samples();
         let mut seed = bitrates[0];
