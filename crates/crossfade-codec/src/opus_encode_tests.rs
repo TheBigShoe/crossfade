@@ -203,7 +203,8 @@ fn what_the_decoder_gives_back_is_as_long_as_the_input_and_not_shifted() {
             .unwrap();
         assert_eq!(best, 0, "{channels} ch");
         let snr = snr_db(&pcm, &got);
-        assert!(snr > 12.0, "{channels} ch: {snr:.1} dB");
+        // Measured 37.9 dB (mono) and 28.3 dB (stereo) at 128 kb/s.
+        assert!(snr > 20.0, "{channels} ch: {snr:.1} dB");
     }
 }
 
