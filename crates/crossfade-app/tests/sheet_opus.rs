@@ -26,6 +26,33 @@ fn wav_sheet(rate: u32, layout: ChannelLayout) -> ConvertSheet {
 }
 
 /// A sheet for an Opus file the engine itself wrote.
+/// A sheet for a silent 16-bit WAVE_FORMAT_EXTENSIBLE file with `channels` channels and `mask`.
+fn labelled_sheet(channels: u16, mask: u32) -> ConvertSheet {
+    let data = vec![0u8; 480 * usize::from(channels) * 2];
+    let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&0xFFFEu16.to_le_bytes());
+    b.extend_from_slice(&channels.to_le_bytes());
+    b.extend_from_slice(&48_000u32.to_le_bytes());
+    b.extend_from_slice(&(48_000 * u32::from(channels) * 2).to_le_bytes());
+    b.extend_from_slice(&(channels * 2).to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&22u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(&mask.to_le_bytes());
+    b.extend_from_slice(&[
+        1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xAA, 0, 0x38, 0x9B, 0x71,
+    ]);
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    b.extend_from_slice(&data);
+    let riff = (b.len() - 8) as u32;
+    b[4..8].copy_from_slice(&riff.to_le_bytes());
+    let mut io = MemoryIo::new();
+    io.insert("surround.wav", b);
+    ConvertSheet::for_input(&entry_of(&mut io, "surround.wav"))
+}
+
 fn opus_sheet() -> ConvertSheet {
     let (_, wav) = sine_wav(
         &spec(48_000, SampleFormat::S16, ChannelLayout::stereo()),
@@ -155,9 +182,13 @@ fn a_surround_source_is_refused_in_words_that_name_no_flag_unless_it_is_vorbis_l
     s.set_channels(Some(parse_channels("stereo").unwrap()));
     assert!(s.problems(&nothing_exists).is_empty());
     // Vorbis's 5.1 is written as it is, with a surround default bitrate and larger choices.
-    let mut s = wav_sheet(48_000, ChannelLayout::vorbis_order(6).unwrap());
+    let mut s = labelled_sheet(6, 0x3F);
     s.set_container(Container::Opus);
-    assert!(s.problems(&nothing_exists).is_empty());
+    assert!(
+        s.problems(&nothing_exists).is_empty(),
+        "{:?}",
+        s.problems(&nothing_exists)
+    );
     assert_eq!(s.bitrate_label(None), "Default (320 kb/s)");
     assert!(s.bitrate_options().contains(&Some(512_000)));
     assert!(!s.bitrate_options().contains(&Some(32_000)));

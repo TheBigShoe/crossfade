@@ -233,7 +233,11 @@ fn check_opus_stream(layout: &ChannelLayout, settings: &AudioSettings) -> Result
     if let Some(problem) = opus_layout_problem(layout) {
         // No standard mix goes between surround layouts that differ only in their names for
         // the same speakers (side and back), so the way to keep the channels is a matrix.
-        let keep = "a mix filter with a matrix puts the channels in that layout";
+        let keep = if channels > 8 {
+            "a mix filter with a matrix can bring them down to 8 or fewer"
+        } else {
+            "a mix filter with a matrix puts the channels in that layout"
+        };
         let advice = if standard_matrix(layout, &ChannelLayout::stereo()).is_ok() {
             format!("use --channels stereo to mix down, or {keep}")
         } else {

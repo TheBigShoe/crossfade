@@ -125,9 +125,10 @@ struct OutputArgs {
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=8))]
     compression_level: Option<u8>,
     /// Opus bitrate for the whole stream, such as 128k, 96000 or 64kbps (6 to 256 kb/s per
-    /// channel) [default: 96k mono, 128k stereo]. Opus is always written at 48 kHz, mono or
-    /// stereo, from float samples: other rates are resampled, and --sample-rate and
-    /// --sample-format are refused.
+    /// channel) [default: 96k mono, 128k stereo, 320k for 5.1]. Opus is always written at 48 kHz
+    /// from float samples: other rates are resampled, and --sample-rate and --sample-format are
+    /// refused. Up to 8 channels, 3 and more only in Vorbis's layouts (3.0, quad, 5.0-back,
+    /// 5.1-back, 6.1, 7.1).
     #[arg(long, value_name = "BITS/S", value_parser = value(parse_bitrate))]
     bitrate: Option<u32>,
     /// Opus at a constant bitrate (every packet the same size) instead of variable.

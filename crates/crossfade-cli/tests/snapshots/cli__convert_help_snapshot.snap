@@ -23,7 +23,7 @@ Options:
       --compression-level <COMPRESSION_LEVEL>
           FLAC effort from 0 to 8: 0 is fastest, 8 gives the smallest file
       --bitrate <BITS/S>
-          Opus bitrate for the whole stream, such as 128k, 96000 or 64kbps (6 to 256 kb/s per channel) [default: 96k mono, 128k stereo]. Opus is always written at 48 kHz, mono or stereo, from float samples: other rates are resampled, and --sample-rate and --sample-format are refused
+          Opus bitrate for the whole stream, such as 128k, 96000 or 64kbps (6 to 256 kb/s per channel) [default: 96k mono, 128k stereo, 320k for 5.1]. Opus is always written at 48 kHz from float samples: other rates are resampled, and --sample-rate and --sample-format are refused. Up to 8 channels, 3 and more only in Vorbis's layouts (3.0, quad, 5.0-back, 5.1-back, 6.1, 7.1)
       --cbr
           Opus at a constant bitrate (every packet the same size) instead of variable
       --threads <THREADS>

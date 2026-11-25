@@ -255,6 +255,11 @@ const OPUS_RATE: u32 = 48_000;
 /// The bitrates the sheet offers for Opus besides the default, in bits per second.
 const BITRATES: [u32; 7] = [32_000, 64_000, 96_000, 128_000, 160_000, 192_000, 256_000];
 
+/// The same for three channels and more, whose whole stream is bigger.
+const SURROUND_BITRATES: [u32; 7] = [
+    128_000, 192_000, 256_000, 320_000, 384_000, 448_000, 512_000,
+];
+
 /// The output rates the sheet offers besides the source's own.
 const RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
 
@@ -484,10 +489,15 @@ impl ConvertSheet {
 
     /// The default plus the offered bitrates.
     pub fn bitrate_options(&self) -> Vec<Option<u32>> {
-        std::iter::once(None).chain(BITRATES.map(Some)).collect()
+        let offered = if self.output_channels() > 2 {
+            SURROUND_BITRATES
+        } else {
+            BITRATES
+        };
+        std::iter::once(None).chain(offered.map(Some)).collect()
     }
 
-    /// Channels the output will have, as far as Opus's default bitrate cares: one or two.
+    /// Channels the output will have, as far as Opus's default bitrate cares.
     fn output_channels(&self) -> u16 {
         let own = self.stream.as_ref().map(|s| s.audio.layout().clone());
         let channels = match (&self.channels, &own) {
@@ -497,7 +507,7 @@ impl ConvertSheet {
             (None, Some(own)) => own.channels(),
             (None, None) => 2,
         };
-        channels.clamp(1, 2)
+        channels.clamp(1, 8)
     }
 
     /// `128 kb/s`; the default says what it is for this source.
@@ -820,11 +830,9 @@ impl ConvertSheet {
         };
         let stream = self.stream.as_ref()?;
         let channels = stream.audio.layout().channels();
-        let text = if what.contains("surround opus") {
-            format!(
-                "Opus can store one or two channels; this file has {channels}. Choose Mono or \
-                 Stereo under Channels."
-            )
+        let text = if what.starts_with("opus stores") || what.starts_with("opus holds at most") {
+            let problem = what.split("; ").next().unwrap_or(&what);
+            format!("{} Choose Mono or Stereo under Channels.", plain(problem))
         } else if what.contains("at most 8 channels") {
             let name = if self.container == Container::Mp4 {
                 "Apple Lossless"
