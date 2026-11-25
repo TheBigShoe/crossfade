@@ -431,7 +431,11 @@ fn the_source_depth_is_an_integer_sources_true_depth() {
         (CodecId::Opus, SampleFormat::F32, None, None),
     ] {
         let s = source(codec, format, raw);
-        assert_eq!(source_bits_per_sample(&s), want, "{codec:?} {format:?} {raw:?}");
+        assert_eq!(
+            source_bits_per_sample(&s),
+            want,
+            "{codec:?} {format:?} {raw:?}"
+        );
     }
 }
 

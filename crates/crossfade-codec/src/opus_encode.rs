@@ -30,8 +30,7 @@ use crate::layout;
 use crate::opus::engine_error as map;
 use crate::vorbis::speakers;
 use crossfade_core::{
-    AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples,
-    StreamInfo,
+    AudioFrame, AudioSpec, ChannelLayout, Encoder, Error, Packet, SampleFormat, Samples, StreamInfo,
 };
 use crossfade_opus::{EncoderConfig, MultistreamEncoder};
 use std::collections::VecDeque;
@@ -168,7 +167,9 @@ pub fn encoder(spec: &AudioSpec, options: &EncodeOptions) -> Result<Box<dyn Enco
     let mut config = config(channels);
     config.bitrate = options.bitrate.unwrap_or(config.bitrate);
     config.vbr = !options.constant_bitrate;
-    config.lsb_depth = options.source_bits_per_sample.map_or(24, |b| b.clamp(8, 24));
+    config.lsb_depth = options
+        .source_bits_per_sample
+        .map_or(24, |b| b.clamp(8, 24));
     let inner = MultistreamEncoder::new(&config, family(channels)).map_err(map)?;
     let order = (channels > 2)
         .then(|| {
