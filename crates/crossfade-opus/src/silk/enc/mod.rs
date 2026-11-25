@@ -7,4 +7,5 @@
 mod encode_pulses;
 mod fix;
 mod nlsf_enc;
+mod quant;
 mod tables;
