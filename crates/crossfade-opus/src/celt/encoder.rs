@@ -267,7 +267,7 @@ fn transient_analysis(input: &[f32], len: usize, channels: usize) -> (bool, f32,
         }
     }
     let is_transient = mask_metric > 200;
-    let tf_max = ((27.0 * mask_metric as f64).sqrt() as f32 - 42.0).max(0.0);
+    let tf_max = ((27.0 * f64::from(mask_metric)).sqrt() as f32 - 42.0).max(0.0);
     let tf_estimate = (0.0069 * tf_max.min(163.0) - 0.139).max(0.0).sqrt();
     (is_transient, tf_estimate, tf_chan)
 }
@@ -923,6 +923,7 @@ fn alloc_trim_analysis(
     (libm::floorf(0.5 + trim) as i32).clamp(0, 10)
 }
 
+#[allow(clippy::approx_constant)] // the reference's 0.707107, not 1/sqrt(2)
 /// `stereo_analysis`: whether left/right (dual stereo) codes cheaper than mid/side, by the
 /// L1 norms of the low bands.
 fn stereo_analysis(x: &[f32], lm: usize, n0: usize) -> bool {
@@ -1602,7 +1603,7 @@ impl CeltEncoder {
             // but lets the reservoir refill.
             if silence {
                 nb_available_bytes = 2;
-                target = 2 * 8 << BITRES;
+                target = (2 * 8) << BITRES;
                 delta = 0;
             }
             let alpha = if self.vbr_count < 970 {

@@ -2,12 +2,13 @@ use super::*;
 use crate::{Decoder, Mode, Packet};
 
 pub(crate) fn config(channels: u8, bitrate: u32, vbr: bool, d: FrameDuration) -> EncoderConfig {
-    let mut c = EncoderConfig::default();
-    c.channels = channels;
-    c.bitrate = bitrate;
-    c.vbr = vbr;
-    c.frame_duration = d;
-    c
+    EncoderConfig {
+        channels,
+        bitrate,
+        vbr,
+        frame_duration: d,
+        ..EncoderConfig::default()
+    }
 }
 
 /// `seconds` of test signal `kind`, interleaved, at 48 kHz.
@@ -117,7 +118,9 @@ fn input_of_the_wrong_length_is_refused() {
 
 #[test]
 fn every_packet_decodes_with_the_final_range() {
-    for kind in ["silence", "tone", "sweep", "noise", "clicks", "dc", "full", "loud"] {
+    for kind in [
+        "silence", "tone", "sweep", "noise", "clicks", "dc", "full", "loud",
+    ] {
         for channels in [1u8, 2] {
             for d in [
                 FrameDuration::Ms2_5,
@@ -148,7 +151,9 @@ fn cbr_packets_are_the_size_the_bitrate_implies() {
             for bitrate in [6_000u32, 8_000, 24_000, 64_000, 128_000, 300_000, 510_000] {
                 let pcm = signal("sweep", usize::from(channels), 0.1);
                 let (packets, _) = encode_and_decode(&config(channels, bitrate, false, d), &pcm);
-                let want = ((bitrate as usize * 12 / 8 + 6 * fps) / (12 * fps)).min(1276);
+                // libopus clamps the bitrate to 300 kb/s per channel.
+                let rate = bitrate.min(300_000 * u32::from(channels)) as usize;
+                let want = ((rate * 12 / 8 + 6 * fps) / (12 * fps)).min(1276);
                 for p in &packets {
                     assert_eq!(p.len(), want, "{channels} ch {fps}/s {bitrate}");
                 }
@@ -183,12 +188,13 @@ fn reset_starts_the_stream_afresh() {
     let mut enc = Encoder::new(&cfg).expect("valid");
     let mut first = vec![];
     let mut p = vec![];
-    for f in pcm.chunks_exact(960) {
+    let step = enc.frame_size() * 2;
+    for f in pcm.chunks_exact(step) {
         enc.encode(f, &mut p).expect("encodes");
         first.push(p.clone());
     }
     enc.reset();
-    for (f, want) in pcm.chunks_exact(960).zip(&first) {
+    for (f, want) in pcm.chunks_exact(step).zip(&first) {
         enc.encode(f, &mut p).expect("encodes");
         assert_eq!(&p, want);
     }
