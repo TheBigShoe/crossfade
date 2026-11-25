@@ -6,6 +6,7 @@
 
 mod celt;
 mod decoder;
+mod encoder;
 mod error;
 pub mod head;
 mod multistream;
@@ -17,6 +18,7 @@ mod silk;
 pub mod testing;
 
 pub use decoder::Decoder;
+pub use encoder::{Encoder, EncoderConfig, FrameDuration};
 pub use error::{Error, Result};
 pub use head::{ChannelMapping, OpusHead, OpusTags};
 pub use multistream::MultistreamDecoder;
