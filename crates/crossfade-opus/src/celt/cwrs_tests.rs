@@ -170,7 +170,16 @@ fn the_table_form_agrees_with_the_recurrence() {
 
 #[test]
 fn encode_pulses_codes_the_index_decode_pulses_reads() {
-    for (n, k) in [(2, 1), (2, 40), (3, 5), (8, 8), (16, 31), (22, 12), (96, 3), (176, 2)] {
+    for (n, k) in [
+        (2, 1),
+        (2, 40),
+        (3, 5),
+        (8, 8),
+        (16, 31),
+        (22, 12),
+        (96, 3),
+        (176, 2),
+    ] {
         if v128(n, k) > u128::from(u32::MAX) {
             continue;
         }

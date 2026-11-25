@@ -139,7 +139,13 @@ fn forward_then_backward_reconstructs_the_signal() {
                 super::forward(x, &mut coeffs[b..], blocks, shift);
             }
             for b in 0..blocks {
-                backward(&coeffs[b..], blocks, &mut out, (at + b * n2) as isize, shift);
+                backward(
+                    &coeffs[b..],
+                    blocks,
+                    &mut out,
+                    (at + b * n2) as isize,
+                    shift,
+                );
             }
         }
         for i in (frame..(frames - 1) * frame).step_by(3) {

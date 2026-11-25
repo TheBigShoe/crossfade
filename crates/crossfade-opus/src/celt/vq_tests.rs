@@ -47,7 +47,9 @@ fn shapes(n: usize) -> Vec<Vec<f32>> {
     let mut spiky = vec![0.01f32; n];
     spiky[n / 3] = -1.0;
     let flat = vec![0.5f32; n];
-    let alt: Vec<f32> = (0..n).map(|i| if i % 2 == 0 { 0.3 } else { -0.2 }).collect();
+    let alt: Vec<f32> = (0..n)
+        .map(|i| if i % 2 == 0 { 0.3 } else { -0.2 })
+        .collect();
     for x in [smooth, spiky, flat, alt] {
         let e = norm(&x);
         out.push(x.iter().map(|v| v / e).collect());
