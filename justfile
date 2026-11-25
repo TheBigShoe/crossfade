@@ -84,6 +84,58 @@ screenshots *names:
     cargo run -p crossfade-ui --example screenshots -- --out target/screenshots {{names}}
     @ls -lh target/screenshots/*.png
 
+# The iOS app (apps/ios/README.md). Never built yet: written without a Mac. Everything but
+# ios-check needs macOS with Xcode; ios-project also needs XcodeGen (brew install xcodegen).
+# IOS_SIMULATOR names the simulator; the default is the first available iPhone.
+ios_dir := justfile_directory() / "apps/ios"
+ios_notices := ios_dir / "Generated/ThirdPartyNotices.txt"
+ios_framework := ios_dir / "CrossfadeKit/Frameworks/CrossfadeFFI.xcframework"
+ios_sim_pick := 'sim="${IOS_SIMULATOR:-$(xcrun simctl list devices available | grep -m1 -oE "iPhone[^(]*" | sed "s/ *$//")}"; [[ -n "$sim" ]] || { echo "no iPhone simulator found; install one in Xcode or set IOS_SIMULATOR" >&2; exit 1; }'
+
+_ios-xcode:
+    @[[ "$(uname)" == Darwin ]] && command -v xcodebuild >/dev/null 2>&1 || { echo "this recipe needs macOS with Xcode (xcodebuild not found)" >&2; exit 1; }
+
+# The static library for device and simulator as an XCFramework, and the licence notices.
+ios-framework: _ios-xcode
+    scripts/build-xcframework.sh
+    python3 -I apps/ios/scripts/third_party_notices.py "{{ios_notices}}"
+
+# Writes apps/ios/Crossfade.xcodeproj from apps/ios/project.yml.
+ios-project: _ios-xcode
+    @command -v xcodegen >/dev/null 2>&1 || { echo "ios-project: needs XcodeGen: brew install xcodegen" >&2; exit 1; }
+    @[[ -d "{{ios_framework}}" ]] || { echo "ios-project: no XCFramework yet; run: just ios-framework" >&2; exit 1; }
+    @[[ -f "{{ios_notices}}" ]] || python3 -I apps/ios/scripts/third_party_notices.py "{{ios_notices}}"
+    cd "{{ios_dir}}" && xcodegen generate
+
+# Builds the app for a simulator (unsigned: a simulator needs no team).
+ios-build: ios-project
+    {{ios_sim_pick}}; \
+    xcodebuild -project "{{ios_dir}}/Crossfade.xcodeproj" -scheme Crossfade \
+        -destination "platform=iOS Simulator,name=$sim" -derivedDataPath "{{ios_dir}}/build" \
+        CODE_SIGNING_ALLOWED=NO build
+
+# Builds, installs and launches the app on a simulator.
+ios-run: ios-build
+    {{ios_sim_pick}}; \
+    app="{{ios_dir}}/build/Build/Products/Debug-iphonesimulator/Crossfade.app"; \
+    id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"; \
+    xcrun simctl boot "$sim" 2>/dev/null || true; \
+    open -a Simulator; \
+    xcrun simctl install "$sim" "$app"; \
+    xcrun simctl launch "$sim" "$id"
+
+# The wrapper's and the view models' XCTests (the CrossfadeKit package) on a simulator.
+ios-test: _ios-xcode
+    @[[ -d "{{ios_framework}}" ]] || { echo "ios-test: no XCFramework yet; run: just ios-framework" >&2; exit 1; }
+    {{ios_sim_pick}}; \
+    cd "{{ios_dir}}/CrossfadeKit" && xcodebuild test -scheme CrossfadeKit-Package \
+        -destination "platform=iOS Simulator,name=$sim" -derivedDataPath "{{ios_dir}}/build/package"
+
+# Without a Mac: the Swift tests' JSON against the Rust snapshots, and the scripts' tests.
+ios-check:
+    python3 -I apps/ios/scripts/pin_snapshots.py --check
+    python3 -I -B -m unittest discover -s apps/ios/scripts
+
 # Dependencies run in order and the first failure stops the recipe.
 ci: fmt-check lint lint-aac test test-aac conformance
 

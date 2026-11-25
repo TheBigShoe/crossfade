@@ -5,3 +5,12 @@
 *.snap.new
 .DS_Store
 /.corpus-cache
+# The iOS app's build output (just ios-framework, ios-project, ios-build) and local signing
+/apps/ios/CrossfadeKit/Frameworks/
+/apps/ios/Generated/
+/apps/ios/Crossfade.xcodeproj/
+/apps/ios/build/
+/apps/ios/Config/Signing.local.xcconfig
+/apps/ios/CrossfadeKit/.build/
+/apps/ios/CrossfadeKit/.swiftpm/
+xcuserdata/
