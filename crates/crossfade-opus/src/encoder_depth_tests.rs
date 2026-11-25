@@ -46,7 +46,7 @@ fn a_signal_under_the_input_depth_is_digital_silence() {
         let mut enc = MultistreamEncoder::new(&cfg, 1).expect("valid");
         let mut p = vec![];
         let mut largest = 0;
-        for f in pcm.chunks_exact(960 * 6) {
+        for f in pcm.chunks_exact(enc.frame_size() * 6) {
             enc.encode(f, &mut p).expect("encodes");
             largest = largest.max(p.len());
         }

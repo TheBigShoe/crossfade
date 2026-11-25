@@ -442,8 +442,10 @@ fn the_source_depth_is_an_integer_sources_true_depth() {
 #[test]
 fn the_encoder_takes_the_source_depth_as_its_input_depth_within_8_to_24_bits() {
     // A tone at 1e-5 is digital silence at 16 bits (three-byte packets) and not at 24.
-    let pcm: Vec<f32> = (0..48_000 * 2)
-        .map(|i| (1e-5 * (2.0 * std::f64::consts::PI * 440.0 * (i / 2) as f64 / 48e3).sin()) as f32)
+    let pcm: Vec<f32> = (0..48_000u32 * 2)
+        .map(|i| {
+            (1e-5 * (2.0 * std::f64::consts::PI * 440.0 * f64::from(i / 2) / 48e3).sin()) as f32
+        })
         .collect();
     for (bits, silent) in [
         (None, false),
