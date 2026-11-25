@@ -81,6 +81,7 @@ mod laplace;
 mod lpc;
 mod maths;
 mod mdct;
+mod pitch;
 mod quant_bands;
 mod rate;
 mod tables;
