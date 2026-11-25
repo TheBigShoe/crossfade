@@ -355,3 +355,49 @@ fn a_normalising_job_reports_measuring_then_what_it_found() {
     assert!(measuring < found);
     assert!(matches!(events.last(), Some(RunnerEvent::Finished { .. })));
 }
+
+/// The frames the file at `path` says it holds.
+fn frames_in(path: &str) -> Option<u64> {
+    let report =
+        crossfade_graph::probe(path, &mut crossfade_app::FsIo::new(), &Limits::default()).ok()?;
+    report.streams.first()?.frames
+}
+
+#[test]
+fn finished_reports_the_frames_written_to_the_output() {
+    use crossfade_graph::filter::FilterSpec;
+    let d = Dir::new("written");
+    s16_input(&d);
+    let trim = FilterSpec::Trim {
+        start_seconds: Some(0.25),
+        end_seconds: None,
+        duration_seconds: Some(0.5),
+    };
+    let normalize = FilterSpec::Normalize {
+        lufs: -16.0,
+        true_peak_dbtp: -1.0,
+    };
+    // 10,000 frames at 8 kHz in; half a second of it is 4,000.
+    let cases: [(&str, Vec<FilterSpec>, u64); 6] = [
+        ("plain.wav", vec![], FRAMES as u64),
+        ("trim.wav", vec![trim], 4_000),
+        ("normalised.wav", vec![normalize], FRAMES as u64),
+        ("plain.aiff", vec![], FRAMES as u64),
+        ("plain.flac", vec![], FRAMES as u64),
+        ("plain.m4a", vec![], FRAMES as u64),
+    ];
+    let (mut r, rx) = runner();
+    for (name, filters, expected) in cases {
+        let id = job_id();
+        let mut req = request(&d.path("in.wav"), &d.path(name), None, false);
+        req.job.outputs[0].audio.filters = filters;
+        r.start(id, &req, CancelToken::new());
+        let events = collect(&rx, id);
+        assert_eq!(frames_in(&d.path(name)), Some(expected), "{name} holds");
+        assert_eq!(
+            events.last(),
+            Some(&RunnerEvent::Finished { frames: expected }),
+            "{name}"
+        );
+    }
+}
