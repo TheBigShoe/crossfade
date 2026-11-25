@@ -465,7 +465,8 @@ fn a_final_head_may_change_what_the_pages_do_not_depend_on() {
     assert_eq!(sink.bytes(), plain);
     // The pre-skip and the channels are what the pages were written against.
     for head in [w::opus_head(2, 313, 0, None), w::opus_head(1, 312, 0, None)] {
-        let (_, r) = run(Box::new(Shared::default()), &head);
+        let sink = Shared::default();
+        let (_, r) = run(Box::new(sink), &head);
         assert!(r.unwrap_err().to_string().contains("pre-skip"));
     }
 }
