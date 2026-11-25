@@ -19,7 +19,7 @@ fn noise(len: usize, seed: u32, amp: i32) -> Vec<i16> {
             s ^= s << 13;
             s ^= s >> 17;
             s ^= s << 5;
-            ((s >> 16) as i32 % amp) as i16
+            (i32::from((s >> 16) as i16) % amp) as i16
         })
         .collect()
 }
