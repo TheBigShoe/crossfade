@@ -249,6 +249,8 @@ impl OutputArgs {
                 .and_then(SampleFormat::from_name),
             codec: self.codec.clone(),
             compression_level: self.compression_level,
+            bitrate: None,
+            constant_bitrate: false,
             sample_rate: self.sample_rate,
             channels: self.channels.clone(),
             dither: self
