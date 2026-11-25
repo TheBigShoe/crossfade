@@ -23,7 +23,7 @@ use crate::actions::{
     WAVEFORM_CONTEXT, WaveformFit, WaveformPanLeft, WaveformPanRight, WaveformZoomIn,
     WaveformZoomOut,
 };
-use crate::chrome::{LABEL_SIZE, icon_button};
+use crate::chrome::{LABEL_SIZE, focus_ring, icon_button};
 use crate::prelude::*;
 use crate::workspace::{AudioOutput, IoFactory};
 
@@ -668,6 +668,9 @@ impl WaveformStrip {
                     .into_any_element(),
             })
             .children(playhead)
+            .when(focused, |strip| {
+                strip.child(focus_ring("waveform-focus-ring", cx))
+            })
             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 if event.click_count() == 2 {
