@@ -258,3 +258,7 @@ impl RangeEncoder {
         self.offs + self.ext as usize + self.end_offs + 6 + self.nend_bits.div_ceil(8) as usize
     }
 }
+
+#[cfg(test)]
+#[path = "range_enc_tests.rs"]
+mod tests;
