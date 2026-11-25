@@ -23,7 +23,13 @@ pub(crate) fn to_text(report: &ProbeReport) -> String {
             out.push_str(&format!(" ({bits}-bit)"));
         }
         if let (Some(secs), Some(frames)) = (s.duration_seconds, s.frames) {
-            out.push_str(&format!(", {secs:.3} s ({frames} frames)"));
+            // Under a millisecond, three decimals of a second say nothing true.
+            let length = if secs > 0.0 && secs < 0.001 {
+                format!("{:.3} ms", secs * 1000.0)
+            } else {
+                format!("{secs:.3} s")
+            };
+            out.push_str(&format!(", {length} ({frames} frames)"));
         }
         out.push('\n');
     }
@@ -85,6 +91,17 @@ mod tests {
         assert_eq!(
             to_text(&report(None, Tags::new())),
             "Input: flac, 1234 bytes\n  Stream 0: audio, flac, 44100 Hz, stereo, s24, 1.000 s (44100 frames)\n"
+        );
+    }
+
+    #[test]
+    fn a_stream_under_a_millisecond_reads_in_milliseconds() {
+        let mut r = report(None, Tags::new());
+        // 29 frames at 44.1 kHz: 0.658 ms, which three decimals of a second round to 0.001 s.
+        r.streams[0].frames = Some(29);
+        assert_eq!(
+            to_text(&r),
+            "Input: flac, 1234 bytes\n  Stream 0: audio, flac, 44100 Hz, stereo, s24, 0.658 ms (29 frames)\n"
         );
     }
 

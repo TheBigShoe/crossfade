@@ -588,8 +588,14 @@ impl ConvertSheet {
         if self.copy() {
             return None;
         }
+        // What was asked for counts as well as what will be written: a preset whose format the
+        // container had to change (float into Apple Lossless) is still the one chosen, and the
+        // hint says what changed. The list's order settles a tie.
+        let format = self.format();
         PRESETS.iter().find(|p| {
-            p.container == self.container && p.format == self.format() && p.level == self.level
+            p.container == self.container
+                && (p.format == self.requested || p.format == format)
+                && p.level == self.level
         })
     }
 

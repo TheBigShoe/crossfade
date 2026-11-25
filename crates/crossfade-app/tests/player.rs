@@ -692,6 +692,15 @@ fn the_readout_is_short() {
 }
 
 #[test]
+fn a_file_under_a_millisecond_reads_in_milliseconds() {
+    // 32 frames at 48 kHz, as the inspector gives its duration.
+    assert_eq!(transport_text(0, Some(32), 48_000), "0.000 ms / 0.667 ms");
+    assert_eq!(transport_text(16, Some(32), 48_000), "0.333 ms / 0.667 ms");
+    // A millisecond or more keeps the clock.
+    assert_eq!(transport_text(0, Some(48), 48_000), "0:00.0 / 0:00.0");
+}
+
+#[test]
 fn seeks_made_while_nothing_pulls_play_the_last_target_first() {
     let bytes = stereo(48_000);
     let mut r = loaded(bytes.clone(), STEREO_48K);

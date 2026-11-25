@@ -468,7 +468,12 @@ pub fn clock_text(frames: u64, rate: u32) -> String {
 
 /// The transport's readout, `1:23.4 / 4:56.7`; just the position when the length is unknown.
 pub fn transport_text(position: u64, duration: Option<u64>, rate: u32) -> String {
+    // Under a millisecond the clock reads 0:00.0 for everything: milliseconds, as the inspector.
+    let ms = |frames: u64| format!("{:.3} ms", frames as f64 * 1000.0 / f64::from(rate));
     match duration {
+        Some(d) if rate > 0 && d > 0 && d * 1000 < u64::from(rate) => {
+            format!("{} / {}", ms(position.min(d)), ms(d))
+        }
         Some(d) => format!("{} / {}", clock_text(position, rate), clock_text(d, rate)),
         None => clock_text(position, rate),
     }

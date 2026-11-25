@@ -94,6 +94,25 @@ fn only_whole_number_formats_are_offered_and_a_float_source_says_so() {
 }
 
 #[test]
+fn a_preset_that_had_to_change_the_format_still_reads_as_itself() {
+    use SampleFormat::*;
+    let mut s = sheet("in.wav", F32);
+    // The preset chose "as the source"; the container made that 24-bit, and the hint says so.
+    s.apply_preset("alac");
+    assert_eq!(s.format(), FormatChoice::Format(S24));
+    assert_eq!(s.preset().map(|p| p.id), Some("alac"));
+    s.apply_preset("flac");
+    assert_eq!(s.preset().map(|p| p.id), Some("flac"));
+    // A format the person picks themselves is theirs: no preset asked for it.
+    s.apply_preset("alac");
+    s.set_format(FormatChoice::Format(S16));
+    assert!(s.preset().is_none());
+    // A preset asking for exactly what is written still reads as that preset.
+    s.apply_preset("flac-24");
+    assert_eq!(s.preset().map(|p| p.id), Some("flac-24"));
+}
+
+#[test]
 fn the_request_is_the_cli_s_for_an_m4a_convert() {
     let mut s = sheet("in.wav", SampleFormat::S24);
     s.apply_preset("alac");

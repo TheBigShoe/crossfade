@@ -696,7 +696,7 @@ fn open_about_dialog(window: &mut Window, cx: &mut App) {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         v_flex()
             .id("workspace")
@@ -741,7 +741,7 @@ impl Render for Workspace {
                 this.strip.update(cx, |strip, cx| strip.to_end(cx));
             }))
             .child(self.toolbar(cx))
-            .child(self.body(cx))
+            .child(self.body(window, cx))
             .child(self.status_bar(cx))
     }
 }

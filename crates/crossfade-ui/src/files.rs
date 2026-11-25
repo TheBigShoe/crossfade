@@ -7,8 +7,8 @@ use crossfade_graph::ProbeDocument;
 
 use crate::actions::{FILES_CONTEXT, SelectNextFile, SelectPreviousFile};
 use crate::chrome::{
-    FILE_NAME_LINE, FILE_ROW_HEIGHT, INSPECTOR_ROW, LABEL_SIZE, TITLE_SIZE, icon_button,
-    panel_header, section_label,
+    FILE_NAME_LINE, FILE_ROW_HEIGHT, INSPECTOR_ROW, LABEL_SIZE, TITLE_SIZE, focus_ring,
+    icon_button, panel_header, section_label,
 };
 use crate::config::Config;
 use crate::prelude::*;
@@ -96,7 +96,7 @@ impl Workspace {
     }
 
     /// The area between the toolbar and the status bar.
-    pub(crate) fn body(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn body(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let primary = cx.theme().primary;
         let highlight = self.drag_over;
         let content = if self.inputs.is_empty() {
@@ -104,7 +104,7 @@ impl Workspace {
         } else {
             h_flex()
                 .size_full()
-                .child(self.files_panel(cx))
+                .child(self.files_panel(window, cx))
                 .child(self.inspector(cx))
                 .into_any_element()
         };
@@ -177,7 +177,8 @@ impl Workspace {
             )
     }
 
-    fn files_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn files_panel(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self.files_focus.is_focused(window);
         let theme = cx.theme();
         let selected = self.inputs.selected().map(|entry| entry.id);
         let rows = self
@@ -299,25 +300,34 @@ impl Workspace {
                 ),
             )
             .child(
-                v_flex()
-                    .id("files-list")
-                    .test_support()
-                    .key_context(FILES_CONTEXT)
-                    .track_focus(&self.files_focus)
-                    .on_action(cx.listener(|this, _: &SelectPreviousFile, _, cx| {
-                        this.inputs.select_previous();
-                        this.sync_strip(cx);
-                        cx.notify();
-                    }))
-                    .on_action(cx.listener(|this, _: &SelectNextFile, _, cx| {
-                        this.inputs.select_next();
-                        this.sync_strip(cx);
-                        cx.notify();
-                    }))
+                div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .children(rows),
+                    .child(
+                        v_flex()
+                            .id("files-list")
+                            .test_support()
+                            .key_context(FILES_CONTEXT)
+                            .track_focus(&self.files_focus)
+                            .on_action(cx.listener(|this, _: &SelectPreviousFile, _, cx| {
+                                this.inputs.select_previous();
+                                this.sync_strip(cx);
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(|this, _: &SelectNextFile, _, cx| {
+                                this.inputs.select_next();
+                                this.sync_strip(cx);
+                                cx.notify();
+                            }))
+                            .size_full()
+                            .overflow_y_scroll()
+                            .children(rows),
+                    )
+                    // Where Tab landed: the list, not one row, takes the keys.
+                    .when(focused, |list| {
+                        list.child(focus_ring("files-list-focus-ring", cx))
+                    }),
             )
     }
 

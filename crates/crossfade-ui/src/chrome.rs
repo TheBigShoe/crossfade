@@ -85,3 +85,16 @@ pub fn toggle_button(
         button.text_color(cx.theme().muted_foreground)
     }
 }
+
+/// The ring a focused region shows, in the theme's focus colour: drawn over the region, inside
+/// its edges, and passing clicks through.
+pub fn focus_ring(id: &'static str, cx: &App) -> impl IntoElement {
+    div()
+        .id(id)
+        .test_support()
+        .absolute()
+        .inset_0()
+        .rounded_md()
+        .border_2()
+        .border_color(cx.theme().ring)
+}

@@ -77,6 +77,41 @@ fn space_on_a_focused_toolbar_button_presses_it_and_leaves_playback_alone(cx: &m
 }
 
 #[gpui_test]
+fn the_files_list_and_the_strip_show_a_ring_while_they_have_focus(cx: &mut TestAppContext) {
+    let rig = three_files(cx);
+    for ring in ["files-list-focus-ring", "waveform-focus-ring"] {
+        assert!(
+            !crate::test_support::has(cx, rig.window, ring),
+            "{ring} unfocused"
+        );
+    }
+    assert!(tab_to(cx, &rig, "files-list"));
+    draw(cx, rig.window);
+    assert!(crate::test_support::has(
+        cx,
+        rig.window,
+        "files-list-focus-ring"
+    ));
+    assert!(!crate::test_support::has(
+        cx,
+        rig.window,
+        "waveform-focus-ring"
+    ));
+    assert!(tab_to(cx, &rig, "waveform-strip"));
+    draw(cx, rig.window);
+    assert!(crate::test_support::has(
+        cx,
+        rig.window,
+        "waveform-focus-ring"
+    ));
+    assert!(!crate::test_support::has(
+        cx,
+        rig.window,
+        "files-list-focus-ring"
+    ));
+}
+
+#[gpui_test]
 fn tab_reaches_the_files_list_the_strip_and_the_queue(cx: &mut TestAppContext) {
     let rig = three_files(cx);
     click(cx, rig.window, "toolbar-queue");
