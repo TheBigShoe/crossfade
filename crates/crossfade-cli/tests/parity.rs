@@ -33,11 +33,11 @@ fn wav_bytes() -> Vec<u8> {
     v
 }
 
-/// The probed entry for `path`: a WAV, or the engine's own FLAC made from one when the
-/// name ends in `.flac`.
+/// The probed entry for `path`: a WAV, or the engine's own FLAC or M4A made from one when the
+/// name ends in `.flac` or `.m4a`.
 fn entry_for(path: &str) -> InputEntry {
     let mut io = MemoryIo::new();
-    if path.ends_with(".flac") {
+    if path.ends_with(".flac") || path.ends_with(".m4a") {
         io.insert("seed.wav", wav_bytes());
         let job = Job {
             version: Job::VERSION,
@@ -302,6 +302,46 @@ const ROWS: &[Row] = &[
         input: "in.flac",
         steps: &[Do::Container(Container::OggFlac), Do::Copy],
         cli: &["-o", "in.oga", "--codec", "copy"],
+    },
+    // Apple Lossless output: no level, whole-number formats.
+    Row {
+        input: "in.wav",
+        steps: &[Do::Preset("alac")],
+        cli: &["-o", "in.m4a"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Mp4)],
+        cli: &["-o", "in.m4a"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Mp4), Do::Format("s24")],
+        cli: &["-o", "in-s24.m4a", "--sample-format", "s24"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Container(Container::Mp4), Do::Format("f32")],
+        cli: &["-o", "in.m4a", "--sample-format", "s24"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[
+            Do::Container(Container::Flac),
+            Do::Level(Some(5)),
+            Do::Container(Container::Mp4),
+        ],
+        cli: &["-o", "in.m4a"],
+    },
+    Row {
+        input: "in.wav",
+        steps: &[Do::Output("typed.mp4")],
+        cli: &["-o", "typed.mp4"],
+    },
+    Row {
+        input: "in.m4a",
+        steps: &[Do::Container(Container::Mp4), Do::Copy],
+        cli: &["-o", "in-copy.m4a", "--codec", "copy"],
     },
     // Stream copy.
     Row {
