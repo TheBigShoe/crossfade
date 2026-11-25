@@ -1,6 +1,6 @@
 use super::*;
 use crate::encoder::tests::{config, signal};
-use crate::{FrameDuration, MultistreamDecoder, Packet};
+use crate::{FrameDuration, MultistreamDecoder, Packet, Signal};
 
 /// `seconds` of a different note on each of `channels` channels (so that a channel in the
 /// wrong place shows), with a beat of noise, interleaved.
@@ -362,4 +362,33 @@ fn the_surround_masks_move_bits_to_the_unmasked_channels() {
     assert!(loud[0] < 0.8 * quiet[0], "front: {quiet:?} then {loud:?}");
     assert!(loud[2] < 0.8 * quiet[2], "centre: {quiet:?} then {loud:?}");
     assert!(loud[1] > quiet[1], "rear: {quiet:?} then {loud:?}");
+}
+
+#[test]
+fn a_hybrid_frame_whose_silk_takes_every_bit_codes_celt_at_the_most() {
+    // Unmasked bands raise SILK's rate in VBR; when that leaves CELT 500 b/s or less (here
+    // about 170), libopus's CELT refuses the bitrate and keeps the frame's maximum: the frame
+    // fills the packet (as the centre of 7.1 at 128 kb/s does in libopus 1.5.2, in hybrid).
+    let mut cfg = config(1, 20_000, true, FrameDuration::Ms20);
+    cfg.signal = Signal::Voice;
+    let pcm = signal("music", 1, 0.4);
+    let mut enc = Encoder::new(&cfg).expect("valid");
+    let mut dec = crate::Decoder::new(1).expect("decoder");
+    let mut out = vec![];
+    let mut p = vec![];
+    let mut sizes = vec![];
+    for f in pcm.as_chunks::<960>().0 {
+        enc.set_energy_mask(Some([0.45; 42]));
+        enc.encode(f, &mut p).expect("encodes");
+        dec.decode(Some(&p), &mut out).expect("decodes");
+        assert_eq!(dec.final_range(), enc.final_range());
+        sizes.push((Packet::parse(&p).expect("parses").toc().mode(), p.len()));
+    }
+    let hybrid: Vec<usize> = sizes
+        .iter()
+        .filter(|(m, _)| *m == Mode::Hybrid)
+        .map(|&(_, n)| n)
+        .collect();
+    assert!(!hybrid.is_empty(), "{sizes:?}");
+    assert!(hybrid.iter().all(|&n| n > 1000), "{sizes:?}");
 }
