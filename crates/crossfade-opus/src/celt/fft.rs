@@ -4,9 +4,9 @@
 use super::tables::{BITREV60, BITREV120, BITREV240, BITREV480, FFT_FACTORS, FFT_TWIDDLES};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(super) struct Cpx {
-    pub(super) r: f32,
-    pub(super) i: f32,
+pub(crate) struct Cpx {
+    pub(crate) r: f32,
+    pub(crate) i: f32,
 }
 
 /// `C_MULC`: `a` times the conjugate of the twiddle `b`.
@@ -283,7 +283,7 @@ fn bitrev(shift: usize) -> &'static [u16] {
 
 /// `opus_fft` (libopus 1.1's, float build) of `size(shift)` points, scaled by `1 / size`:
 /// `fout[k] = sum fin[n] e^(-2 pi i n k / size) / size`.
-pub(super) fn fft(shift: usize, fin: &[Cpx], fout: &mut [Cpx]) {
+pub(crate) fn fft(shift: usize, fin: &[Cpx], fout: &mut [Cpx]) {
     let scale = 1.0 / size(shift) as f32;
     for (&x, &to) in fin.iter().zip(bitrev(shift)) {
         fout[usize::from(to)] = Cpx {
