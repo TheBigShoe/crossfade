@@ -627,3 +627,52 @@ proptest::proptest! {
         proptest::prop_assert!(out.iter().all(|v| v.is_finite()));
     }
 }
+
+#[test]
+fn silk_and_hybrid_give_the_same_bytes_on_every_platform() {
+    // Frozen: a change here changes the encoder's output, which must be on purpose. SILK is
+    // integer arithmetic, CELT float through libm only.
+    let mut cases = vec![];
+    let mut add = |channels: u8, bitrate, vbr, d, f: &dyn Fn(&mut EncoderConfig)| {
+        let mut cfg = config(channels, bitrate, vbr, d);
+        f(&mut cfg);
+        let pcm = speech(usize::from(channels), 0.6);
+        cases.push(super::tests::digest(&cfg, &pcm));
+    };
+    add(1, 12_000, true, FrameDuration::Ms20, &|c| {
+        c.signal = Signal::Voice
+    });
+    add(1, 24_000, true, FrameDuration::Ms20, &|c| {
+        c.signal = Signal::Voice
+    });
+    add(2, 32_000, false, FrameDuration::Ms10, &|c| {
+        c.signal = Signal::Voice
+    });
+    add(1, 16_000, true, FrameDuration::Ms60, &|c| {
+        c.mode = Some(Mode::Silk)
+    });
+    add(2, 48_000, true, FrameDuration::Ms40, &|c| {
+        c.mode = Some(Mode::Hybrid)
+    });
+    add(1, 64_000, false, FrameDuration::Ms40, &|c| {
+        c.mode = Some(Mode::Celt)
+    });
+    add(1, 20_000, true, FrameDuration::Ms20, &|c| {
+        c.signal = Signal::Voice;
+        c.inband_fec = true;
+        c.packet_loss_percent = 10;
+        c.application = Application::Voip;
+    });
+    assert_eq!(
+        cases,
+        [
+            (697, 7107422012473052099),
+            (1559, 2013836080188151404),
+            (2400, 10663908940347596749),
+            (1047, 17564393564395574519),
+            (2760, 477757030767389309),
+            (4800, 289040657716010392),
+            (1332, 15683301958387451202)
+        ]
+    );
+}

@@ -432,7 +432,7 @@ proptest::proptest! {
 }
 
 /// FNV-1a over every packet's length and bytes and the final ranges.
-fn digest(cfg: &EncoderConfig, pcm: &[f32]) -> (usize, u64) {
+pub(crate) fn digest(cfg: &EncoderConfig, pcm: &[f32]) -> (usize, u64) {
     let mut enc = Encoder::new(cfg).expect("valid");
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     let mut eat = |b: u8| {
