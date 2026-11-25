@@ -230,6 +230,13 @@ fn durations_and_frames_are_readable() {
     );
     assert_eq!(value(&with(1_234_567, 62.25), "frames"), "1,234,567");
     assert_eq!(value(&with(5, 0.0), "duration_seconds"), "0:00.000");
+    // Under a millisecond, a file with frames never reads as nothing.
+    assert_eq!(
+        value(&with(10, 10.0 / 48_000.0), "duration_seconds"),
+        "0.208 ms"
+    );
+    assert_eq!(crossfade_app::inspector::duration_text(0.0005), "0.500 ms");
+    assert_eq!(crossfade_app::inspector::duration_text(0.001), "0:00.001");
     assert_eq!(value(&with(5, 3723.5), "duration_seconds"), "1:02:03.500");
     assert_eq!(value(&with(999, 59.9996), "duration_seconds"), "1:00.000");
 }

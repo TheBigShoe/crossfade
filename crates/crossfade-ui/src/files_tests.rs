@@ -525,6 +525,15 @@ fn a_file_name_wider_than_the_inspector_truncates_instead_of_being_clipped(
 }
 
 #[gpui_test]
+fn a_file_shorter_than_a_millisecond_does_not_read_as_no_time(cx: &mut TestAppContext) {
+    let rig = open_rig(cx);
+    let tiny = rig.dir.write_wav("tiny.wav", 48_000, 2, 10);
+    add_paths(cx, &rig, &[&tiny]);
+    let summary = rig.workspace.read_with(cx, |w, _| w.file_summary(0));
+    assert!(summary.ends_with("0.208 ms"), "{summary}");
+}
+
+#[gpui_test]
 fn the_inspector_never_paints_over_the_queue_dock(cx: &mut TestAppContext) {
     let rig = open_rig(cx);
     let a = rig.dir.write_wav("a.wav", 48_000, 2, 480);

@@ -194,6 +194,15 @@ fn ticks_use_nice_steps_and_minutes_seconds() {
 }
 
 #[test]
+fn the_ruler_stops_where_a_short_file_ends() {
+    // 32 frames at one frame a pixel: the audio spans 32 of the strip's 854 px.
+    let v = view(32, 854);
+    let t = v.ticks();
+    assert!(!t.is_empty());
+    assert!(t.iter().all(|t| t.x <= 32.0), "{:?}", labels(&v));
+}
+
+#[test]
 fn ticks_never_crowd() {
     let v = view(3_600_000, 300);
     let t = v.ticks();
