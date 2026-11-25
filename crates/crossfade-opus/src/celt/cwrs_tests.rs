@@ -167,3 +167,38 @@ fn the_table_form_agrees_with_the_recurrence() {
         }
     }
 }
+
+#[test]
+fn encode_pulses_codes_the_index_decode_pulses_reads() {
+    for (n, k) in [(2, 1), (2, 40), (3, 5), (8, 8), (16, 31), (22, 12), (96, 3), (176, 2)] {
+        if v128(n, k) > u128::from(u32::MAX) {
+            continue;
+        }
+        let v = u(n, k) + u(n, k + 1);
+        let step = (v / 53).max(1);
+        let mut vectors = vec![];
+        let mut i = 0u32;
+        while i < v {
+            let mut y = vec![0; n];
+            cwrsi_table(n, k, i, &mut y);
+            vectors.push((i, y));
+            i = match i.checked_add(step) {
+                Some(next) => next,
+                None => break,
+            };
+        }
+        let mut enc = crate::range_enc::RangeEncoder::new(1200);
+        for (i, y) in &vectors {
+            assert_eq!(icwrs(y), (*i, v), "n {n} k {k}");
+            encode_pulses(y, k, &mut enc);
+        }
+        let frame = enc.done().expect("fits");
+        let mut dec = RangeDecoder::new(&frame);
+        let mut ec = Ec::new(&mut dec);
+        for (_, y) in &vectors {
+            let mut got = vec![0; n];
+            decode_pulses(&mut got, k, &mut ec);
+            assert_eq!(&got, y, "n {n} k {k}");
+        }
+    }
+}
