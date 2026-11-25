@@ -62,7 +62,7 @@ pub fn create(
     })?;
     let ilst = ilst::write(tags)?;
     let mut head = FTYP.to_vec();
-    head.extend_from_slice(&mdat_header(0));
+    head.extend_from_slice(&mdat_header(0)?);
     sink.write_all(&head)?;
     Ok(Box::new(Mp4Muxer {
         sink,
@@ -80,7 +80,7 @@ pub fn create(
 /// The 16 bytes after `ftyp` for `payload` bytes of audio: an empty `free` box and a plain
 /// `mdat` header, or, when the size does not fit 32 bits, the 64-bit `mdat` header that takes
 /// the room of both.
-pub(super) fn mdat_header(payload: u64) -> [u8; 16] {
+pub(super) fn mdat_header(payload: u64) -> Result<[u8; 16], Error> {
     let mut out = [0u8; 16];
     match u32::try_from(payload + 8) {
         Ok(size) => {
@@ -94,7 +94,36 @@ pub(super) fn mdat_header(payload: u64) -> [u8; 16] {
             out[8..].copy_from_slice(&(payload + 16).to_be_bytes());
         }
     }
-    out
+    Ok(out)
+}
+
+/// The samples' places in the file: runs of consecutive samples, each a chunk.
+#[derive(Default)]
+pub(super) struct Chunks {
+    offsets: Vec<u64>,
+    counts: Vec<u32>,
+}
+
+impl Chunks {
+    /// A new chunk starts once the open one holds `limit` bytes.
+    pub(super) fn new(_limit: u64) -> Self {
+        Self::default()
+    }
+
+    /// Notes a sample of `size` bytes at `offset`, which follows the previous one.
+    pub(super) fn add(&mut self, _offset: u64, _size: u32) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// The `stsc` box: runs of chunks with the same sample count.
+    pub(super) fn stsc(&self) -> Result<Vec<u8>, Error> {
+        Ok(Vec::new())
+    }
+
+    /// `stco`, or `co64` when an offset needs more than 32 bits.
+    pub(super) fn offsets(&self) -> Result<Vec<u8>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 fn be(version: u8, v: u64) -> Vec<u8> {
@@ -307,7 +336,7 @@ impl Muxer for Mp4Muxer {
         let moov = self.moov(self.timeline()?)?;
         self.sink.write_all(&moov)?;
         self.sink.seek(SeekFrom::Start(MDAT_AT))?;
-        self.sink.write_all(&mdat_header(self.pos - DATA_AT))?;
+        self.sink.write_all(&mdat_header(self.pos - DATA_AT)?)?;
         self.sink
             .seek(SeekFrom::Start(self.pos + moov.len() as u64))?;
         self.sink.finish()?;
