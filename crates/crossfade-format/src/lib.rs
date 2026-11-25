@@ -90,7 +90,8 @@ pub fn create_muxer(
         FormatId::Flac => flac::create(sink, stream, tags),
         FormatId::Aiff => aiff::create(sink, stream, tags),
         FormatId::Ogg => ogg::create(sink, stream, tags),
-        FormatId::Mp3 | FormatId::Mp4 | FormatId::Adts => Err(Error::Unsupported {
+        FormatId::Mp4 => mp4::create(sink, stream, tags),
+        FormatId::Mp3 | FormatId::Adts => Err(Error::Unsupported {
             what: format!("writing {} is not supported yet", format.name()),
         }),
     }
@@ -248,11 +249,16 @@ mod tests {
         // The FLAC writer exists; this PCM stream is simply not one it can hold.
         assert!(unsupported(mk(FormatId::Flac)).contains("flac files cannot hold"));
         assert!(unsupported(mk(FormatId::Ogg)).contains("ogg files can only hold flac"));
-        for f in [FormatId::Mp3, FormatId::Mp4, FormatId::Adts] {
+        for f in [FormatId::Mp3, FormatId::Adts] {
             assert_eq!(
                 unsupported(mk(f)),
                 format!("writing {} is not supported yet", f.name())
             );
         }
+        // The MP4 writer exists; it holds ALAC only, and says which codec it refused.
+        assert_eq!(
+            unsupported(mk(FormatId::Mp4)),
+            "writing pcm_s16le into mp4 is not supported yet"
+        );
     }
 }

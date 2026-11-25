@@ -20,6 +20,7 @@
 //! encoder's delay and padding, not a tag: the reader takes it for the timeline instead.
 
 use super::boxes::{Children, Cursor, FourCc};
+use super::build::{boxed, full};
 use crossfade_core::{Error, Tags, tag_keys};
 
 /// The ID3v1 genres (0-79), which `gnre` numbers from 1.
@@ -113,19 +114,21 @@ pub(super) struct Metadata {
     pub(super) smpb: Option<String>,
 }
 
+/// The plain text items and the tag each one is.
+const TEXT_ITEMS: [(&FourCc, &str); 9] = [
+    (b"\xA9nam", tag_keys::TITLE),
+    (b"\xA9ART", tag_keys::ARTIST),
+    (b"aART", "ALBUMARTIST"),
+    (b"\xA9alb", tag_keys::ALBUM),
+    (b"\xA9day", tag_keys::DATE),
+    (b"\xA9gen", tag_keys::GENRE),
+    (b"\xA9cmt", tag_keys::COMMENT),
+    (b"\xA9wrt", "COMPOSER"),
+    (b"\xA9too", "ENCODER"),
+];
+
 fn text_key(item: &FourCc) -> Option<&'static str> {
-    Some(match item {
-        b"\xA9nam" => tag_keys::TITLE,
-        b"\xA9ART" => tag_keys::ARTIST,
-        b"aART" => "ALBUMARTIST",
-        b"\xA9alb" => tag_keys::ALBUM,
-        b"\xA9day" => tag_keys::DATE,
-        b"\xA9gen" => tag_keys::GENRE,
-        b"\xA9cmt" => tag_keys::COMMENT,
-        b"\xA9wrt" => "COMPOSER",
-        b"\xA9too" => "ENCODER",
-        _ => return None,
-    })
+    TEXT_ITEMS.iter().find(|(k, _)| *k == item).map(|&(_, t)| t)
 }
 
 /// The payload of each `data` box in an item: (type, bytes).
@@ -232,6 +235,90 @@ pub(super) fn parse(ilst: &[u8]) -> Metadata {
         }
     }
     meta
+}
+
+/// The item for `key` (ASCII case-insensitive), if it has a plain one.
+fn text_item(key: &str) -> Option<&'static FourCc> {
+    TEXT_ITEMS
+        .iter()
+        .find(|(_, t)| t.eq_ignore_ascii_case(key))
+        .map(|&(k, _)| k)
+}
+
+/// A `data` box: type flags (1 is UTF-8 text, 0 implicit), a zero locale, the payload.
+fn data_box(flags: u32, payload: &[u8]) -> Result<Vec<u8>, Error> {
+    full(b"data", 0, flags, &[&[0; 4], payload])
+}
+
+/// The first tag of `key` when its value is a number the reader would not drop and the 16-bit
+/// field holds: its index and value.
+fn small(tags: &Tags, key: &str) -> Option<(usize, u16)> {
+    tags.iter()
+        .enumerate()
+        .find(|(_, t)| t.key.eq_ignore_ascii_case(key))
+        .and_then(|(i, t)| Some((i, t.value.parse::<u16>().ok().filter(|&n| n != 0)?)))
+}
+
+/// A `trkn` or `disk` item and the indices of the tags it takes.
+struct Pair {
+    item: Vec<u8>,
+    taken: [Option<usize>; 2],
+}
+
+/// The `trkn` or `disk` item for the first usable number and total.
+fn pair_item(
+    tags: &Tags,
+    kind: &FourCc,
+    number: &str,
+    total: &str,
+    trailer: &[u8],
+) -> Result<Option<Pair>, Error> {
+    let (n, t) = (small(tags, number), small(tags, total));
+    if n.is_none() && t.is_none() {
+        return Ok(None);
+    }
+    let mut payload = vec![0, 0];
+    payload.extend_from_slice(&n.map_or(0, |(_, v)| v).to_be_bytes());
+    payload.extend_from_slice(&t.map_or(0, |(_, v)| v).to_be_bytes());
+    payload.extend_from_slice(trailer);
+    let item = boxed(kind, &[&data_box(0, &payload)?])?;
+    Ok(Some(Pair {
+        item,
+        taken: [n.map(|x| x.0), t.map(|x| x.0)],
+    }))
+}
+
+/// An `ilst` body holding `tags`, the inverse of [`parse`]: items in the tags' order, one per
+/// tag, except that the first usable number and total of a track or disc make one item at the
+/// place of whichever comes first. What the reader could not give back is left out: empty
+/// values and names, and `iTunSMPB`, which is the timeline's.
+pub(super) fn write(tags: &Tags) -> Result<Vec<u8>, Error> {
+    let pairs = [
+        pair_item(tags, b"trkn", tag_keys::TRACKNUMBER, "TRACKTOTAL", &[0, 0])?,
+        pair_item(tags, b"disk", "DISCNUMBER", "DISCTOTAL", &[])?,
+    ];
+    let mut out = Vec::new();
+    for (i, tag) in tags.iter().enumerate() {
+        if let Some(pair) = pairs.iter().flatten().find(|p| p.taken.contains(&Some(i))) {
+            if pair.taken.iter().flatten().min() == Some(&i) {
+                out.extend_from_slice(&pair.item);
+            }
+            continue;
+        }
+        if tag.value.is_empty() || tag.key.is_empty() || tag.key == "iTunSMPB" {
+            continue;
+        }
+        let value = data_box(1, tag.value.as_bytes())?;
+        match text_item(&tag.key) {
+            Some(kind) => out.extend(boxed(kind, &[&value])?),
+            None => {
+                let mean = full(b"mean", 0, 0, &[b"com.apple.iTunes"])?;
+                let name = full(b"name", 0, 0, &[tag.key.as_bytes()])?;
+                out.extend(boxed(b"----", &[&mean, &name, &value])?);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The `ilst` inside a `meta` body, which is a full box in MP4 and a plain one in QuickTime.

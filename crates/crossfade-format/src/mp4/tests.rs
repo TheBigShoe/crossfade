@@ -670,6 +670,77 @@ fn ilst_items_map_onto_the_shared_tag_names() {
     );
 }
 
+fn tags_of(pairs: &[(&str, &str)]) -> Tags {
+    let mut t = Tags::new();
+    for (k, v) in pairs {
+        t.push(*k, *v);
+    }
+    t
+}
+
+#[test]
+fn written_ilst_items_read_back_as_the_same_tags() {
+    let tags = tags_of(&[
+        ("TITLE", "Title"),
+        ("ARTIST", "Artist"),
+        ("ARTIST", "Second Artist"),
+        ("ALBUMARTIST", "Album Artist"),
+        ("ALBUM", "Album"),
+        ("DATE", "2026"),
+        ("GENRE", "Ambient"),
+        ("TRACKNUMBER", "3"),
+        ("TRACKTOTAL", "12"),
+        ("DISCNUMBER", "1"),
+        ("DISCTOTAL", "2"),
+        ("COMMENT", "Comment \u{fc}n\u{ef}"),
+        ("COMPOSER", "Composer"),
+        ("ENCODER", "crossfade"),
+        ("REPLAYGAIN_TRACK_GAIN", "-6.5 dB"),
+    ]);
+    let ilst = ilst::write(&tags).unwrap();
+    assert_eq!(ilst::parse(&ilst).tags, tags);
+}
+
+#[test]
+fn ilst_writing_keeps_what_the_reader_would_misread_as_free_form_items() {
+    // Values the 16-bit track and disc fields cannot hold travel as free-form items, a name in
+    // another case reads back in the canonical one, and a total alone is a pair with number 0.
+    let tags = tags_of(&[
+        ("TRACKNUMBER", "3/12"),
+        ("TRACKTOTAL", "70000"),
+        ("Title", "T"),
+        ("DISCTOTAL", "4"),
+    ]);
+    let got = ilst::parse(&ilst::write(&tags).unwrap()).tags;
+    let got: Vec<(&str, &str)> = got
+        .iter()
+        .map(|t| (t.key.as_str(), t.value.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("TRACKNUMBER", "3/12"),
+            ("TRACKTOTAL", "70000"),
+            ("TITLE", "T"),
+            ("DISCTOTAL", "4"),
+        ]
+    );
+}
+
+#[test]
+fn ilst_writing_drops_what_the_reader_could_not_give_back() {
+    // Empty values and names are not items; `iTunSMPB` is the timeline's, not a tag's.
+    let tags = tags_of(&[
+        ("TITLE", ""),
+        ("", "x"),
+        ("iTunSMPB", " 0 0 0 0"),
+        ("A", "b"),
+    ]);
+    let got = ilst::parse(&ilst::write(&tags).unwrap()).tags;
+    assert_eq!(got, tags_of(&[("A", "b")]));
+    assert!(ilst::write(&Tags::new()).unwrap().is_empty());
+}
+
 #[test]
 fn a_quicktime_meta_without_version_is_read_too() {
     let hdlr = full(b"hdlr", 0, &cat(&[&[0; 4], b"mdirappl", &[0; 9]]));
@@ -879,4 +950,70 @@ proptest! {
             let _ = d.read_packet(&mut p);
         }
     }
+}
+
+fn box_kind(b: &[u8]) -> &[u8] {
+    &b[4..8]
+}
+
+/// The rows of a full box that holds a count and a table, as 32-bit words.
+fn words(b: &[u8]) -> Vec<u32> {
+    b[12..]
+        .chunks(4)
+        .map(|w| u32::from_be_bytes(w.try_into().unwrap()))
+        .collect()
+}
+
+#[test]
+fn chunks_close_at_their_byte_limit_and_equal_chunks_share_an_stsc_row() {
+    let mut chunks = mux::Chunks::new(10);
+    let mut at = 100;
+    for _ in 0..7 {
+        chunks.add(at, 4).unwrap();
+        at += 4;
+    }
+    // Three samples fill a chunk (12 bytes), then three more, then the one left over.
+    let stsc = chunks.stsc().unwrap();
+    assert_eq!(box_kind(&stsc), b"stsc");
+    assert_eq!(words(&stsc), [2, 1, 3, 1, 3, 1, 1]);
+    let stco = chunks.offsets().unwrap();
+    assert_eq!(box_kind(&stco), b"stco");
+    assert_eq!(words(&stco), [3, 100, 112, 124]);
+}
+
+#[test]
+fn offsets_past_4_gib_make_a_co64() {
+    let far = (5u64 << 32) + 7;
+    let mut chunks = mux::Chunks::new(1);
+    chunks.add(100, 4).unwrap();
+    chunks.add(far, 4).unwrap();
+    let co64 = chunks.offsets().unwrap();
+    assert_eq!(box_kind(&co64), b"co64");
+    assert_eq!(words(&co64), [2, 0, 100, 5, 7]);
+    // Still under the line: 32 bits.
+    let mut chunks = mux::Chunks::new(1);
+    chunks.add(u64::from(u32::MAX), 4).unwrap();
+    assert_eq!(box_kind(&chunks.offsets().unwrap()), b"stco");
+}
+
+#[test]
+fn the_mdat_header_is_32_bit_until_the_size_does_not_fit() {
+    let small = mux::mdat_header(1000).unwrap();
+    assert_eq!(&small[..], b"\0\0\0\x08free\0\0\x03\xF0mdat");
+    // The largest payload a 32-bit box size holds is u32::MAX - 8.
+    let edge = mux::mdat_header(u64::from(u32::MAX) - 8).unwrap();
+    assert_eq!(&edge[8..], b"\xFF\xFF\xFF\xFFmdat");
+    let big = mux::mdat_header(u64::from(u32::MAX) - 7).unwrap();
+    let mut want = vec![0, 0, 0, 1];
+    want.extend_from_slice(b"mdat");
+    want.extend_from_slice(&(u64::from(u32::MAX) + 9).to_be_bytes());
+    assert_eq!(&big[..], &want[..]);
+    // The reader sees one `mdat` of that size starting where the head's two boxes began.
+    let mut src = Cursor::new(big.to_vec());
+    let mut pos = 0;
+    let top = boxes::next_top(&mut src, &mut pos).unwrap().unwrap();
+    assert_eq!(&top.kind, b"mdat");
+    assert_eq!(top.body_start, 16);
+    assert_eq!(top.body_len, Some(u64::from(u32::MAX) - 7));
+    assert!(mux::mdat_header(u64::MAX).is_err());
 }

@@ -12,11 +12,16 @@
 
 mod asc;
 mod boxes;
+mod build;
 mod demux;
 mod entry;
 mod ilst;
 mod moov;
+mod mux;
+mod sample_entry;
 mod table;
+
+pub use mux::create;
 
 use crossfade_core::{Demuxer, Error, Limits, MediaSource};
 
