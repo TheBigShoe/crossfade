@@ -17,7 +17,7 @@ use crossfade_flac::streaminfo::StreamInfoBlock;
 use std::io::SeekFrom;
 
 /// "CXFD" read as a big-endian number.
-const SERIAL: u32 = 0x4358_4644;
+pub(super) const SERIAL: u32 = 0x4358_4644;
 const TYPE_VORBIS_COMMENT: u8 = 4;
 const LAST_BLOCK: u8 = 0x80;
 /// The comment is the only header packet after the identification one.
@@ -42,14 +42,17 @@ fn identification(info: &[u8; StreamInfoBlock::LEN]) -> Vec<u8> {
     p
 }
 
-pub fn create(
+pub(super) fn create(
     mut sink: Box<dyn MediaSink>,
     stream: &StreamInfo,
     tags: &Tags,
 ) -> Result<Box<dyn Muxer>, Error> {
     if stream.codec != CodecId::Flac {
         return Err(Error::Unsupported {
-            what: format!("ogg files can only hold flac, not {}", stream.codec.name()),
+            what: format!(
+                "ogg files can only hold flac or opus, not {}",
+                stream.codec.name()
+            ),
         });
     }
     let (info, comment) = header_blocks(stream, tags)?;

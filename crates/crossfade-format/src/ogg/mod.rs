@@ -6,6 +6,7 @@ mod crc;
 mod flac;
 mod mux;
 mod opus;
+mod opus_mux;
 mod packets;
 mod page;
 #[cfg(test)]
@@ -15,7 +16,9 @@ mod testutil;
 mod vorbis;
 mod writer;
 
-use crossfade_core::{Demuxer, Error, Limits, MediaSource};
+use crossfade_core::{
+    CodecId, Demuxer, Error, Limits, MediaSink, MediaSource, Muxer, StreamInfo, Tags,
+};
 use packets::PacketReader;
 use page::PageReader;
 
@@ -68,7 +71,16 @@ fn malformed(what: String) -> Error {
     Error::Malformed { what }
 }
 
-pub use mux::create;
+pub fn create(
+    sink: Box<dyn MediaSink>,
+    stream: &StreamInfo,
+    tags: &Tags,
+) -> Result<Box<dyn Muxer>, Error> {
+    match stream.codec {
+        CodecId::Opus => opus_mux::create(sink, stream, tags),
+        _ => mux::create(sink, stream, tags),
+    }
+}
 
 pub fn open(source: Box<dyn MediaSource>, limits: &Limits) -> Result<Box<dyn Demuxer>, Error> {
     let (mapping, stream) = choose(source, limits)?;
