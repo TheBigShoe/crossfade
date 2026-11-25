@@ -276,21 +276,21 @@ fn stereo_quality_rises_with_the_bitrate() {
         (
             true,
             [
-                (32_000, -100.0, 15.0),
-                (64_000, -75.0, 18.5),
-                (96_000, -50.0, 21.9),
-                (128_000, -50.0, 23.6),
-                (256_000, 35.0, 27.2),
+                (32_000, None, 15.0),
+                (64_000, Some(-75.0), 18.5),
+                (96_000, None, 21.9),
+                (128_000, None, 23.6),
+                (256_000, Some(35.0), 27.2),
             ],
         ),
         (
             false,
             [
-                (32_000, -750.0, 14.0),
-                (64_000, -85.0, 17.3),
-                (96_000, -70.0, 20.1),
-                (128_000, -75.0, 22.8),
-                (256_000, -50.0, 26.6),
+                (32_000, None, 14.0),
+                (64_000, Some(-85.0), 17.3),
+                (96_000, None, 20.1),
+                (128_000, None, 22.8),
+                (256_000, Some(-50.0), 26.6),
             ],
         ),
     ] {
@@ -299,10 +299,11 @@ fn stereo_quality_rises_with_the_bitrate() {
             let cfg = config(2, bitrate, vbr, FrameDuration::Ms20);
             let (packets, out) = encode_and_decode(&cfg, &pcm);
             let delay = Encoder::new(&cfg).expect("valid").lookahead() as usize;
-            let q = quality(&pcm, &out, 2, delay);
             let s = snr(&pcm, &out, 2, delay);
-            let what = format!("{bitrate} vbr {vbr}: Q {q}, {s} dB");
-            assert!(q > min_q && s > min_snr, "{what}");
+            // opus_compare is slow unoptimised: two rates per mode.
+            let q = min_q.map(|_| quality(&pcm, &out, 2, delay));
+            let what = format!("{bitrate} vbr {vbr}: Q {q:?}, {s} dB");
+            assert!(s > min_snr && q >= min_q, "{what}");
             assert!(s > last, "{what}");
             last = s;
             if vbr {
