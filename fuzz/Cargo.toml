@@ -157,6 +157,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "alac_roundtrip"
+path = "fuzz_targets/alac_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "mp3_decode"
 path = "fuzz_targets/mp3_decode.rs"
 test = false

@@ -3,7 +3,7 @@
 //! as one count. Unsigned 32-bit arithmetic wraps, as in the reference coder, so hostile values
 //! cannot panic.
 
-use crate::bits::Bits;
+use crate::bits::{Bits, Sink};
 use crate::{Error, Result};
 
 pub(crate) const QBSHIFT: u32 = 9;
@@ -112,6 +112,73 @@ pub(crate) fn decode(
         }
     }
     Ok(())
+}
+
+/// One value the way `rice` reads it: `n = q * m + r` with the quotient in unary, then `r + 1`
+/// in `k` bits, or `k - 1` zeros for `r == 0`; nine ones and `n` in `escape_bits` bits when
+/// that is shorter or the quotient too long.
+#[inline]
+fn put_rice<S: Sink>(sink: &mut S, n: u32, m: u32, k: u32, escape_bits: u32) {
+    let q = n / m;
+    if q < MAX_PREFIX {
+        let r = n - q * m;
+        let len = q + 1 + k - u32::from(r == 0);
+        if len <= MAX_PREFIX + escape_bits {
+            sink.put(q + 1, ((1 << q) - 1) << 1);
+            if r == 0 {
+                sink.put(k - 1, 0);
+            } else {
+                sink.put(k, r + 1);
+            }
+            return;
+        }
+    }
+    sink.put(MAX_PREFIX, (1 << MAX_PREFIX) - 1);
+    sink.put(escape_bits, n);
+}
+
+/// Codes `values`, residuals of at most `chan_bits` (up to 32) bits, as `decode` reads them.
+/// The arithmetic is `decode`'s, step for step.
+pub(crate) fn encode<S: Sink>(sink: &mut S, params: Params, chan_bits: u32, values: &[i32]) {
+    let Params { mut mb, pb, kb } = params;
+    let wb = (1u32 << kb) - 1;
+    let mut zmode = 0u32;
+    let mut c = 0;
+    while c < values.len() {
+        let k = lg3a(mb >> QBSHIFT).min(kb);
+        let m = (1u32 << k) - 1;
+        let v = values[c];
+        // 0, -1, 1, -2, 2, ... as 0, 1, 2, 3, 4, ...
+        let nd = ((v << 1) ^ (v >> 31)) as u32;
+        let n = nd.wrapping_sub(zmode);
+        put_rice(sink, n, m, k, chan_bits);
+        c += 1;
+        mb = pb
+            .wrapping_mul(nd)
+            .wrapping_add(mb)
+            .wrapping_sub(pb.wrapping_mul(mb) >> QBSHIFT);
+        if n > MEAN_CLAMP {
+            mb = MEAN_CLAMP;
+        }
+        zmode = 0;
+        if (mb << MMULSHIFT) < QB && c < values.len() {
+            zmode = 1;
+            let run = values[c..]
+                .iter()
+                .take(0xFFFF)
+                .take_while(|&&v| v == 0)
+                .count();
+            c += run;
+            if run >= 0xFFFF {
+                zmode = 0;
+            }
+            // `mb` is below 128 here, so `k` is between 1 and 10.
+            let k = mb.leading_zeros() + ((mb + MOFF) >> MDENSHIFT) - BITOFF;
+            let mz = ((1u32 << k) - 1) & wb;
+            put_rice(sink, run as u32, mz, k, RUN_ESCAPE_BITS);
+            mb = 0;
+        }
+    }
 }
 
 #[cfg(test)]
