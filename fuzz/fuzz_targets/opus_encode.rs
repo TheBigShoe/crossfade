@@ -4,8 +4,8 @@
 //! decodes with the encoder's final range (every stream's, for a multistream packet). The
 //! input: channels (1 to 8; from 3, or by a flag, the multistream encoder), bitrate, VBR,
 //! frame duration (2.5 to 60 ms), signal, application, a forced mode and bandwidth, FEC,
-//! loss and DTX from the first bytes, then frames of raw `f32` bits, a reset or a new
-//! bitrate between some.
+//! loss, DTX and the input depth (any byte: outside 8 to 24 bits it must be refused) from the
+//! first bytes, then frames of raw `f32` bits, a reset or a new bitrate between some.
 
 use arbitrary::{Arbitrary, Unstructured};
 use crossfade_opus::{
@@ -21,11 +21,12 @@ enum Enc {
 
 fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
-    let (Ok(channels), Ok(bitrate), Ok(flags), Ok(more)) = (
+    let (Ok(channels), Ok(bitrate), Ok(flags), Ok(more), Ok(depth)) = (
         u.int_in_range(1u8..=8),
         u.int_in_range(1u32..=700_000),
         u8::arbitrary(&mut u),
         u16::arbitrary(&mut u),
+        u8::arbitrary(&mut u),
     ) else {
         return;
     };
@@ -61,8 +62,19 @@ fuzz_target!(|data: &[u8]| {
     config.inband_fec = more & 0x100 != 0;
     config.packet_loss_percent = ((more >> 9) & 0x1f) as u8 * 3;
     config.dtx = more & 0x4000 != 0;
+    // Mostly 16 and 24, the depths sources have; any other byte now and then.
+    config.lsb_depth = match depth >> 6 {
+        0 => 16,
+        1 => 24,
+        _ => depth & 0x1f,
+    };
     let ch = usize::from(channels);
     let multi = channels > 2 || flags & 0x80 != 0;
+    if !(8..=24).contains(&config.lsb_depth) {
+        assert!(MultistreamEncoder::new(&config, u8::from(channels > 2)).is_err());
+        assert!(channels > 2 || Encoder::new(&config).is_err());
+        return;
+    }
     let mut coder = if multi {
         let enc = MultistreamEncoder::new(&config, if channels > 2 { 1 } else { 0 }).unwrap();
         let head = enc.head(48_000);
