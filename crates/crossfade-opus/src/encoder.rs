@@ -1497,7 +1497,12 @@ impl Encoder {
             let nb_compr_bytes = (max_data_bytes - 1) - redundancy_bytes;
             enc.shrink(nb_compr_bytes.max(0) as usize);
             let (bitrate, celt_vbr, cvbr) = match (vbr, hybrid) {
-                (true, true) => (Some(self.bitrate - self.silk_mode.bit_rate), true, false),
+                // CELT refuses a bitrate of 500 or less and keeps the frame's maximum, as
+                // libopus's does when SILK takes (nearly) all of it.
+                (true, true) => {
+                    let rate = self.bitrate - self.silk_mode.bit_rate;
+                    ((rate > 500).then_some(rate), true, false)
+                }
                 (true, false) => (Some(self.bitrate), true, self.config.constrained_vbr),
                 (false, _) => (None, false, false),
             };
