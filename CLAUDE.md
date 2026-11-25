@@ -213,7 +213,16 @@ just test-aac  # `just coverage` builds the workspace with it, so the decoder is
 just bench     # criterion; not part of the gate
 just run       # the desktop app
 just screenshots [names]  # offscreen PNGs in target/screenshots (macOS only)
+just ios-framework / ios-project / ios-build / ios-run / ios-test  # the iOS app (macOS, Xcode, XcodeGen); ios-check runs anywhere
 ```
+
+`apps/ios` is the native iOS app (SwiftUI, iPhone and iPad, iOS 17), not a Cargo crate and
+not part of `just ci`: the Swift package `CrossfadeKit` (the library `CrossfadeKit`, the only
+Swift that calls `crates/crossfade-ffi`'s C interface, and `CrossfadeModels`, the view models)
+and the app, whose Xcode project XcodeGen writes from `apps/ios/project.yml`. Its tests decode
+copies of crossfade-ffi's snapshot JSON that `apps/ios/scripts/pin_snapshots.py` makes and
+`just ios-check` compares. As of its first commit no Swift in it had been compiled or run
+(`apps/ios/README.md`).
 
 `just ci` must pass before a branch is handed over. Work happens on a task
 branch (`m<N>/<topic>`); the lead reviews and merges it into `main` with

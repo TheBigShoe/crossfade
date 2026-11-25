@@ -1,0 +1,30 @@
+{
+  "idle": true,
+  "jobs": [
+    {
+      "cancelling": false,
+      "clipped": 0,
+      "command_line": "crossfade convert <dir>/in.wav -o <dir>/in.flac --filter 'gain -1dB'",
+      "fraction": 1.0,
+      "frames": 4800,
+      "frames_done": null,
+      "frames_total": null,
+      "id": 0,
+      "input": "<dir>/in.wav",
+      "measuring": false,
+      "message": null,
+      "normalization": null,
+      "output": "<dir>/in.flac",
+      "state": "finished"
+    }
+  ],
+  "quit_warning": null,
+  "revision": 7,
+  "summary": {
+    "cancelled": 0,
+    "failed": 0,
+    "finished": 1,
+    "pending": 0,
+    "running": 0
+  }
+}

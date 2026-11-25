@@ -1,0 +1,42 @@
+{
+  "channels": 2,
+  "failure": null,
+  "frames": 192000,
+  "frames_done": 192000,
+  "lanes": 2,
+  "loudness": {
+    "integrated": -6.5,
+    "range": -6.5,
+    "sample_peak": -6.5,
+    "true_peak": -6.5
+  },
+  "readout": {
+    "segments": [
+      {
+        "text": "−6.7 LUFS",
+        "warn": false
+      },
+      {
+        "text": " · ",
+        "warn": false
+      },
+      {
+        "text": "0.0 LU range",
+        "warn": false
+      },
+      {
+        "text": " · ",
+        "warn": false
+      },
+      {
+        "text": "−6.0 dBTP",
+        "warn": false
+      }
+    ],
+    "text": "−6.7 LUFS · 0.0 LU range · −6.0 dBTP",
+    "warn": false
+  },
+  "revision": 7,
+  "sample_rate": 48000,
+  "state": "done"
+}

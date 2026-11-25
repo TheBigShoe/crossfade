@@ -135,6 +135,13 @@ queued job can show the equivalent `crossfade` command. Settings, themes and key
 are plain files in the config folder (`~/.config/crossfade` on macOS and
 Linux) and reload when saved.
 
+## iPhone and iPad app
+
+A native SwiftUI app for iPhone and iPad lives in `apps/ios`, driving the same app layer
+through `crates/crossfade-ffi`. **It has never been built or run**: it was written on a
+machine without Xcode. `apps/ios/README.md` says how to build it on a Mac (`just
+ios-framework`, `just ios-run`) and what is most likely to need fixing first.
+
 ## Building
 
 Rust 1.98.1 (pinned in `rust-toolchain.toml`) and [`just`](https://github.com/casey/just).
