@@ -375,16 +375,18 @@ fn what_opus_cannot_take_is_refused_in_plain_words() {
     assert!(e.contains("opus has no bit depth"), "{e}");
     let e = refused(&["convert", &wav, "-o", &dir.path("o.wav"), "--codec", "opus"]);
     assert!(e.contains("codec opus cannot be written into wav"), "{e}");
-    // Six unlabelled channels are not Vorbis's 5.1: refused up front, with the advice that works.
-    let six = dir.path("six.wav");
-    std::fs::write(&six, wav16(48_000, 6, &chirp(48_000, 6, 4_800), None)).unwrap();
-    let e = refused(&["convert", &six, "-o", &opus]);
+    // Four channels as 4.0 (front and back centre) are not Vorbis's quad: refused up front, with
+    // the advice that works. Six unlabelled channels are 5.1 and are written (see
+    // `surround_layouts.rs`).
+    let four = dir.path("four.wav");
+    std::fs::write(&four, wav_mask(48_000, 4, 0x107, &chirp(48_000, 4, 4_800))).unwrap();
+    let e = refused(&["convert", &four, "-o", &opus]);
     assert!(
-        e.contains("opus stores 6 channels in one layout only (5.1-back)")
+        e.contains("opus stores 4 channels in one layout only (quad)")
             && e.contains("--channels stereo"),
         "{e}"
     );
-    ok(&["convert", &six, "-o", &opus, "--channels", "stereo"]);
+    ok(&["convert", &four, "-o", &opus, "--channels", "stereo"]);
     // And nine channels have no layout at all.
     let nine = dir.path("nine.wav");
     std::fs::write(&nine, wav16(48_000, 9, &chirp(48_000, 9, 4_800), None)).unwrap();
