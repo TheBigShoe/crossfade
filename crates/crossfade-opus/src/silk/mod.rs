@@ -100,6 +100,7 @@ mod decode_core;
 mod decode_indices;
 mod decode_parameters;
 mod decode_pulses;
+mod enc;
 mod macros;
 mod nlsf;
 mod plc;

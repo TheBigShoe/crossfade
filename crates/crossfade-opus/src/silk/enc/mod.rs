@@ -1,0 +1,8 @@
+//! The SILK encoder (libopus `silk/enc_API.c` and everything under it, the fixed-point build
+//! `silk/fixed/`): a port, its modules named after the C files they port.
+
+// Nothing in the crate calls the encoder yet.
+#![cfg_attr(not(test), allow(dead_code))]
+
+mod encode_pulses;
+mod tables;
